@@ -158,7 +158,7 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [contact-issue-tracker]: <https://github.com/elixir-cloud-aai/landing-page/issues>
 [contact-qa]: <https://github.com/elixir-cloud-aai/elixir-cloud-aai/discussions>
 [docs-coc]: <https://github.com/elixir-cloud-aai/elixir-cloud-aai/blob/dev/CODE_OF_CONDUCT.md>
-[docs-contributing]: <https://elixir-cloud-aai.github.io/guides/guide-contributor/>
+[docs-contributing]: <https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md>
 [docs-deploy]: deployment/README.md
 [docs-license]: LICENSE
 [image-prowes-overview]: <images/overview.svg>
