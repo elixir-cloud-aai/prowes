@@ -10,8 +10,9 @@ CI (`.github/workflows/main.yml`), which plants dummy secret files and checks
 that they don't reach the image.
 """
 
-from pathlib import Path, PurePosixPath
+import contextlib
 import json
+from pathlib import Path, PurePosixPath
 import posixpath
 import re
 
@@ -107,7 +108,7 @@ def _copy_sources() -> list[str]:
         Source paths, relative to the build context.
     """
     text = (ROOT / "Dockerfile").read_text(encoding="utf-8").replace("\\\n", " ")
-    sources = []
+    sources: list[str] = []
     for args in re.findall(
         r"^\s*(?:COPY|ADD)\s+(.+)$", text, flags=re.MULTILINE | re.IGNORECASE
     ):
@@ -117,10 +118,8 @@ def _copy_sources() -> list[str]:
         paths = words
         if words and words[0].startswith("["):
             # As Docker does, arguments that aren't valid JSON are shell form
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 paths = json.loads(" ".join(words))
-            except json.JSONDecodeError:
-                pass
         sources.extend(
             path for path in paths[:-1] if not re.match(r"^(\w+://|<<)", path)
         )

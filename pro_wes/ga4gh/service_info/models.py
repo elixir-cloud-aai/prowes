@@ -1,11 +1,8 @@
 """proWES schema models."""
 
 from datetime import datetime
-from typing import Optional, Union
 
-from pydantic import AnyUrl, BaseModel, EmailStr  # pylint: disable=no-name-in-module
-
-# pragma pylint: disable=too-few-public-methods
+from pydantic import AnyUrl, BaseModel, EmailStr
 
 
 class Organization(BaseModel):
@@ -75,11 +72,11 @@ class Service(BaseModel):
     id: str
     name: str
     type: ServiceType
-    description: Optional[str]
+    description: str | None
     organization: Organization
-    contactUrl: Optional[Union[AnyUrl, EmailStr]]
-    documentationUrl: Optional[AnyUrl]
-    createdAt: Optional[datetime]
-    updatedAt: Optional[datetime]
-    environment: Optional[str]
+    contactUrl: AnyUrl | EmailStr | None
+    documentationUrl: AnyUrl | None
+    createdAt: datetime | None
+    updatedAt: datetime | None
+    environment: str | None
     version: str

@@ -2,7 +2,7 @@
 
 import os
 
-from foca.models.config import Config  # type: ignore
+from foca.models.config import Config
 
 from pro_wes.app import init_app
 
@@ -14,7 +14,7 @@ workers = int(os.environ.get("GUNICORN_PROCESSES", "1"))
 threads = int(os.environ.get("GUNICORN_THREADS", "1"))
 
 # Set allowed IPs
-forwarded_allow_ips = "*"  # pylint: disable=invalid-name
+forwarded_allow_ips = "*"
 
 # Set Gunicorn bind address
 bind = f"{app_config.server.host}:{app_config.server.port}"

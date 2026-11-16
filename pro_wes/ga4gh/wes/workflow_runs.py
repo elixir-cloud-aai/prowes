@@ -2,32 +2,32 @@
 
 import logging
 from pathlib import Path
-import string  # noqa: F401 pylint: disable=unused-import
 from shutil import copyfileobj
-from typing import Dict, List, Optional
+import string  # noqa: F401 (for ID charsets of the config, e.g., `string.digits`)
+from typing import Any
 
 from bson.objectid import ObjectId
 from celery import uuid
+from flask import current_app, request
 from foca.models.config import Config
 from foca.utils.misc import generate_id
-from flask import current_app, request
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 from werkzeug.datastructures import ImmutableMultiDict
 from werkzeug.utils import secure_filename
 
-from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.exceptions import (
     BadRequest,
     EngineUnavailable,
     Forbidden,
-    InternalServerError,
     IdsUnavailableProblem,
+    InternalServerError,
     RunNotFound,
     StorageUnavailableProblem,
     Unauthorized,
     WesEndpointProblem,
 )
+from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
     Attachment,
     DbDocument,
@@ -55,7 +55,7 @@ class WorkflowRuns:
 
     def __init__(self) -> None:
         """Class constructor."""
-        self.config: Dict = current_app.config
+        self.config: dict[str, Any] = current_app.config
         self.foca_config: Config = current_app.config.foca  # type: ignore
         self.db_client: Collection = (
             self.foca_config.db.dbs["runStore"].collections["runs"].client
@@ -63,8 +63,8 @@ class WorkflowRuns:
 
     def run_workflow(
         self,
-        **kwargs,
-    ) -> Dict[str, str]:
+        **kwargs: Any,
+    ) -> dict[str, str]:
         """Start workflow run.
 
         Controller for `POST /runs`.
@@ -89,7 +89,7 @@ class WorkflowRuns:
         )
 
         # get and attach workflow run owner
-        document.user_id = kwargs.get("user_id", None)
+        document.user_id = kwargs.get("user_id")
 
         # create run environment & insert run document into run collection
         document_stored: DbDocument = self._create_run_environment(document=document)
@@ -98,10 +98,11 @@ class WorkflowRuns:
         self._save_attachments(attachments=document_stored.attachments)
 
         # ensure WES endpoint is available
-        assert document_stored.wes_endpoint is not None, "No WES endpoint available."
-        assert document_stored.wes_endpoint.base_path is not None, (
-            "WES endpoint does not have base_path."
-        )
+        if (
+            document_stored.wes_endpoint is None
+            or document_stored.wes_endpoint.base_path is None
+        ):
+            raise InternalServerError("No WES endpoint or base path available.")
 
         if document_stored.task_id is None:
             raise IdsUnavailableProblem
@@ -110,7 +111,7 @@ class WorkflowRuns:
         wes_client: WesClient = WesClient(
             host=document_stored.wes_endpoint.host,
             base_path=document_stored.wes_endpoint.base_path,
-            token=kwargs.get("jwt", None),
+            token=kwargs.get("jwt"),
         )
 
         # instantiate database connector
@@ -125,9 +126,11 @@ class WorkflowRuns:
             f"{document_stored.wes_endpoint.base_path.strip('/')}"
         )
         logger.info(
-            f"Sending workflow run '{document_stored.run_log.run_id}' with "
-            f"task identifier '{document_stored.task_id}' to WES endpoint "
-            f"hosted at: {url}"
+            "Sending workflow run '%s' with task identifier '%s' to WES"
+            " endpoint hosted at: %s",
+            document_stored.run_log.run_id,
+            document_stored.task_id,
+            url,
         )
         try:
             response = wes_client.post_run(
@@ -152,12 +155,11 @@ class WorkflowRuns:
         )
 
         # ensure WES endpoint is available
-        assert updated_document_stored.wes_endpoint is not None, (
-            "No WES endpoint available."
-        )
-        assert updated_document_stored.wes_endpoint.base_path is not None, (
-            "WES endpoint does not have base_path."
-        )
+        if (
+            updated_document_stored.wes_endpoint is None
+            or updated_document_stored.wes_endpoint.base_path is None
+        ):
+            raise InternalServerError("No WES endpoint or base path available.")
 
         if updated_document_stored.wes_endpoint.run_id is None:
             raise WesEndpointProblem
@@ -166,7 +168,7 @@ class WorkflowRuns:
         task__track_run_progress.apply_async(
             None,
             {
-                "jwt": kwargs.get("jwt", None),
+                "jwt": kwargs.get("jwt"),
                 "remote_host": updated_document_stored.wes_endpoint.host,
                 "remote_base_path": updated_document_stored.wes_endpoint.base_path,
                 "remote_run_id": updated_document_stored.wes_endpoint.run_id,
@@ -179,8 +181,8 @@ class WorkflowRuns:
 
     def list_runs(
         self,
-        **kwargs,
-    ) -> Dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Return list of workflow runs.
 
         Controller for `GET /runs`.
@@ -219,10 +221,7 @@ class WorkflowRuns:
         )
 
         # set next page token
-        if resources:
-            next_page_token = str(resources[-1]["_id"])
-        else:
-            next_page_token = ""
+        next_page_token = str(resources[-1]["_id"]) if resources else ""
 
         # format response
         for run in resources:
@@ -236,8 +235,8 @@ class WorkflowRuns:
     def get_run_log(
         self,
         run_id: str,
-        **kwargs,
-    ) -> Dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Return detailed information about a workflow run.
 
         Controller for `GET /runs/{run_id}`.
@@ -267,7 +266,7 @@ class WorkflowRuns:
 
         # raise error if workflow run was not found
         if document is None:
-            logger.error(f"Run '{run_id}' not found.")
+            logger.error("Run '%s' not found.", run_id)
             raise RunNotFound
 
         # raise error trying to access workflow run that is not owned by user
@@ -275,7 +274,7 @@ class WorkflowRuns:
         self._check_access_permission(
             resource_id=run_id,
             owner=document.get("user_id", None),
-            requester=kwargs.get("user_id", None),
+            requester=kwargs.get("user_id"),
         )
 
         return document["run_log"]
@@ -283,8 +282,8 @@ class WorkflowRuns:
     def get_run_status(
         self,
         run_id: str,
-        **kwargs,
-    ) -> Dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Return status information about a workflow run.
 
         Controller for `GET /runs/{run_id}/status`.
@@ -314,14 +313,14 @@ class WorkflowRuns:
 
         # ensure resource is available
         if document is None:
-            logger.error(f"Run '{run_id}' not found.")
+            logger.error("Run '%s' not found.", run_id)
             raise RunNotFound
 
         # ensure requester has access
         self._check_access_permission(
             resource_id=run_id,
             owner=document.get("user_id", None),
-            requester=kwargs.get("user_id", None),
+            requester=kwargs.get("user_id"),
         )
 
         return {
@@ -332,8 +331,8 @@ class WorkflowRuns:
     def cancel_run(
         self,
         run_id: str,
-        **kwargs,
-    ) -> Dict[str, str]:
+        **kwargs: Any,
+    ) -> dict[str, str]:
         """Cancel workflow run.
 
         Controller for `GET /runs/{run_id}/cancel`.
@@ -364,21 +363,21 @@ class WorkflowRuns:
 
         # ensure resource is available
         if document is None:
-            logger.error(f"Run '{run_id}' not found.")
+            logger.error("Run '%s' not found.", run_id)
             raise RunNotFound
 
         # ensure requester has access
         self._check_access_permission(
             resource_id=run_id,
             owner=document.get("user_id", None),
-            requester=kwargs.get("user_id", None),
+            requester=kwargs.get("user_id"),
         )
 
         # cancel workflow run
         wes_client: WesClient = WesClient(
             host=document["wes_endpoint"]["host"],
             base_path=document["wes_endpoint"]["base_path"],
-            token=kwargs.get("jwt", None),
+            token=kwargs.get("jwt"),
         )
         wes_client.cancel_run(run_id=document["wes_endpoint"]["run_id"])
 
@@ -446,7 +445,7 @@ class WorkflowRuns:
 
         raise IdsUnavailableProblem
 
-    def _process_attachments(self, work_dir: Path) -> List[Attachment]:
+    def _process_attachments(self, work_dir: Path) -> list[Attachment]:
         """Return list of file attachments from request.
 
         Args:
@@ -458,8 +457,8 @@ class WorkflowRuns:
         attachments = []
         files = request.files.getlist("workflow_attachment")
         for file in files:
-            assert file is not None, "File object cannot be None."
-            assert file.filename is not None, "File does not have a filename."
+            if file.filename is None:
+                raise BadRequest("Workflow attachment has no filename.")
 
             attachments.append(
                 Attachment(
@@ -473,7 +472,7 @@ class WorkflowRuns:
 
     @staticmethod
     def _validate_run_request(
-        form_data: ImmutableMultiDict,
+        form_data: ImmutableMultiDict[str, Any],
     ) -> RunRequest:
         """Convert run request form input to `RunRequest` model.
 
@@ -482,7 +481,7 @@ class WorkflowRuns:
         """
         dict_of_lists = form_data.to_dict(flat=False)
         # flatten single item lists
-        dict_atomic: dict = {
+        dict_atomic: dict[str, Any] = {
             k: v[0] if len(v) == 1 else v for k, v in dict_of_lists.items()
         }
         # remove 'workflow_attachment' field
@@ -495,7 +494,7 @@ class WorkflowRuns:
         """Return a secure version of a filename.
 
         Args:
-            filename: Potentially insecure filename.
+            name: Potentially insecure filename.
 
         Returns:
             Secure filename.
@@ -506,7 +505,7 @@ class WorkflowRuns:
         return Path(name_secure)
 
     @staticmethod
-    def _save_attachments(attachments: List[Attachment]) -> None:
+    def _save_attachments(attachments: list[Attachment]) -> None:
         """Write workflow attachments to storage.
 
         Args:
@@ -522,8 +521,8 @@ class WorkflowRuns:
     @staticmethod
     def _check_access_permission(
         resource_id: str,
-        owner: Optional[str] = None,
-        requester: Optional[str] = None,
+        owner: str | None = None,
+        requester: str | None = None,
     ) -> None:
         """Check whether requester has access to resource.
 
@@ -541,9 +540,8 @@ class WorkflowRuns:
         """
         if requester is not None and requester != owner:
             logger.error(
-                (
-                    f"User '{requester}' is not allowed to access workflow run "
-                    f"'{resource_id}'."
-                )
+                "User '%s' is not allowed to access workflow run '%s'.",
+                requester,
+                resource_id,
             )
             raise Forbidden
