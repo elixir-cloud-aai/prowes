@@ -5,7 +5,6 @@ from typing import Optional, Union
 
 from pydantic import AnyUrl, BaseModel, EmailStr  # pylint: disable=no-name-in-module
 
-
 # pragma pylint: disable=too-few-public-methods
 
 

@@ -15,8 +15,12 @@ LABEL maintainer.organisation="ELIXIR Cloud & AAI"
 ENV LOGNAME=ipython
 ENV USER=ipython
 
+## Copy only what the build needs, not the whole build context; secrets are
+## never part of the image: they come in only at runtime (environment
+## variables, mounted secrets), never as build arguments
 WORKDIR /app
-COPY ./ .
+COPY setup.py pyproject.toml requirements.txt README.md LICENSE ./
+COPY pro_wes ./pro_wes
 RUN pip install -e .
 
 ## Add permissions for storing updated API specification

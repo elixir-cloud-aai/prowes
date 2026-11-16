@@ -8,7 +8,6 @@ from pymongo.errors import PyMongoError
 
 from pro_wes.utils.db import DbDocumentConnector
 
-
 # Get logger instance
 logger = logging.getLogger(__name__)
 
