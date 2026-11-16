@@ -58,17 +58,15 @@ Important: Note that all your contributions are understood to be covered by the
 
 ### Python
 
-Please use a recent version of Python 3.6 or higher. Python code, docstring and
-comment style loosely follows the
-[Google Python Style Guide](https://github.com/google/styleguide/blob/gh-pages/pyguide.md).
-Please try to conform to the used style to maintain consistency. Include
-[type hints/annotations](https://docs.python.org/3.6/library/typing.html) at
-least for function/method signatures.
+Use the Python version that `requires-python` in `pyproject.toml` names.
+Python code, docstring and comment style follows the
+[Google Python Style Guide](https://github.com/google/styleguide/blob/gh-pages/pyguide.md),
+with Google style docstrings and complete
+[type hints](https://docs.python.org/3/library/typing.html) for all
+functions and methods.
 
-Please use **all** of the following linters and validation tools with default
-settings and ensure that no warnings/errors are reported in any files before you
-commit:
-
-- [`pylint`](https://github.com/PyCQA/pylint)
-- [`flake8`](https://gitlab.com/pycqa/flake8)
-- [`mypy`](https://github.com/python/mypy)
+The pre-commit hooks check this: [ruff](https://docs.astral.sh/ruff/) formats
+and lints the code and [mypy](https://mypy-lang.org/) checks the types (see
+the "Development" section of the [README](README.md) for the setup). Make
+sure that `uv run pre-commit run --all-files` and `uv run pytest` pass before
+you open a pull request; CI runs the same checks.
