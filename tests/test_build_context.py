@@ -3,9 +3,15 @@
 Each file of the build context that the `Dockerfile` copies lands in a layer
 of the image, so the build context must not contain secrets (e.g., `.env`
 files or private keys), also not within the paths that the image needs.
+
+These tests re-implement Docker's matching of `.dockerignore` patterns, to
+fail early and without Docker. The authoritative check is the image build in
+CI (`.github/workflows/main.yml`), which plants dummy secret files and checks
+that they don't reach the image.
 """
 
 from pathlib import Path, PurePosixPath
+import json
 import posixpath
 import re
 
@@ -92,13 +98,20 @@ def _ignored(path: str, patterns: list[str]) -> bool:
 def _copy_sources() -> list[str]:
     """Get the sources of the `COPY` and `ADD` instructions of the Dockerfile.
 
+    Instructions are case-insensitive, and their arguments may be given as
+    a JSON array (e.g., `COPY [".", "/app"]`).
+
     Returns:
         Source paths, relative to the build context.
     """
     text = (ROOT / "Dockerfile").read_text(encoding="utf-8").replace("\\\n", " ")
     sources = []
-    for args in re.findall(r"^\s*(?:COPY|ADD)\s+(.+)$", text, flags=re.MULTILINE):
-        paths = [arg for arg in args.split() if not arg.startswith("--")]
+    for args in re.findall(
+        r"^\s*(?:COPY|ADD)\s+(.+)$", text, flags=re.MULTILINE | re.IGNORECASE
+    ):
+        words = [arg for arg in args.split() if not arg.startswith("--")]
+        rest = " ".join(words)
+        paths = json.loads(rest) if rest.startswith("[") else words
         sources.extend(paths[:-1])
     return sources
 
@@ -125,6 +138,15 @@ def test_dockerignore_secrets() -> None:
         "pro_wes/certs/server.pem",
         "pro_wes/certs/client.p12",
         "pro_wes/certs/client.pfx",
+        "pro_wes/tls.key.bak",
+        "pro_wes/certs/truststore.jks",
+        "pro_wes/certs/server.keystore",
+        "pro_wes/id_rsa",
+        "pro_wes/id_ed25519.pub",
+        "pro_wes/.netrc",
+        "pro_wes/.pgpass",
+        "pro_wes/.aws/credentials",
+        "pro_wes/kubeconfig.yaml",
     ):
         assert _ignored(path, patterns), f"{path} is sent to the build"
 

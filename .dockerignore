@@ -1,6 +1,7 @@
-# Only send the files needed by the image build to the build context: files
-# of the build context that the `Dockerfile` copies land in a layer of the
-# image (`tests/test_build_context.py` checks this file)
+# Allowlist: only the files the image build needs are sent to the build
+# context. Everything the `Dockerfile` copies ends up in a layer of the image,
+# so keep this list in sync with its `COPY` instructions and keep secrets out
+# (`tests/test_build_context.py` checks both)
 *
 !pro_wes/
 !LICENSE
@@ -14,12 +15,23 @@
 **/*.py[cod]
 **/*.egg-info
 
-# Exclude secrets also within the included paths (e.g., `pro_wes/.env`);
+# Safety net for secrets within the included paths (e.g., `pro_wes/.env`);
 # secrets come in only at runtime (environment variables, mounted secrets)
 **/.[Ee][Nn][Vv]*
 !**/.env.example
 **/.env.example/**
 **/*.[Pp][Ee][Mm]
 **/*.[Kk][Ee][Yy]
+**/*.[Kk][Ee][Yy].*
 **/*.[Pp]12
 **/*.[Pp][Ff][Xx]
+**/*.[Jj][Kk][Ss]
+**/*.[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee]
+**/id_rsa*
+**/id_dsa*
+**/id_ecdsa*
+**/id_ed25519*
+**/.netrc
+**/.pgpass
+**/.aws
+**/kubeconfig*

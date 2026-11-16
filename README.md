@@ -117,10 +117,12 @@ firefox http://localhost:8090/ga4gh/wes/v1/ui
 Secrets (e.g., passwords, tokens, private keys) are never part of the image:
 pass them only at runtime, as environment variables or mounted secrets (e.g.,
 Kubernetes Secrets), never as build arguments, which are recorded in the image
-history. The image build receives only the files it needs (see
-[`.dockerignore`](.dockerignore)); `.env` files (except `.env.example`) and key
-or certificate files (`*.pem`, `*.key`, `*.p12`, `*.pfx`) are left out of the
-build context, also within `pro_wes/`.
+history. The image build receives only the files it needs (an allowlist in
+[`.dockerignore`](.dockerignore)). As a safety net, common secret files are
+left out even within `pro_wes/`: `.env` files (except `.env.example`), key,
+certificate and keystore files (e.g., `*.pem`, `*.key`, `*.p12`, `*.jks`), SSH
+keys, `.netrc`, `.pgpass`, `.aws/` and kubeconfig files. Don't keep other
+secrets in the working tree either.
 
 ## Contributing
 

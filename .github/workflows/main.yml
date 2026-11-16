@@ -33,6 +33,8 @@ jobs:
         run: black --check setup.py pro_wes/ tests/
       - name: Check types with mypy
         run: mypy setup.py pro_wes/
+      # Only the build context tests for now: the other unit tests don't run
+      # in CI yet (to be set up with the CI rewrite, #108)
       - name: Test image build context
         run: pytest tests/test_build_context.py
   test:
@@ -71,6 +73,7 @@ jobs:
              --header 'Accept: application/json' \
              "${PROBE_ENDPOINT}" \
             ) == '200' || exit 1
+      # `prowes:latest` is the image that `docker-compose.yaml` builds
       - name: Check that secret files are not in the image
         run: |
           docker run --rm --entrypoint sh prowes:latest -c \
