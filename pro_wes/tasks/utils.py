@@ -45,6 +45,5 @@ def set_run_state(
     finally:
         if document:
             logger.info(
-                f"State of run '{run_id}' (task id: '{task_id}') "
-                f"changed to '{state}'."
+                f"State of run '{run_id}' (task id: '{task_id}') changed to '{state}'."
             )

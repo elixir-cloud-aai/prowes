@@ -57,8 +57,7 @@ class DbDocumentConnector:
             document: DbDocument = DbDocument(**document_unvalidated)
         except Exception as exc:
             raise ValueError(
-                "Database document does not conform to schema: "
-                f"{document_unvalidated}"
+                f"Database document does not conform to schema: {document_unvalidated}"
             ) from exc
         return document
 
@@ -101,7 +100,6 @@ class DbDocumentConnector:
             document: DbDocument = DbDocument(**document_unvalidated)
         except Exception as exc:
             raise ValueError(
-                "Database document does not conform to schema: "
-                f"{document_unvalidated}"
+                f"Database document does not conform to schema: {document_unvalidated}"
             ) from exc
         return document

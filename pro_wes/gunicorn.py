@@ -21,12 +21,12 @@ bind = f"{app_config.server.host}:{app_config.server.port}"
 
 # Source environment variables for Gunicorn workers
 raw_env = [
-    f'WES_CONFIG={os.environ.get("WES_CONFIG", "")}',
-    f'RABBIT_HOST={os.environ.get("RABBIT_HOST", app_config.jobs.host)}',
-    f'RABBIT_PORT={os.environ.get("RABBIT_PORT", app_config.jobs.port)}',
-    f'MONGO_HOST={os.environ.get("MONGO_HOST", app_config.db.host)}',
-    f'MONGO_PORT={os.environ.get("MONGO_PORT", app_config.db.port)}',
-    f'MONGO_DBNAME={os.environ.get("MONGO_DBNAME", "runStore")}',
-    f'MONGO_USERNAME={os.environ.get("MONGO_USERNAME", "")}',
-    f'MONGO_PASSWORD={os.environ.get("MONGO_PASSWORD", "")}',
+    f"WES_CONFIG={os.environ.get('WES_CONFIG', '')}",
+    f"RABBIT_HOST={os.environ.get('RABBIT_HOST', app_config.jobs.host)}",
+    f"RABBIT_PORT={os.environ.get('RABBIT_PORT', app_config.jobs.port)}",
+    f"MONGO_HOST={os.environ.get('MONGO_HOST', app_config.db.host)}",
+    f"MONGO_PORT={os.environ.get('MONGO_PORT', app_config.db.port)}",
+    f"MONGO_DBNAME={os.environ.get('MONGO_DBNAME', 'runStore')}",
+    f"MONGO_USERNAME={os.environ.get('MONGO_USERNAME', '')}",
+    f"MONGO_PASSWORD={os.environ.get('MONGO_PASSWORD', '')}",
 ]

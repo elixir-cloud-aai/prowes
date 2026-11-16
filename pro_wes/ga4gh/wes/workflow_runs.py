@@ -99,9 +99,9 @@ class WorkflowRuns:
 
         # ensure WES endpoint is available
         assert document_stored.wes_endpoint is not None, "No WES endpoint available."
-        assert (
-            document_stored.wes_endpoint.base_path is not None
-        ), "WES endpoint does not have base_path."
+        assert document_stored.wes_endpoint.base_path is not None, (
+            "WES endpoint does not have base_path."
+        )
 
         if document_stored.task_id is None:
             raise IdsUnavailableProblem
@@ -152,12 +152,12 @@ class WorkflowRuns:
         )
 
         # ensure WES endpoint is available
-        assert (
-            updated_document_stored.wes_endpoint is not None
-        ), "No WES endpoint available."
-        assert (
-            updated_document_stored.wes_endpoint.base_path is not None
-        ), "WES endpoint does not have base_path."
+        assert updated_document_stored.wes_endpoint is not None, (
+            "No WES endpoint available."
+        )
+        assert updated_document_stored.wes_endpoint.base_path is not None, (
+            "WES endpoint does not have base_path."
+        )
 
         if updated_document_stored.wes_endpoint.run_id is None:
             raise WesEndpointProblem
