@@ -8,8 +8,6 @@
 !LICENSE
 !README.md
 !pyproject.toml
-!requirements.txt
-!setup.py
 
 # Exclude caches and local files within the included paths
 **/__pycache__

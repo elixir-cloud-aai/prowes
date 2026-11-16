@@ -179,6 +179,9 @@ def test_dockerignore_allowlist() -> None:
         "docker-compose.yaml",
         "pro_wes/__pycache__/app.cpython-310.pyc",
         "pro_wes.egg-info/PKG-INFO",
+        # Legacy packaging files, replaced by `pyproject.toml`
+        "requirements.txt",
+        "setup.py",
     ):
         assert _ignored(path, patterns), f"{path} is sent to the build"
     for path in (
@@ -189,8 +192,6 @@ def test_dockerignore_allowlist() -> None:
         "LICENSE",
         "README.md",
         "pyproject.toml",
-        "requirements.txt",
-        "setup.py",
     ):
         assert not _ignored(path, patterns), f"{path} is not sent to the build"
 

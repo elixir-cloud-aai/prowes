@@ -18,9 +18,15 @@ ENV USER=ipython
 ## Copy only what the build needs, not the whole build context; secrets are
 ## never part of the image: they come in only at runtime (environment
 ## variables, mounted secrets), never as build arguments
+## (`pyproject.toml` holds the package metadata and dependencies, `README.md`
+## is the package's long description). The build context has no Git metadata,
+## so the version is passed as a build argument (e.g.,
+## `--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=1.2.3`); without it, the app
+## reports version `0.0.0.dev0`
 WORKDIR /app
-COPY setup.py pyproject.toml requirements.txt README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE ./
 COPY pro_wes ./pro_wes
+ARG SETUPTOOLS_SCM_PRETEND_VERSION
 RUN pip install -e .
 
 ## Add permissions for storing updated API specification
