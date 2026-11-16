@@ -99,7 +99,9 @@ def _copy_sources() -> list[str]:
     """Get the sources of the `COPY` and `ADD` instructions of the Dockerfile.
 
     Instructions are case-insensitive, and their arguments may be given as
-    a JSON array (e.g., `COPY [".", "/app"]`).
+    a JSON array (e.g., `COPY [".", "/app"]`). Sources outside the build
+    context are left out: those of other stages (`--from`), URLs and
+    heredocs.
 
     Returns:
         Source paths, relative to the build context.
@@ -109,10 +111,19 @@ def _copy_sources() -> list[str]:
     for args in re.findall(
         r"^\s*(?:COPY|ADD)\s+(.+)$", text, flags=re.MULTILINE | re.IGNORECASE
     ):
+        if "--from=" in args:
+            continue
         words = [arg for arg in args.split() if not arg.startswith("--")]
-        rest = " ".join(words)
-        paths = json.loads(rest) if rest.startswith("[") else words
-        sources.extend(paths[:-1])
+        paths = words
+        if words and words[0].startswith("["):
+            # As Docker does, arguments that aren't valid JSON are shell form
+            try:
+                paths = json.loads(" ".join(words))
+            except json.JSONDecodeError:
+                pass
+        sources.extend(
+            path for path in paths[:-1] if not re.match(r"^(\w+://|<<)", path)
+        )
     return sources
 
 
@@ -147,6 +158,7 @@ def test_dockerignore_secrets() -> None:
         "pro_wes/.pgpass",
         "pro_wes/.aws/credentials",
         "pro_wes/kubeconfig.yaml",
+        "pro_wes/KUBECONFIG",
     ):
         assert _ignored(path, patterns), f"{path} is sent to the build"
 

@@ -1,7 +1,8 @@
 # Allowlist: only the files the image build needs are sent to the build
 # context. Everything the `Dockerfile` copies ends up in a layer of the image,
 # so keep this list in sync with its `COPY` instructions and keep secrets out
-# (`tests/test_build_context.py` checks both)
+# (`tests/test_build_context.py` checks that each `COPY` source is sent and
+# that secret files are not)
 *
 !pro_wes/
 !LICENSE
@@ -34,4 +35,4 @@
 **/.netrc
 **/.pgpass
 **/.aws
-**/kubeconfig*
+**/[Kk][Uu][Bb][Ee][Cc][Oo][Nn][Ff][Ii][Gg]*
