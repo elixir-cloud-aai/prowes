@@ -112,6 +112,16 @@ firefox http://localhost:8090/ga4gh/wes/v1/ui
 > **Note:** Host and port may differ if you have changed the configuration or
 > use an HTTP server to reroute calls to a different host.
 
+### Secrets
+
+Secrets (e.g., passwords, tokens, private keys) are never part of the image:
+pass them only at runtime, as environment variables or mounted secrets (e.g.,
+Kubernetes Secrets), never as build arguments, which are recorded in the image
+history. The image build receives only the files it needs (see
+[`.dockerignore`](.dockerignore)); `.env` files (except `.env.example`) and key
+or certificate files (`*.pem`, `*.key`, `*.p12`, `*.pfx`) are left out of the
+build context, also within `pro_wes/`.
+
 ## Contributing
 
 This project is a community effort and lives off your contributions, be it in
