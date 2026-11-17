@@ -1,6 +1,6 @@
-version: '3.6'
 services:
 
+  # Celery worker, which tracks the progress of workflow runs
   prowes-worker:
     image: prowes:latest
     build:
@@ -10,10 +10,12 @@ services:
     links:
       - mongodb
       - rabbitmq
-    command: bash -c "cd /app/pro_wes; celery -A celery_worker worker -E --loglevel=info"
+    command: celery -A pro_wes.celery_worker worker -E --loglevel=info
     volumes:
       - ${PROWES_DATA_DIR:-../data/pro_wes/runs}:/data
 
+  # The app, served by Gunicorn with FOCA's settings
+  # (`pro_wes/gunicorn.py`)
   prowes:
     image: prowes:latest
     build:
@@ -22,7 +24,8 @@ services:
     restart: unless-stopped
     links:
       - mongodb
-    command: bash -c "cd /app/pro_wes; gunicorn -c gunicorn.py wsgi:app"
+      - rabbitmq
+    command: gunicorn --config python:pro_wes.gunicorn pro_wes.wsgi:app
     ports:
       - "8090:8080"
     volumes:
@@ -31,13 +34,13 @@ services:
   rabbitmq:
     image: rabbitmq:4-management
     restart: unless-stopped
-    links:
-      - mongodb
     ports:
       - "5682:5672"
 
+  # MongoDB 7.0, the version FOCA is tested with (current PyMongo releases
+  # need MongoDB 4.4 or later)
   mongodb:
-    image: mongo:3.2
+    image: mongo:7.0
     restart: unless-stopped
     volumes:
       - ${PROWES_DATA_DIR:-../data/pro_wes}/db:/data/db
