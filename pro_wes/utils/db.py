@@ -6,7 +6,7 @@ from typing import Any
 
 from pymongo.collection import Collection, ReturnDocument
 
-from pro_wes.ga4gh.wes.models import DbDocument, State
+from pro_wes.ga4gh.wes.models import STORED_CONTEXT, DbDocument, State
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,9 @@ class DbDocumentConnector:
             projection=projection,
         )
         try:
-            document: DbDocument = DbDocument.model_validate(document_unvalidated)
+            document: DbDocument = DbDocument.model_validate(
+                document_unvalidated, context=STORED_CONTEXT
+            )
         except Exception as exc:
             raise ValueError(
                 f"Database document does not conform to schema: {document_unvalidated}"
@@ -103,7 +105,9 @@ class DbDocumentConnector:
             return_document=ReturnDocument.AFTER,
         )
         try:
-            document: DbDocument = DbDocument.model_validate(document_unvalidated)
+            document: DbDocument = DbDocument.model_validate(
+                document_unvalidated, context=STORED_CONTEXT
+            )
         except Exception as exc:
             raise ValueError(
                 f"Database document does not conform to schema: {document_unvalidated}"

@@ -1,11 +1,10 @@
 """Custom app config models."""
 
 from pathlib import Path
+from typing import Any
 
 from foca.utils.misc import generate_id
-from pydantic import BaseModel, field_validator
-
-from pro_wes.ga4gh.wes.models import ServiceInfoBase as ServiceInfo
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class Defaults(BaseModel):
@@ -101,18 +100,37 @@ class CustomConfig(BaseModel):
         defaults: Global configuration parameters.
         post_runs: Configuration parameters for operation `POST /runs`.
         list_runs: Configuration parameters for operation `GET /runs`.
-        service_info: Configuration parameters for initiliazing the service
-            info.
 
     Attributes:
         defaults: Global configuration parameters.
         post_runs: Configuration parameters for operation `POST /runs`.
         list_runs: Configuration parameters for operation `GET /runs`.
-        service_info: Configuration parameters for initiliazing the service
-            info.
     """
 
     defaults: Defaults = Defaults()
     post_runs: PostRuns = PostRuns()
     list_runs: ListRuns = ListRuns()
-    service_info: ServiceInfo
+
+    @model_validator(mode="before")
+    @classmethod
+    def no_service_info(cls, data: Any) -> Any:
+        """Refuse the service info of earlier versions (`custom.service_info`).
+
+        Without this check, it would be ignored, and the service info of the
+        configuration served instead.
+
+        Args:
+            data: Values of the section.
+
+        Returns:
+            The values, unchanged.
+
+        Raises:
+            ValueError: The section has key `service_info`.
+        """
+        if isinstance(data, dict) and "service_info" in data:
+            raise ValueError(
+                "`custom.service_info` moved to `service_info.service` "
+                "(served by FOCA); cf. the upgrade notes in the README"
+            )
+        return data

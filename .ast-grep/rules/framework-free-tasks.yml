@@ -1,0 +1,37 @@
+id: framework-free-tasks
+language: python
+severity: error
+message: Web framework import outside the app, controllers and exceptions
+note: |
+  The app's code (e.g., `pro_wes/ga4gh/wes/workflow_runs.py` and the
+  Celery tasks) gets plain data (the run request, its attachments, the
+  caller), so that it runs unchanged after the move to Connexion 3 without
+  Flask (FOCA 1.0), which then changes the controller glue only. Read the
+  request in the controllers (`pro_wes/ga4gh/wes/controllers.py`) and pass
+  what is needed.
+files:
+  - pro_wes/**/*.py
+ignores:
+  - pro_wes/app.py
+  - pro_wes/exceptions.py
+  - pro_wes/ga4gh/wes/controllers.py
+# On the syntax tree, so that aliases (`import flask as f`) and lists of
+# modules (`import os, flask`) are found, too
+utils:
+  framework-module:
+    kind: dotted_name
+    regex: ^(flask|werkzeug|connexion|starlette)(\.|$)
+rule:
+  any:
+    - kind: import_statement
+      has:
+        any:
+          - matches: framework-module
+          - kind: aliased_import
+            has:
+              field: name
+              matches: framework-module
+    - kind: import_from_statement
+      has:
+        field: module_name
+        matches: framework-module

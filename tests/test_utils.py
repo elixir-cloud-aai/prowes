@@ -33,6 +33,31 @@ def test_get_document(collection: Any) -> None:
     assert connector.get_document().run_log.run_id == "RUN001"
 
 
+def test_get_document_unsupported_type(collection: Any) -> None:
+    """Stored runs of workflow types no longer configured are returned.
+
+    Args:
+        collection: Collection of runs.
+    """
+    collection.update_one(
+        {"task_id": TASK_ID},
+        {
+            "$set": {
+                "run_log.request": {
+                    "workflow_params": "{}",
+                    "workflow_type": "WDL",
+                    "workflow_type_version": "1.0",
+                    "workflow_url": "https://example.org/workflow.wdl",
+                }
+            }
+        },
+    )
+    connector = DbDocumentConnector(collection=collection, task_id=TASK_ID)
+    assert connector.get_document().run_log.run_id == "RUN001"
+    document = connector.upsert_fields_in_root_object(root="run_log", state="RUNNING")
+    assert document.run_log.state == "RUNNING"
+
+
 def test_get_document_missing(collection: Any) -> None:
     """Missing documents don't conform to the schema."""
     connector = DbDocumentConnector(collection=collection, task_id="other")

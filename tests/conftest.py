@@ -8,7 +8,8 @@ the environment variable `MONGODB_TEST_URI`, and no network access to other
 hosts. Remote WES services are replaced by fakes in the tests.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+import os
 from pathlib import Path
 from typing import Any
 
@@ -84,12 +85,46 @@ def app_env(
         f"    storage_path: {storage_path}\n"
         "    polling_wait: 0\n"
         "    polling_attempts: 2\n"
-        "  service_info:\n"
+        "service_info:\n"
+        "  service:\n"
         f"    id: {SERVICE_INFO_ID}\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("FOCA_CONFIG_OVERLAY", str(overlay))
     yield
+
+
+@pytest.fixture
+def add_overlay(
+    app_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Callable[[str], None]:
+    """Get a function that merges further config over the test overlay.
+
+    Args:
+        app_env: Environment of the test app, with the test overlay.
+        monkeypatch: Monkeypatch fixture of the test.
+        tmp_path: Temporary directory of the test.
+
+    Returns:
+        Function taking the YAML text of a further overlay, which apps
+        created afterwards merge over the test overlay.
+    """
+    count = 0
+
+    def _add(text: str) -> None:
+        """Merge further config over the overlays set so far.
+
+        Args:
+            text: YAML text of the overlay.
+        """
+        nonlocal count
+        count += 1
+        path = tmp_path / f"overlay-{count}.yaml"
+        path.write_text(text, encoding="utf-8")
+        overlays = os.environ["FOCA_CONFIG_OVERLAY"]
+        monkeypatch.setenv("FOCA_CONFIG_OVERLAY", f"{overlays}:{path}")
+
+    return _add
 
 
 @pytest.fixture

@@ -103,11 +103,11 @@ describe each section. The settings that deployments usually change:
 | --- | --- | --- |
 | `db.host`, `db.port` | `mongodb`, `27017` | MongoDB; overridden by the environment variables `MONGO_HOST` and `MONGO_PORT`, with credentials from `MONGO_USERNAME` and `MONGO_PASSWORD`, the database name from `MONGO_DBNAME` (default: `runStore`), or the whole connection string from `MONGO_URI` |
 | `jobs.host`, `jobs.port` | `${RABBIT_HOST:-rabbitmq}`, `${RABBIT_PORT:-5672}` | RabbitMQ broker of the Celery worker; the environment variable `CELERY_BROKER_URL` takes precedence (e.g., for brokers with credentials) |
+| `service_info.service` | example values | Service info (`GET /service-info`), served by FOCA (see [FOCA's service info reference][res-foca-service-info]): the fields of the GA4GH service info (`id`, `name`, `type`, `organization`, `contactUrl`, ...) and the WES fields (`workflow_type_versions`, `supported_wes_versions`, `supported_filesystem_protocols`, `workflow_engine_versions`, `default_workflow_engine_parameters`, `auth_instructions_url`, `tags`), checked on startup; `version` defaults to the version of the installed package (`service_info.package`); `system_state_counts` is computed for each request and can't be set |
 | `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
 | `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type |
 | `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`) |
 | `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds |
-| `custom.service_info` | | Service info, stored in the database on the first start |
 
 Strings in the configuration may reference environment variables, as
 `${VAR}` or, with a default, `${VAR:-default}`; an unset variable without
@@ -195,12 +195,37 @@ following:
   configuration (`jobs`); `CELERY_BROKER_URL` takes precedence.
 * **Logs**: the Celery worker logs in the format of the app (section `log`)
   instead of Celery's own.
-* **Service info**: the service info in the database is kept; a new database
-  gets that of `custom.service_info`, with timestamps as RFC 3339 strings and
-  URLs normalized (e.g., `https://example.org` becomes
-  `https://example.org/`). Runs with states that proWES doesn't know are left
-  out of `system_state_counts`. Startup no longer fetches the GA4GH service
-  info schema from GitHub.
+* **Service info (breaking)**: the service info is served by FOCA from the
+  configuration, no longer from the database:
+  * Move `custom.service_info` to `service_info.service` (the app refuses to
+    start with `custom.service_info`). The WES fields
+    (`workflow_type_versions`, ...) stay in it and are checked on startup;
+    `contactUrl` must be a URI (e.g., `mailto:support@example.org`, not
+    `support@example.org`).
+  * `POST /service-info` is gone (`405 Method Not Allowed`): change the
+    service info in the configuration and restart the app. Service info
+    posted to or changed in the database before is ignored; the collection
+    `service_info` is no longer used and can be dropped
+    (`db.service_info.drop()` in the database of the runs).
+  * `version` is the version of the installed package unless
+    `service_info.service.version` is set (before: `0.18.0` from the
+    example configuration). Images built without
+    `--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=<version>` report
+    `0.0.0.dev0`.
+  * Fields that aren't set are left out instead of being served as `null`,
+    and values are served as configured (e.g., URLs are no longer
+    normalized). Runs with states that proWES doesn't know are left out of
+    `system_state_counts`. Startup no longer fetches the GA4GH service info
+    schema from GitHub.
+  * The Helm chart (2.0.3 or later) no longer creates the collection
+    `service_info`. The chart can't pass a configuration overlay yet
+    (`FOCA_CONFIG_OVERLAY`), so deployments with the chart serve the
+    service info of `pro_wes/config.yaml` in the image until it can (#38).
+  * Runs that proWES accepted keep being tracked if their workflow type or
+    version is later removed from `workflow_type_versions` (new runs are
+    still checked). Workers of earlier versions still check stored runs
+    against the service info in the database: stop them before the app of
+    this version accepts runs (no rolling update across this upgrade).
 * **Timeouts**: Gunicorn's threaded workers don't stop requests that hang,
   so requests to the remote WES are limited: forwarding runs by
   `custom.post_runs.timeout_post` (now 30 seconds; before: none), also for
@@ -238,9 +263,11 @@ uv run pre-commit run --all-files
 
 The hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)) format and
 lint the code with [ruff][res-ruff] (Google style docstrings), check types with
-[mypy][res-mypy], lint the GitHub Actions workflows with actionlint, scan
+[mypy][res-mypy], check the project's semgrep (security) and ast-grep
+(anti-patterns) rules, lint the GitHub Actions workflows with actionlint, scan
 for hardcoded secrets with gitleaks and check that `uv.lock` matches
-`pyproject.toml`. CI runs the same hooks.
+`pyproject.toml`. CI runs the same hooks. The rules, and how to suppress a
+finding, are listed in the [contributing guidelines](CONTRIBUTING.md#static-analysis-rules).
 
 Run the tests:
 
@@ -317,6 +344,7 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [res-flask]: <http://flask.pocoo.org/>
 [res-foca]: <https://github.com/elixir-cloud-aai/foca>
 [res-foca-config]: <https://foca.readthedocs.io/en/latest/configuration/>
+[res-foca-service-info]: <https://foca.readthedocs.io/en/latest/configuration/service-info/>
 [res-ga4gh]: <https://www.ga4gh.org/>
 [res-ga4gh-wes]: <https://github.com/ga4gh/workflow-execution-service-schemas>
 [res-git]: <https://git-scm.com/>
