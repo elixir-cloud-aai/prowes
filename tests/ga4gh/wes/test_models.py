@@ -7,6 +7,7 @@ from connexion import App
 from pydantic import ValidationError
 import pytest
 
+from pro_wes.config_models import PostRuns
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
 from pro_wes.ga4gh.wes.models import (
@@ -106,6 +107,13 @@ def test_optional_fields_default_to_none() -> None:
     assert service.model_dump(mode="json")["organization"]["url"] == (
         "https://example.org/"
     )
+
+
+@pytest.mark.parametrize("charset", ["", "string.ascii_uppercase + string.digits"])
+def test_id_charset_invalid(charset: str) -> None:
+    """Run identifier characters that FOCA can't use stop the app on startup."""
+    with pytest.raises(ValidationError):
+        PostRuns(id_charset=charset)
 
 
 def test_state_properties() -> None:

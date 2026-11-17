@@ -1,5 +1,6 @@
 """Tests of the entry points of the Gunicorn server and the Celery worker."""
 
+from collections.abc import Iterator
 import importlib
 import os
 from pathlib import Path
@@ -8,28 +9,43 @@ import sys
 
 import pytest
 
-import pro_wes.gunicorn
-import pro_wes.tasks.track_run_progress  # noqa: F401 (registers the task)
 from pro_wes.celery_worker import celery
+import pro_wes.gunicorn
+import pro_wes.tasks.track_run_progress
 
 ROOT = Path(__file__).parents[1]
 
 
-def test_gunicorn_settings_from_foca(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def reload_gunicorn() -> Iterator[None]:
+    """Reload the Gunicorn settings again after the test.
+
+    Yields:
+        Nothing; the settings are reloaded with the restored environment.
+    """
+    yield
+    importlib.reload(pro_wes.gunicorn)
+
+
+@pytest.mark.usefixtures("reload_gunicorn")
+@pytest.mark.parametrize(
+    ("env", "workers", "threads"),
+    [({}, 1, 4), ({"GUNICORN_PROCESSES": "3", "GUNICORN_THREADS": "2"}, 3, 2)],
+)
+def test_gunicorn_settings_from_foca(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], workers: int, threads: int
+) -> None:
     """Gunicorn gets FOCA's settings, with workers and threads from the env."""
-    monkeypatch.setenv("GUNICORN_PROCESSES", "3")
-    monkeypatch.setenv("GUNICORN_THREADS", "2")
+    monkeypatch.delenv("GUNICORN_PROCESSES", raising=False)
+    monkeypatch.delenv("GUNICORN_THREADS", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
     settings = importlib.reload(pro_wes.gunicorn)
     assert settings.bind == ["0.0.0.0:8080"]
     assert settings.worker_class == "gthread"
-    assert settings.workers == 3
-    assert settings.threads == 2
+    assert settings.workers == workers
+    assert settings.threads == threads
     assert settings.forwarded_allow_ips == "*"
-    monkeypatch.delenv("GUNICORN_PROCESSES")
-    monkeypatch.delenv("GUNICORN_THREADS")
-    settings = importlib.reload(pro_wes.gunicorn)
-    assert settings.workers == 1
-    assert settings.threads == 4
 
 
 def test_gunicorn_settings_create_no_app() -> None:

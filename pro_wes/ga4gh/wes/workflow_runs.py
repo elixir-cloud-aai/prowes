@@ -380,7 +380,10 @@ class WorkflowRuns:
             base_path=document["wes_endpoint"]["base_path"],
             token=kwargs.get("jwt"),
         )
-        wes_client.cancel_run(run_id=document["wes_endpoint"]["run_id"])
+        wes_client.cancel_run(
+            run_id=document["wes_endpoint"]["run_id"],
+            timeout=self.config.defaults.timeout,
+        )
 
         return {"run_id": run_id}
 

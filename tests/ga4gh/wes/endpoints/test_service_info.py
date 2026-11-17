@@ -73,6 +73,19 @@ def test_set_service_info_replaces() -> None:
 
 
 @pytest.mark.usefixtures("app")
+def test_get_service_info_unknown_state() -> None:
+    """Runs with unknown states are not counted, without failing."""
+    get_collection(RUN_DB, RUN_COLLECTION).insert_many(
+        [{"run_log": {"state": "PREEMPTED"}}, {"run_log": {"state": "RUNNING"}}]
+    )
+    service_info = ServiceInfo()
+    service_info.set_service_info(data=deepcopy(SERVICE_INFO))
+    counts = service_info.get_service_info()["system_state_counts"]
+    assert "PREEMPTED" not in counts
+    assert sum(counts.values()) == 1
+
+
+@pytest.mark.usefixtures("app")
 def test_get_service_info_counts_states() -> None:
     """System state counts reflect the states of the stored runs."""
     get_collection(RUN_DB, RUN_COLLECTION).insert_many(

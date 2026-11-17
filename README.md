@@ -105,7 +105,8 @@ describe each section. The settings that deployments usually change:
 | `jobs.host`, `jobs.port` | `${RABBIT_HOST:-rabbitmq}`, `${RABBIT_PORT:-5672}` | RabbitMQ broker of the Celery worker; the environment variable `CELERY_BROKER_URL` takes precedence (e.g., for brokers with credentials) |
 | `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
 | `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type |
-| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), polling of the remote WES (`polling_wait`, `polling_attempts`) |
+| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`) |
+| `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, run log, cancel), in seconds |
 | `custom.service_info` | | Service info, stored in the database on the first start |
 
 Strings in the configuration may reference environment variables, as
@@ -181,7 +182,8 @@ following:
   started with `celery -A pro_wes.celery_worker worker`, both from `/app`
   (before: `gunicorn -c gunicorn.py wsgi:app` and `celery -A celery_worker
   worker` from `/app/pro_wes`), as in [`docker-compose.yaml`](docker-compose.yaml)
-  and the Helm chart. The app is created once per Gunicorn worker (no longer
+  and the Helm chart (2.0.2 or later; deployments that set their own
+  `command` or `args` need the same change). The app is created once per Gunicorn worker (no longer
   also by the Gunicorn master), and the Celery worker replaces its MongoDB
   client after forking (no more `MongoClient opened before fork` warnings).
   Gunicorn now runs one worker with 4 threads by default
@@ -191,8 +193,18 @@ following:
 * **Logs**: the Celery worker logs in the format of the app (section `log`)
   instead of Celery's own.
 * **Service info**: the service info in the database is kept; a new database
-  gets that of `custom.service_info`, with timestamps as RFC 3339 strings.
-  Startup no longer fetches the GA4GH service info schema from GitHub.
+  gets that of `custom.service_info`, with timestamps as RFC 3339 strings and
+  URLs normalized (e.g., `https://example.org` becomes
+  `https://example.org/`). Runs with states that proWES doesn't know are left
+  out of `system_state_counts`. Startup no longer fetches the GA4GH service
+  info schema from GitHub.
+* **Timeouts**: Gunicorn's threaded workers don't stop requests that hang,
+  so requests to the remote WES are limited: forwarding runs by
+  `custom.post_runs.timeout_post` (now 30 seconds; before: none), canceling
+  runs and reading run logs by `custom.defaults.timeout`.
+* **Run logs**: the Celery worker stores the outputs, the engine log and the
+  task logs of the remote run log, after validation; the run keeps its own
+  identifier and state (before: the task failed before storing any).
 
 ## Development
 

@@ -11,7 +11,7 @@ import pytest
 
 from pro_wes.app import init_app
 from pro_wes.config_models import CustomConfig
-from pro_wes.utils.db_names import RUN_DB, SERVICE_INFO_COLLECTION
+from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB, SERVICE_INFO_COLLECTION
 from tests.conftest import SERVICE_INFO_ID
 
 BASE_PATH = "/ga4gh/wes/v1"
@@ -23,8 +23,12 @@ def test_init_app_creates_storage(foca_app: App, storage_path: Path) -> None:
     assert storage_path.is_dir()
 
 
-def test_init_app_stores_service_info(foca_app: App) -> None:
+def test_init_app_stores_service_info(
+    foca_app: App, mongodb: MongoClient[dict[str, Any]]
+) -> None:
     """The service info of the configuration is stored as JSON values."""
+    # in the database of the test
+    assert mongodb[RUN_DB][SERVICE_INFO_COLLECTION].count_documents({}) == 1
     with foca_app.app.app_context():
         stored = get_collection(RUN_DB, SERVICE_INFO_COLLECTION).find_one(
             {}, {"_id": False}
@@ -98,9 +102,12 @@ def test_errors_are_problem_details(foca_client: Client) -> None:
     assert body["detail"] == "The requested run wasn't found."
 
 
-def test_mongodb_fixture_is_used(
-    foca_app: App, mongodb: MongoClient[dict[str, Any]]
-) -> None:
-    """The app stores into the database of the test."""
-    assert foca_app is not None
-    assert mongodb[RUN_DB][SERVICE_INFO_COLLECTION].count_documents({}) == 1
+def test_db_names_configured(foca_app: App) -> None:
+    """The names of `pro_wes.utils.db_names` are those of the configuration."""
+    with foca_app.app.app_context():
+        db = get_config().db
+    assert db is not None
+    assert db.dbs is not None
+    collections = db.dbs[RUN_DB].collections
+    assert collections is not None
+    assert {RUN_COLLECTION, SERVICE_INFO_COLLECTION} <= set(collections)

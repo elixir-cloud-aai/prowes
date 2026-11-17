@@ -6,6 +6,7 @@ from typing import Any
 
 from celery import Task
 from foca import get_collection, get_custom_config
+from pydantic import BaseModel, ValidationError
 
 from pro_wes.celery_worker import celery
 from pro_wes.config_models import CustomConfig
@@ -13,6 +14,7 @@ from pro_wes.exceptions import EngineProblem, EngineUnavailable, WesEndpointProb
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
     DbDocument,
+    Log,
     RunStatus,
     State,
 )
@@ -94,6 +96,7 @@ def task__track_run_progress(
         db_client=db_client,
         wes_client=wes_client,
         run_id=remote_run_id,
+        timeout=custom_config.defaults.timeout,
     )
 
     # track workflow run progress
@@ -134,27 +137,50 @@ def task__track_run_progress(
         db_client=db_client,
         wes_client=wes_client,
         run_id=remote_run_id,
+        timeout=custom_config.defaults.timeout,
     )
 
     logger.info("[%s] Processing completed.", task_id)
     return task_id
 
 
+class RunLogUpdate(BaseModel):
+    """Fields of a remote run log that are stored with the run.
+
+    Attributes:
+        outputs: Name and destination of workflow outputs.
+        run_log: Log of the workflow engine.
+        task_logs: Logs of the tasks of the workflow.
+    """
+
+    outputs: dict[str, Any] | None = None
+    run_log: Log | None = None
+    task_logs: list[Log] | None = None
+
+
+# Fields of remote run logs that are stored (cf. `RunLogUpdate`)
+RUN_LOG_FIELDS = tuple(RunLogUpdate.model_fields)
+
+
 def _update_run_log(
     db_client: DbDocumentConnector,
     wes_client: WesClient,
     run_id: str,
+    timeout: float | None,
 ) -> DbDocument:
     """Fetch the run log from the remote WES and store it in the run document.
 
-    The run log is stored without validation, except for the original run
-    request, which is left out (workaround for cwl-WES, whose responses don't
-    conform to the model).
+    Only the outputs, the log of the workflow engine and the task logs of the
+    remote run log are stored, after validation: its state is tracked via
+    status requests, its run identifier is that of the remote WES (the run
+    keeps its own), and its run request is left out (cwl-WES sends one that
+    doesn't conform to the model).
 
     Args:
         db_client: Connector to the run document.
         wes_client: Client of the remote WES.
         run_id: Workflow run identifier on remote WES service.
+        timeout: Timeout of the request, in seconds.
 
     Returns:
         Updated run document.
@@ -162,14 +188,22 @@ def _update_run_log(
     Raises:
         pro_wes.exceptions.EngineUnavailable: The remote service is
             unavailable; the run state is set to `SYSTEM_ERROR`.
+        pro_wes.exceptions.EngineProblem: The run log of the remote service
+            is invalid; the run state is set to `SYSTEM_ERROR`.
     """
     try:
-        response = wes_client.get_run(run_id=run_id)
+        response = wes_client.get_run(run_id=run_id, timeout=timeout)
     except EngineUnavailable:
         db_client.update_run_state(state=State.SYSTEM_ERROR.value)
         raise
-    response.pop("request", None)
+    try:
+        run_log = RunLogUpdate.model_validate(
+            {key: response[key] for key in RUN_LOG_FIELDS if key in response}
+        )
+    except ValidationError as exc:
+        db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+        raise EngineProblem("Received invalid run log.") from exc
     return db_client.upsert_fields_in_root_object(
         root="run_log",
-        **response,
+        **run_log.model_dump(exclude_unset=True),
     )

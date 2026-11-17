@@ -68,9 +68,7 @@ def queued(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """
     calls: list[dict[str, Any]] = []
 
-    def _apply_async(
-        args: Any, kwargs: dict[str, Any], **options: Any
-    ) -> None:
+    def _apply_async(args: Any, kwargs: dict[str, Any], **options: Any) -> None:
         """Record a queued task.
 
         Args:
@@ -96,9 +94,7 @@ def remote_wes(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
     """
     sent: list[dict[str, str]] = []
 
-    def _post_run(
-        self: WesClient, form_data: dict[str, str], **kwargs: Any
-    ) -> RunId:
+    def _post_run(self: WesClient, form_data: dict[str, str], **kwargs: Any) -> RunId:
         """Accept a run.
 
         Args:

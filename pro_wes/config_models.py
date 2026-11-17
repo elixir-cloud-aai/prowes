@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel
+from foca.utils.misc import generate_id
+from pydantic import BaseModel, field_validator
 
 from pro_wes.ga4gh.wes.models import ServiceInfoBase as ServiceInfo
 
@@ -53,10 +54,31 @@ class PostRuns(BaseModel):
     db_insert_attempts: int = 10
     id_charset: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     id_length: int = 6
-    timeout_post: int | None = None
+    timeout_post: int | None = 30
     timeout_job: int | None = None
     polling_wait: float = 3
     polling_attempts: int = 100
+
+    @field_validator("id_charset")
+    @classmethod
+    def id_charset_valid(cls, value: str) -> str:
+        """Ensure that the characters of run identifiers can be used.
+
+        Args:
+            value: Characters of run identifiers.
+
+        Returns:
+            The characters.
+
+        Raises:
+            ValueError: The characters are empty or an expression (e.g.,
+                `string.digits`), which FOCA no longer evaluates.
+        """
+        try:
+            generate_id(charset=value, length=1)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"unusable characters of run identifiers: {exc}") from exc
+        return value
 
 
 class ListRuns(BaseModel):

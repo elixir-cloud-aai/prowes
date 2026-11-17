@@ -104,7 +104,15 @@ def _fake_remote(
             Run log.
         """
         logs.append(run_id)
-        return {"outputs": {"out": len(logs)}, "request": {"workflow_url": "x"}}
+        # a complete run log, as a remote WES sends it
+        return {
+            "run_id": run_id,
+            "state": "PREEMPTED",
+            "outputs": {"out": len(logs)},
+            "request": {"workflow_url": "x"},
+            "run_log": {"name": "engine", "exit_code": 0},
+            "task_logs": [{"name": "step", "cmd": ["echo"]}],
+        }
 
     def _get_run_status(
         self: WesClient, run_id: str, **kwargs: Any
@@ -148,9 +156,28 @@ def test_track_run_until_finished(monkeypatch: pytest.MonkeyPatch) -> None:
     assert logs == [REMOTE_RUN_ID, REMOTE_RUN_ID]
     document = _stored()
     assert document["run_log"]["state"] == "COMPLETE"
-    # the final run log, without the run request of the remote WES
+    # the final run log; state and run identifier are not taken from it, nor
+    # the run request of the remote WES
     assert document["run_log"]["outputs"] == {"out": 2}
+    assert document["run_log"]["run_log"]["exit_code"] == 0
+    assert document["run_log"]["task_logs"][0]["cmd"] == ["echo"]
+    assert document["run_log"]["run_id"] == RUN_ID
     assert "request" not in document["run_log"]
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_invalid_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs whose remote run log is invalid fail, with `SYSTEM_ERROR`."""
+    monkeypatch.setattr(
+        WesClient,
+        "get_run",
+        lambda *_args, **_kwargs: {"task_logs": [{"start_time": 1700000000}]},
+    )
+    with pytest.raises(EngineProblem):
+        _track()
+    document = _stored()
+    assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert "task_logs" not in document["run_log"]
 
 
 @pytest.mark.usefixtures("run")

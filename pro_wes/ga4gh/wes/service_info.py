@@ -84,5 +84,9 @@ class ServiceInfo:
             },
         )
         for record in cursor:
-            current_counts[record["run_log"]["state"]] += 1
+            state = record.get("run_log", {}).get("state")
+            if state in current_counts:
+                current_counts[state] += 1
+            else:
+                logger.warning("Run with unknown state not counted: %s", state)
         return current_counts
