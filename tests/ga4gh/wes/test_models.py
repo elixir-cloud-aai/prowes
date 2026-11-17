@@ -10,6 +10,7 @@ import pytest
 from pro_wes.config_models import PostRuns
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
+from pro_wes.ga4gh.wes import models
 from pro_wes.ga4gh.wes.models import (
     DbDocument,
     DefaultWorkflowEngineParameter,
@@ -80,6 +81,30 @@ def test_run_request_unsupported(changes: dict[str, str]) -> None:
     """Workflow types and versions that the service info lacks are refused."""
     with pytest.raises(NoSuitableEngine):
         RunRequest(**{**RUN_REQUEST, **changes})
+
+
+@pytest.mark.usefixtures("app_context")
+def test_stored_run_request_not_checked_against_service_info() -> None:
+    """Stored runs load whatever the service info of this process supports.
+
+    The worker reads runs that the app accepted, possibly with another
+    configuration, or before workflow types were removed from it.
+    """
+    stored = {"run_log": {"request": {**RUN_REQUEST, "workflow_type": "WDL"}}}
+    document = DbDocument.model_validate(stored, context=models.STORED_CONTEXT)
+    assert document.run_log.request is not None
+    assert document.run_log.request.workflow_type == "WDL"
+    with pytest.raises(NoSuitableEngine):
+        DbDocument.model_validate(stored)
+
+
+def test_run_request_type_without_versions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workflow types configured without versions support no version."""
+    monkeypatch.setattr(models, "workflow_type_versions", lambda: {"CWL": {}})
+    with pytest.raises(NoSuitableEngine):
+        RunRequest(**RUN_REQUEST)
 
 
 def test_run_log_state_values() -> None:

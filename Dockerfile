@@ -42,8 +42,8 @@ COPY pro_wes ./pro_wes
 ## image moves to a FOCA base image (#111). The build context has
 ## no Git metadata, so the package version is `0.0.0.dev0` unless it is passed
 ## as a build argument (e.g.,
-## `--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=1.2.3`); the app doesn't use
-## it (service info reports the version of `pro_wes/config.yaml`)
+## `--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=1.2.3`); the service info
+## reports it as `version`, unless `service_info.service.version` is set
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
   export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
