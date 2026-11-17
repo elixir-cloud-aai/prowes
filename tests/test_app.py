@@ -20,6 +20,21 @@ def test_init_app_creates_storage(foca_app: App, storage_path: Path) -> None:
     assert storage_path.is_dir()
 
 
+def test_init_app_refuses_unwritable_storage(app_env: None, storage_path: Path) -> None:
+    """The app refuses to start if it can't write to the storage directory.
+
+    E.g., a volume that the image's user can't write to: otherwise, the app
+    would start and only `POST /runs` would fail.
+    """
+    storage_path.mkdir()
+    storage_path.chmod(0o555)
+    try:
+        with pytest.raises(PermissionError, match="not writable"):
+            init_app()
+    finally:
+        storage_path.chmod(0o755)
+
+
 def test_config(foca_app: App) -> None:
     """The configuration has FOCA 0.22's sections and the typed custom one."""
     with foca_app.app.app_context():

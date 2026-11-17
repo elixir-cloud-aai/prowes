@@ -1,5 +1,6 @@
 """proWES application entry point."""
 
+import os
 from pathlib import Path
 
 from connexion import App
@@ -13,14 +14,15 @@ from pro_wes.ga4gh.wes.models import ServiceInfo
 def init_app() -> App:
     """Initialize FOCA application.
 
-    Creates the storage directory of the runs and checks that the service
-    info (config section `service_info`) has the fields of the WES
-    specification.
+    Creates the storage directory of the runs, checks that it is writable,
+    and checks that the service info (config section `service_info`) has the
+    fields of the WES specification.
 
     Returns:
         FOCA application.
 
     Raises:
+        PermissionError: The storage directory of the runs is not writable.
         pydantic.ValidationError: The service info lacks WES fields or has
             invalid ones.
     """
@@ -40,6 +42,7 @@ def _setup_first_start(app: App) -> None:
         app: FOCA application.
 
     Raises:
+        PermissionError: The storage directory of the runs is not writable.
         pydantic.ValidationError: The service info lacks WES fields or has
             invalid ones.
     """
@@ -48,20 +51,12 @@ def _setup_first_start(app: App) -> None:
         # create storage directory
         work_dir = Path(custom_config.post_runs.storage_path).resolve()
         work_dir.mkdir(parents=True, exist_ok=True)
+        # Fail on startup rather than on the first `POST /runs` (e.g., on a
+        # volume that the image's non-root user can't write to)
+        if not os.access(work_dir, os.W_OK | os.X_OK):
+            raise PermissionError(
+                f"Storage directory of the runs is not writable: {work_dir}"
+            )
         # FOCA checks the fields of the GA4GH service info, but not those of
         # the WES specification (e.g., `workflow_type_versions`)
         ServiceInfo(**get_service_info())
-
-
-def run_app(app: App) -> None:
-    """Run FOCA application.
-
-    Args:
-        app: FOCA application.
-    """
-    app.run(port=app.port)
-
-
-if __name__ == "__main__":
-    foca_app = init_app()
-    run_app(app=foca_app)

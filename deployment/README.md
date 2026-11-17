@@ -101,6 +101,17 @@ are deployed using:
 These deployments depend on setting up a shared ReadWriteMany volume between
 (`wes-configmap.yaml`).
 
+The image runs as the non-root user `1000` and writes the runs to `/data`. On
+Kubernetes (`clusterType: kubernetes`), both deployments set `fsGroup: 1000`
+(with `fsGroupChangePolicy: OnRootMismatch`, so that Kubernetes changes the
+volume recursively only while `/data` lacks the group), and their init
+containers (as root) give `/data` to user and group `1000` where they can
+(for volumes whose ownership Kubernetes doesn't manage, e.g., NFS; failures,
+e.g., with `root_squash`, are only logged), so that the volume is writable
+for it; on OpenShift (`clusterType: openshift`), OpenShift assigns user and
+group itself. If `/data` still isn't writable, the app refuses to start
+(`PermissionError` in its log).
+
 
 ## Destroy
 

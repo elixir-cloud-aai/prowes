@@ -12,6 +12,17 @@ spec:
       labels:
         app: {{ .Values.prowes.appName }}
     spec:
+      {{- if ne .Values.clusterType "openshift" }}
+      # The image runs as the non-root user 1000; `fsGroup` makes the data
+      # volume writable for it where Kubernetes manages the volume's
+      # ownership, and `vol-init` (as root) hands `/data` over where it
+      # doesn't (e.g., NFS); OpenShift assigns user and group itself.
+      # `OnRootMismatch`: the volume is changed recursively only while
+      # `/data` doesn't have the group yet, not on every mount
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      {{- end }}
       {{- if eq .Values.storageAccessMode "ReadWriteOnce" }}
       affinity:
         podAffinity:
@@ -27,8 +38,15 @@ spec:
       initContainers:
       - name: vol-init
         image: busybox
+        {{- if eq .Values.clusterType "openshift" }}
         command: [ 'mkdir' ]
         args: [ '-p', '/data/db', '/data/specs' ]
+        {{- else }}
+        command: [ 'sh', '-c' ]
+        # Best effort (e.g., NFS with `root_squash` refuses both): the app
+        # refuses to start if it can't write to `/data`
+        args: [ 'mkdir -p /data/db /data/specs || echo "warning: could not create the subdirectories of /data" >&2; chown 1000:1000 /data && chmod 2775 /data || echo "warning: could not hand /data to user 1000" >&2' ]
+        {{- end }}
         resources: {{- toYaml .Values.prowes.initResources | nindent 10 }}
         volumeMounts:
         - mountPath: /data

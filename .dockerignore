@@ -8,8 +8,11 @@
 !LICENSE
 !README.md
 !pyproject.toml
-# Locked requirements of the image (installed by uv in the image build)
+# Locked requirements of the image (exported and installed by uv in the
+# image build)
 !uv.lock
+# Run by the image build to list the requirements to install
+!scripts/image_requirements.py
 
 # Exclude caches and local files within the included paths
 **/__pycache__
