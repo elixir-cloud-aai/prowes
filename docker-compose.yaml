@@ -68,7 +68,7 @@ services:
       start_period: 30s
 
   rabbitmq:
-    image: docker.io/library/rabbitmq:4.3.7
+    image: docker.io/library/rabbitmq:4.4.0
     hostname: rabbitmq
     restart: unless-stopped
     environment:
