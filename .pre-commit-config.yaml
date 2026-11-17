@@ -1,7 +1,7 @@
 # Checks run on commit (`pre-commit install`) and in CI (`pre-commit run
 # --all-files`, plus the manual-stage `gitleaks-all` hook); hook versions are
 # pinned to commits. The semgrep and ast-grep hooks of proTES follow with
-# their rules (#109), actionlint with the CI rewrite (#108)
+# their rules (#109)
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
@@ -35,6 +35,12 @@ repos:
         name: Detect hardcoded secrets (all files)
         entry: gitleaks dir --redact --verbose
         stages: [manual]
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
+    hooks:
+      # Workflows (`.github/workflows/`); also checks their scripts with
+      # shellcheck if it is installed (as on GitHub-hosted runners)
+      - id: actionlint
   - repo: local
     hooks:
       # Local hooks use the installed dev dependencies (the `dev` extra of
