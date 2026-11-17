@@ -6,8 +6,9 @@ note: |
   The app's code (e.g., `pro_wes/ga4gh/wes/workflow_runs.py` and the
   Celery tasks) gets plain data (the run request, its attachments, the
   caller), so that it runs unchanged after the move to Connexion 3 without
-  Flask (FOCA 1.0), which then changes the controller glue only. Read the request in the controllers
-  (`pro_wes/ga4gh/wes/controllers.py`) and pass what is needed.
+  Flask (FOCA 1.0), which then changes the controller glue only. Read the
+  request in the controllers (`pro_wes/ga4gh/wes/controllers.py`) and pass
+  what is needed.
 files:
   - pro_wes/**/*.py
 ignores:

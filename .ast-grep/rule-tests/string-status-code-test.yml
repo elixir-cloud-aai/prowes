@@ -10,3 +10,4 @@ invalid:
   - return body, '201', headers
   - return (body, "201")
   - return (None, "201", headers)
+  - return body, f"201"

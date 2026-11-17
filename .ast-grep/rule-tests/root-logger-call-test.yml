@@ -12,3 +12,4 @@ invalid:
   - logging.getLogger(None).error("Failed")
   - logging.getLogger(name=None).error("Failed")
   - logging.root.info("Started")
+  - logging.getLogger("root").info("Started")

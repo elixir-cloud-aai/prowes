@@ -122,8 +122,9 @@ project-specific rules, each with tests:
   - `root-logger-call`: messages logged with the root logger
   - `string-status-code`: HTTP status codes returned as strings
 
-pre-commit (run with `uv run`, as the ast-grep hooks use the dev
-dependencies) runs the rule tests when the rules change. To run them by
+pre-commit runs the rule tests when the rules change; run it with
+`uv run pre-commit ...`, as the ast-grep hooks use the ast-grep of the dev
+dependencies. To run the rule tests by
 hand: `uv run ast-grep test --skip-snapshot-tests`, and `semgrep --test .`
 in `.semgrep/` (semgrep is not a dev dependency: pre-commit installs its
 own, so install it separately for this).

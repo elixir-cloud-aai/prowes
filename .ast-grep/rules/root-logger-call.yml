@@ -16,6 +16,6 @@ rule:
     - pattern: logging.getLogger($NAME).$METHOD($$$ARGS)
 constraints:
   NAME:
-    regex: ^(None|""|'')$
+    regex: ^(None|""|''|"root"|'root')$
   METHOD:
     regex: ^(debug|info|warning|warn|error|exception|critical|fatal|log)$

@@ -15,4 +15,4 @@ rule:
 constraints:
   CODE:
     kind: string
-    regex: ^["']\d{3}["']$
+    regex: ^[a-zA-Z]*["']\d{3}["']$
