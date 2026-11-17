@@ -87,3 +87,18 @@ locally:
 | `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
 
 `CI passed` is the only required check. Add every new job to its `needs`.
+
+### Dependency updates
+
+Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) opens
+pull requests labelled `type: dependencies` once a month, to `dev`, grouped
+per ecosystem: Python dependencies (`pyproject.toml` and `uv.lock`), GitHub
+Actions, the images of the `Dockerfile`, the service images of Docker Compose
+(MongoDB, RabbitMQ, Flower) and the pre-commit hook revisions. Some updates
+are made by hand instead:
+
+- FOCA, in `pyproject.toml` and `uv.lock` together with the FOCA base image
+  (the image build fails unless the base image has the locked FOCA); run
+  `uv lock` after changing `pyproject.toml`.
+- connexion 3, which needs a FOCA upgrade.
+- MongoDB minor and major versions (patches still come).

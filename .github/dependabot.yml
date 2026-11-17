@@ -1,0 +1,93 @@
+version: 2
+# No entry or group sets `target-branch`: pull requests go to the default
+# branch (`dev`) anyway, and while `target-branch` is set, GitHub doesn't
+# apply the entry's options (`labels`, `ignore`, ...) to security updates
+multi-ecosystem-groups:
+  # The images of MongoDB, RabbitMQ and Flower, in one pull request for
+  # Docker Compose (`docker-compose.yaml`) and, once the chart is on FOCA's
+  # library chart (#38), the Helm chart (`deployment/values.yaml`)
+  service-images:
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+updates:
+  # Dependencies in `pyproject.toml` and the lock (`uv.lock`), updated
+  # together; CI's checks and the image build (`Dockerfile`) install the
+  # locked ones
+  - package-ecosystem: uv
+    directory: /
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    versioning-strategy: increase-if-necessary
+    ignore:
+      # connexion 3 needs a FOCA upgrade
+      - dependency-name: connexion
+        update-types: ["version-update:semver-major"]
+      # FOCA is bumped by hand, together with the base image (see the `docker`
+      # entry): once the image is built on FOCA's base image (#111), the build
+      # fails unless the base image has the locked FOCA, so separate pull
+      # requests of this entry and the `docker` entry would each fail
+      - dependency-name: foca
+    groups:
+      # Dependencies match the first group listed
+      python-dependencies:
+        patterns: ["*"]
+        exclude-patterns: ["connexion", "foca"]
+  # Actions in the workflows, including the pins of the shared actions of
+  # `elixir-cloud-aai/.github` (to the commits of its releases,
+  # `@<commit> # vX.Y.Z`)
+  - package-ecosystem: github-actions
+    directory: /
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
+  # Base image and uv image in the `Dockerfile` (tag and digest)
+  - package-ecosystem: docker
+    directory: /
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    ignore:
+      # FOCA is bumped by hand, in the base image and the `foca` requirement
+      # in `pyproject.toml` and `uv.lock` together (the image build fails
+      # unless the base image has the locked FOCA; see the `uv` entry).
+      # Digest updates of the same tag (e.g., OS package fixes) still come
+      - dependency-name: elixircloud/foca
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
+    groups:
+      docker:
+        patterns: ["*"]
+  # Images of the services in `docker-compose.yaml` (see the group)
+  - package-ecosystem: docker-compose
+    directory: /
+    patterns: ["*"]
+    labels: ["type: dependencies"]
+    multi-ecosystem-group: service-images
+    ignore:
+      # MongoDB versions are changed by hand: the FOCA upgrade (#107) moves
+      # the database to the version of proTES (7.0); 8.0 refuses to start on
+      # Linux kernels 6.19 to 7.0.13
+      # (https://jira.mongodb.org/browse/SERVER-121912); patches still come
+      - dependency-name: "*mongo"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+  # The `helm` entry (images in `deployment/values.yaml`, in the
+  # `service-images` group) follows with the chart on FOCA's library chart
+  # (#38)
+  # Hook revisions in `.pre-commit-config.yaml`
+  - package-ecosystem: pre-commit
+    directory: /
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    groups:
+      pre-commit:
+        patterns: ["*"]
