@@ -14,7 +14,9 @@ spec:
     spec:
       {{- if ne .Values.clusterType "openshift" }}
       # The image runs as the non-root user 1000; `fsGroup` makes the data
-      # volume writable for it (OpenShift assigns user and group itself)
+      # volume writable for it where Kubernetes manages the volume's
+      # ownership, and `vol-init` (as root) hands `/data` over where it
+      # doesn't (e.g., NFS); OpenShift assigns user and group itself
       securityContext:
         fsGroup: 1000
       {{- end }}
@@ -33,8 +35,13 @@ spec:
       initContainers:
       - name: vol-init
         image: busybox
+        {{- if eq .Values.clusterType "openshift" }}
         command: [ 'mkdir' ]
         args: [ '-p', '/data/db', '/data/specs' ]
+        {{- else }}
+        command: [ 'sh', '-c' ]
+        args: [ 'mkdir -p /data/db /data/specs && chown 1000:0 /data && chmod 2775 /data' ]
+        {{- end }}
         resources: {{- toYaml .Values.prowes.initResources | nindent 10 }}
         volumeMounts:
         - mountPath: /data

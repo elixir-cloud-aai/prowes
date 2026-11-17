@@ -4,8 +4,8 @@ Used by the `Dockerfile`: reads the requirements that `uv export` writes from
 `uv.lock` (the dependencies of the app, `project.dependencies` of
 `pyproject.toml`, with all their own dependencies, at exact versions and with
 hashes) and prints them without a direct reference to a FOCA commit
-(`foca @ git+https://...@<sha>`, temporary, see
-`scripts/check_release_pins.py`), as the base image has no Git and such a
+(`foca @ git+https://...@<sha>`, a temporary pin, e.g., to test an
+unreleased FOCA), as the base image has no Git and such a
 reference has no hash. Instead, it fails unless the base image has FOCA of
 that commit, i.e., a FOCA version whose local part is `g<abbreviated
 commit>`, as set by setuptools-scm (e.g., `0.16.1.dev7+gdb6998cae`). The
@@ -19,6 +19,9 @@ Usage: `python scripts/image_requirements.py <requirements>`, where
 `uv export --frozen --no-dev --no-emit-project`.
 
 Only the stdlib is used, so the image build runs it before installing the app.
+
+Same logic as proTES's `scripts/image_requirements.py` (also its tests,
+`tests/test_image_requirements.py`): change both together.
 """
 
 from collections.abc import Sequence

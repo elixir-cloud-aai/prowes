@@ -57,7 +57,8 @@ use the instructions described below.
 
 Ensure you have the following software installed:
 
-* [Docker][res-docker] with [Docker Compose][res-docker-compose] v2
+* [Docker][res-docker] with [Docker Compose][res-docker-compose] 2.23.1 or
+  later
 * [Git][res-git]
 
 ### Prerequisites
@@ -225,7 +226,12 @@ following:
   directory was world-writable). Only `/data` is writable: volumes mounted
   there must be writable for the user (the Helm chart, 2.0.4 or later, sets
   `fsGroup: 1000` on Kubernetes; OpenShift assigns user and group itself).
-  Runs stored before by root may not be writable for the user. The image now
+  Runs stored before by root may not be writable for the user. **Upgrade the
+  chart to 2.0.4 before pods pull the new image** (e.g., charts with
+  `elixircloud/prowes:latest` and `imagePullPolicy: Always`, on their next
+  restart), or make the volume writable for user `1000` first; 2.0.4's init
+  containers hand `/data` to the user, also on volumes whose ownership
+  Kubernetes doesn't manage (e.g., NFS). The image now
   has a health check (the Swagger UI) and a default command (Gunicorn, see
   above).
 * **Docker Compose**: [`docker-compose.yaml`](docker-compose.yaml) builds the

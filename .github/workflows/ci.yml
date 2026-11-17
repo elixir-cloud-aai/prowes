@@ -186,10 +186,11 @@ jobs:
         run: |
           echo "DUMMY=not-a-secret" > pro_wes/.env
           echo "dummy" > pro_wes/tls.key
-      # Waits until the health checks of all services pass
+      # Waits until the health checks of all services pass, for up to 3
+      # minutes after the build
       - name: Start app
-        run: docker compose up -d --build --wait
-      # Up to 2 minutes for the app and its services to start
+        run: docker compose up -d --build --wait --wait-timeout 180
+      # The service info, once the app is healthy (up to 2 minutes)
       - name: Check that app responds
         run: |
           for _ in $(seq 1 24); do
@@ -218,7 +219,7 @@ jobs:
           docker compose exec -T prowes sh -c \
             'test "$(id -u)" = 1000 && touch /data/.probe && rm /data/.probe'
       - name: Show app logs
-        if: failure()
+        if: failure() || cancelled()
         run: docker compose logs
 
   # Pushes the image on pushes to `dev` (unchanged from the former

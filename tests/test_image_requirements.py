@@ -1,4 +1,8 @@
-"""Tests of the requirements of the image build (`scripts/image_requirements.py`)."""
+"""Tests of the requirements of the image build (`scripts/image_requirements.py`).
+
+Kept identical to proTES's tests of the same script (but for the package
+name): change both together.
+"""
 
 import importlib.metadata
 import importlib.util
