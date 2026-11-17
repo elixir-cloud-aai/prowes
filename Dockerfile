@@ -39,7 +39,10 @@ COPY pro_wes ./pro_wes
 ## Install the runtime dependencies at the exact versions of `uv.lock`,
 ## checked against its hashes and without resolving anything else
 ## (`--no-deps`; the export leaves out the `dev` extra), then the app itself
-## (editable, as the services run from `/app/pro_wes`). The build context has
+## (editable, as the services run from `/app/pro_wes`). Only the runtime
+## packages are locked and hash-checked: the build backends of the app and of
+## sdists (setuptools, setuptools-scm) come unpinned from the index, until the
+## image moves to a FOCA base image (#111). The build context has
 ## no Git metadata, so the package version is `0.0.0.dev0` unless it is passed
 ## as a build argument (e.g.,
 ## `--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=1.2.3`); the app doesn't use
