@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py313"
 
 [tool.ruff.lint]
 # The rule set shared by FOCA and FOCA apps (as in proTES and
@@ -51,7 +51,7 @@ convention = "google"
 
 [tool.mypy]
 files = ["pro_wes", "tests"]
-python_version = "3.10"
+python_version = "3.13"
 # Complete type hints: all functions annotated, generic types parametrized
 # (instead of ruff's `ANN` rules, which report missing hints only, without
 # checking them)
@@ -72,6 +72,11 @@ ignore_missing_imports = true
 # PyMongo 3 (pinned by FOCA 0.12) ships no type information
 [[tool.mypy.overrides]]
 module = ["pymongo", "pymongo.*", "bson", "bson.*"]
+ignore_missing_imports = true
+
+# Celery 5 ships no type information
+[[tool.mypy.overrides]]
+module = ["celery", "celery.*"]
 ignore_missing_imports = true
 
 # mongomock ships no type information (used by the tests only)
@@ -103,20 +108,18 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Natural Language :: English",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.13",
 ]
 # The Python version of the base image in the `Dockerfile`, the only one the
-# app is tested with. It moves to the org's current version (3.13) with the
-# FOCA upgrade (#107): the FOCA 0.12 base image has Python 3.10 only
-requires-python = ">=3.10"
+# app is tested with (as in proTES)
+requires-python = ">=3.13"
 description = "Proxy for GA4GH Workflow Execution Service (WES) instances by ELIXIR On-Cloud"
 license = "Apache-2.0"
 dynamic = ["version"]
 dependencies = [
     "connexion>=2.14,<3",
     "email-validator>=2.1.0,<3",
-    # Bumped by hand, together with the base image in the `Dockerfile`
-    # (#107)
+    # Bumped by hand (#107)
     "foca==0.12.1",
     "gunicorn>=22",
     # FOCA 0.12 imports `pkg_resources`, which setuptools 81 removed; drop
@@ -127,7 +130,6 @@ dependencies = [
 [project.optional-dependencies]
 # Local hooks of `.pre-commit-config.yaml` use these too
 dev = [
-    "celery-types>=0.26",
     "coverage>=7.16",
     "mongomock>=4.3",
     "mypy>=2.4",

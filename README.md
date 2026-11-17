@@ -129,7 +129,7 @@ secrets in the working tree either.
 proWES is packaged with [`pyproject.toml`](pyproject.toml); all dependencies
 are locked in [`uv.lock`](uv.lock). You need [uv][res-uv] and
 [Git][res-git]; uv also provides the Python version that proWES targets (see
-`requires-python` in `pyproject.toml`, currently Python 3.10, the version of
+`requires-python` in `pyproject.toml`, currently Python 3.13, the version of
 the base image in the [`Dockerfile`](Dockerfile)).
 
 Clone the repository and install the app with its development tools (the

@@ -1,5 +1,8 @@
 ##### BASE IMAGE #####
-FROM elixircloud/foca:20230818-py3.10
+## Python 3.13, as in proTES (`requires-python` in `pyproject.toml`); FOCA
+## 0.12 has no image for it, so FOCA is installed with the app. Pinned by
+## digest, so that rebuilds use the same base image
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 ##### METADATA #####
 LABEL version="3.0"

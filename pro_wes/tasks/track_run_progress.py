@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
     track_started=True,
 )
 def task__track_run_progress(
-    self: Task[Any, Any],
+    self: Task,
     remote_host: str,
     remote_base_path: str,
     remote_run_id: str,
