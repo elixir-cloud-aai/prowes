@@ -1,34 +1,42 @@
 # FOCA configuration
-# Available in app context as attributes of `current_app.config.foca`
+# Available as attributes of `foca.get_config()`; the section `custom` via
+# `foca.get_custom_config(pro_wes.config_models.CustomConfig)`
 # Automatically validated via FOCA
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html
+# Strings may reference environment variables (`${VAR}`, or `${VAR:-default}`
+# with a default); write `$$` for a literal `$`
+# Cf. https://foca.readthedocs.io/en/latest/configuration/
 
-# Server configuration
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html#foca.models.config.ServerConfig
+# Server configuration; `host` and `port` apply to Flask's development server
+# only (`python -m pro_wes.app`): the image serves the app with Gunicorn, on
+# the address of FOCA's settings, `foca.gunicorn_config` (port 8080, or the
+# environment variable `PORT`)
+# Cf. https://foca.readthedocs.io/en/latest/configuration/server/
 server:
   host: "0.0.0.0"
   port: 8080
-  debug: True
-  environment: development
+  # Debug mode allows executing arbitrary code; only enable it for local
+  # development, on a loopback host
+  debug: False
   testing: False
-  use_reloader: False
 
-# Security configuration
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html#foca.models.config.SecurityConfig
+# Security configuration: the WES API is served without authentication
+# (`api.specs[].disable_auth`); authentication follows with its own issue.
+# Without trusted `issuers`, FOCA rejects all bearer tokens
+# Cf. https://foca.readthedocs.io/en/latest/configuration/auth/
 security:
   auth:
     add_key_to_claims: True
     algorithms:
       - RS256
     allow_expired: False
-    audience: null
-    validation_methods:
-      - userinfo
-      - public_key
-    validation_checks: any
+    issuers: []
 
 # Database configuration
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html#foca.models.config.DBConfig
+# Cf. https://foca.readthedocs.io/en/latest/configuration/db/
+# The host and port are overridden by the environment variables `MONGO_HOST`
+# and `MONGO_PORT`, the name of the database by `MONGO_DBNAME`; credentials
+# come from `MONGO_USERNAME` and `MONGO_PASSWORD`, or the whole connection
+# string from `MONGO_URI`
 db:
   host: mongodb
   port: 27017
@@ -49,7 +57,7 @@ db:
                 id: 1
 
 # API configuration
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html#foca.models.config.APIConfig
+# Cf. https://foca.readthedocs.io/en/latest/configuration/api/
 api:
   specs:
     - path:
@@ -58,7 +66,7 @@ api:
       add_operation_fields:
         x-openapi-router-controller: pro_wes.ga4gh.wes.controllers
       add_security_fields:
-        x-bearerInfoFunc: app.validate_token
+        x-bearerInfoFunc: foca.security.auth.validate_token
       disable_auth: True
       connexion:
         strict_validation: True
@@ -70,7 +78,7 @@ api:
           serve_spec: True
 
 # Logging configuration
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html#foca.models.config.LogConfig
+# Cf. https://foca.readthedocs.io/en/latest/configuration/log/
 log:
   version: 1
   disable_existing_loggers: False
@@ -89,30 +97,34 @@ log:
     level: 10
     handlers: [console]
 
-# Background job configuration
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html#foca.models.config.JobsConfig
+# Background job configuration: the message broker (RabbitMQ) at the host and
+# port of the environment variables `RABBIT_HOST` and `RABBIT_PORT`, if set;
+# the environment variables `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND`
+# take precedence over these settings (e.g., for brokers with credentials)
+# Cf. https://foca.readthedocs.io/en/latest/configuration/jobs/
 jobs:
-  host: rabbitmq
-  port: 5672
+  host: ${RABBIT_HOST:-rabbitmq}
+  port: ${RABBIT_PORT:-5672}
   backend: "rpc://"
   include:
     - pro_wes.tasks.track_run_progress
 
-# Exception configuration
-# Cf. https://foca.readthedocs.io/en/latest/modules/foca.models.html#foca.models.config.ExceptionConfig
+# Exception handling: problem details of exceptions (`title`, `status`,
+# `detail`), sent with the media type of error responses of the GA4GH
+# specifications (instead of FOCA's default `application/problem+json`)
+# Cf. https://foca.readthedocs.io/en/latest/configuration/exceptions/
 exceptions:
-  required_members: [["message"], ["code"]]
-  status_member: ["code"]
-  exceptions: pro_wes.exceptions.exceptions
+  mapping: pro_wes.exceptions.exceptions
+  media_type: application/json
 
-# Custom configuration
-# Available in app context as attributes of `current_app.config.foca`
+# Custom configuration (cf. `pro_wes.config_models.CustomConfig`)
 custom:
   defaults:
     timeout: 2
   post_runs:
     db_insert_attempts: 10
-    id_charset: string.ascii_uppercase + string.digits
+    # Characters of run identifiers (taken as is, not evaluated)
+    id_charset: ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
     id_length: 6
     polling_attempts: 100
     polling_wait: 3

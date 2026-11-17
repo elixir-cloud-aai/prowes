@@ -4,27 +4,15 @@ from collections.abc import Iterator
 from copy import deepcopy
 from typing import Any
 
-from flask import Flask
-from foca.models.config import Config, MongoConfig
-import mongomock
+from connexion import App
+from foca import get_collection
 import pytest
 
 from pro_wes.exceptions import NotFound
 from pro_wes.ga4gh.wes.service_info import ServiceInfo
 from pro_wes.ga4gh.wes.states import States
+from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB, SERVICE_INFO_COLLECTION
 
-MONGO_CONFIG: dict[str, Any] = {
-    "host": "mongodb",
-    "port": 27017,
-    "dbs": {
-        "runStore": {
-            "collections": {
-                "runs": {"indexes": [{"keys": [("run_id", 1)]}]},
-                "service_info": {"indexes": [{"keys": [("id", 1)]}]},
-            },
-        },
-    },
-}
 SERVICE_INFO: dict[str, Any] = {
     "contactUrl": "mailto:support@example.com",
     "createdAt": "2019-06-04T12:58:19Z",
@@ -41,20 +29,19 @@ SERVICE_INFO: dict[str, Any] = {
 
 
 @pytest.fixture
-def app() -> Iterator[Flask]:
-    """Get an app with mongomock collections for service info and runs.
+def app(foca_app: App) -> Iterator[App]:
+    """Get the app without service info, within its app context.
+
+    Args:
+        foca_app: The app, which stores the service info of its
+            configuration on startup.
 
     Yields:
-        App, within its app context.
+        The app, within its app context.
     """
-    flask_app = Flask(__name__)
-    flask_app.config.foca = Config(db=MongoConfig(**MONGO_CONFIG))  # type: ignore[attr-defined]
-    database = mongomock.MongoClient().db
-    collections = flask_app.config.foca.db.dbs["runStore"].collections  # type: ignore[attr-defined]
-    collections["service_info"].client = database.service_info
-    collections["runs"].client = database.runs
-    with flask_app.app_context():
-        yield flask_app
+    with foca_app.app.app_context():
+        get_collection(RUN_DB, SERVICE_INFO_COLLECTION).delete_many({})
+        yield foca_app
 
 
 @pytest.mark.usefixtures("app")
@@ -85,10 +72,10 @@ def test_set_service_info_replaces() -> None:
     assert service_info.get_service_info(get_counts=False) == updated
 
 
-def test_get_service_info_counts_states(app: Flask) -> None:
+@pytest.mark.usefixtures("app")
+def test_get_service_info_counts_states() -> None:
     """System state counts reflect the states of the stored runs."""
-    collections = app.config.foca.db.dbs["runStore"].collections  # type: ignore[attr-defined]
-    collections["runs"].client.insert_many(
+    get_collection(RUN_DB, RUN_COLLECTION).insert_many(
         [
             {"run_log": {"state": "RUNNING"}},
             {"run_log": {"state": "RUNNING"}},

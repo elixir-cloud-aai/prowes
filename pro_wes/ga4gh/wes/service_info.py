@@ -4,12 +4,12 @@ import logging
 from typing import Any
 
 from bson.objectid import ObjectId
-from flask import current_app
-from foca.models.config import Config
+from foca import get_collection
 from pymongo.collection import Collection
 
 from pro_wes.exceptions import NotFound
 from pro_wes.ga4gh.wes.states import States
+from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB, SERVICE_INFO_COLLECTION
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,6 @@ class ServiceInfo:
     Creates service info upon first request, if it does not exist.
 
     Attributes:
-        config: App configuration.
-        foca_config: FOCA configuration.
         db_client_service_info: Database collection storing service info objects.
         db_client_runs: Database collection storing workflow run objects.
         object_id: Database identifier for service info.
@@ -29,13 +27,11 @@ class ServiceInfo:
 
     def __init__(self) -> None:
         """Class constructor."""
-        self.config: dict[str, Any] = current_app.config
-        self.foca_config: Config = self.config.foca  # type: ignore
-        self.db_client_service_info: Collection = (
-            self.foca_config.db.dbs["runStore"].collections["service_info"].client
+        self.db_client_service_info: Collection[dict[str, Any]] = get_collection(
+            RUN_DB, SERVICE_INFO_COLLECTION
         )
-        self.db_client_runs: Collection = (
-            self.foca_config.db.dbs["runStore"].collections["runs"].client
+        self.db_client_runs: Collection[dict[str, Any]] = get_collection(
+            RUN_DB, RUN_COLLECTION
         )
         self.object_id: str = "000000000000000000000000"
 
