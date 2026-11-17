@@ -4,9 +4,8 @@ The fields come from config section `service_info` and the system state
 counts from :py:func:`pro_wes.ga4gh.wes.service_info.runtime_fields`.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from importlib.metadata import version
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +18,7 @@ import pytest
 import yaml
 
 import pro_wes
+from pro_wes.app import init_app
 from pro_wes.config_models import CustomConfig
 from pro_wes.ga4gh.wes import service_info
 from pro_wes.ga4gh.wes.service_info import (
@@ -45,19 +45,6 @@ def _configured_service() -> dict[str, Any]:
     return {**service, "id": SERVICE_INFO_ID}
 
 
-def _add_overlay(monkeypatch: pytest.MonkeyPatch, path: Path, text: str) -> None:
-    """Merge a further config overlay over the test overlay.
-
-    Args:
-        monkeypatch: Monkeypatch fixture of the test.
-        path: Path of the overlay to write.
-        text: Content of the overlay.
-    """
-    path.write_text(text, encoding="utf-8")
-    overlays = os.environ["FOCA_CONFIG_OVERLAY"]
-    monkeypatch.setenv("FOCA_CONFIG_OVERLAY", f"{overlays}:{path}")
-
-
 @pytest.fixture
 def app_context(foca_app: App) -> Iterator[None]:
     """Enter the app context of the app.
@@ -77,6 +64,14 @@ def test_get_service_info(foca_client: Client) -> None:
     response = foca_client.get(URL)
     assert response.status_code == 200
     body: dict[str, Any] = response.json()
+    assert body["id"] == SERVICE_INFO_ID
+    assert body["type"] == {"group": "org.ga4gh", "artifact": "wes", "version": "1.0.1"}
+    assert body["contactUrl"] == "mailto:support@example.org"
+    assert body["workflow_type_versions"] == {
+        "CWL": {"workflow_type_version": ["v1.0"]}
+    }
+    assert body["supported_wes_versions"] == ["1.0.1"]
+    assert None not in body.values()
     assert body.pop("system_state_counts") == dict.fromkeys(States.ALL, 0)
     assert body.pop("version") == version("pro-wes")
     assert body == _configured_service()
@@ -118,16 +113,10 @@ def test_state_counts_unknown_state() -> None:
     assert runtime_fields() == {"system_state_counts": counts}
 
 
-def test_state_counts_not_configurable(
-    app_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_state_counts_not_configurable(add_overlay: Callable[[str], None]) -> None:
     """Configured state counts are refused: proWES computes them."""
-    from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
-
-    _add_overlay(
-        monkeypatch,
-        tmp_path / "counts.yaml",
-        "service_info:\n  service:\n    system_state_counts:\n      RUNNING: 5\n",
+    add_overlay(
+        "service_info:\n  service:\n    system_state_counts:\n      RUNNING: 5\n"
     )
     with pytest.raises(ValidationError, match="system_state_counts"):
         init_app()
@@ -139,17 +128,27 @@ def test_state_counts_not_configurable(
         "service_info:\n  service:\n    workflow_type_versions: null\n",
         "service_info:\n  service:\n    auth_instructions_url: null\n",
         "service_info:\n  service:\n    tags: not a mapping\n",
+        "service_info:\n  service:\n    contactUrl: support@example.org\n",
     ],
 )
-def test_init_app_checks_wes_fields(
-    app_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overlay: str
+def test_init_app_checks_service_info(
+    add_overlay: Callable[[str], None], overlay: str
 ) -> None:
-    """The app doesn't start if the service info lacks valid WES fields."""
-    from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
-
-    _add_overlay(monkeypatch, tmp_path / "wes.yaml", overlay)
+    """The app doesn't start with invalid or missing service info fields."""
+    add_overlay(overlay)
     with pytest.raises(ValidationError):
         init_app()
+
+
+def test_init_app_refuses_custom_service_info(
+    add_overlay: Callable[[str], None],
+) -> None:
+    """The app doesn't start with the service info of earlier versions."""
+    add_overlay("custom:\n  service_info:\n    id: org.example.prowes\n")
+    with pytest.raises(ValueError, match="custom configuration") as exc_info:
+        init_app()
+    # FOCA tells what to correct in the cause
+    assert "service_info.service" in str(exc_info.value.__cause__)
 
 
 def test_custom_service_info_refused() -> None:
@@ -167,8 +166,9 @@ def test_workflow_type_versions() -> None:
 def test_workflow_type_versions_without_service_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without service info, no workflow types are supported."""
+    """Without service info (which FOCA doesn't allow), no types are known."""
     monkeypatch.setattr(
         service_info, "get_config", lambda: SimpleNamespace(service_info=None)
     )
-    assert workflow_type_versions() == {}
+    with pytest.raises(RuntimeError):
+        workflow_type_versions()

@@ -10,6 +10,10 @@ from pro_wes.ga4gh.wes.models import DbDocument, State
 
 logger = logging.getLogger(__name__)
 
+# Validation context of stored documents: their run requests aren't checked
+# against the service info of this process (cf. `RunRequest`)
+STORED = {"stored": True}
+
 
 class DbDocumentConnector:
     """MongoDB connector to a given `pro_wes.ga4gh.wes.models.DbDocument` document.
@@ -54,7 +58,9 @@ class DbDocumentConnector:
             projection=projection,
         )
         try:
-            document: DbDocument = DbDocument.model_validate(document_unvalidated)
+            document: DbDocument = DbDocument.model_validate(
+                document_unvalidated, context=STORED
+            )
         except Exception as exc:
             raise ValueError(
                 f"Database document does not conform to schema: {document_unvalidated}"
@@ -103,7 +109,9 @@ class DbDocumentConnector:
             return_document=ReturnDocument.AFTER,
         )
         try:
-            document: DbDocument = DbDocument.model_validate(document_unvalidated)
+            document: DbDocument = DbDocument.model_validate(
+                document_unvalidated, context=STORED
+            )
         except Exception as exc:
             raise ValueError(
                 f"Database document does not conform to schema: {document_unvalidated}"

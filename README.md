@@ -218,7 +218,11 @@ following:
     `system_state_counts`. Startup no longer fetches the GA4GH service info
     schema from GitHub.
   * The Helm chart (2.0.3 or later) no longer creates the collection
-    `service_info`.
+    `service_info`. The chart can't pass a configuration overlay yet
+    (`FOCA_CONFIG_OVERLAY`), so deployments with the chart serve the
+    service info of `pro_wes/config.yaml` in the image until it can (#38).
+  * Runs that proWES accepted keep being tracked if their workflow type or
+    version is later removed from `workflow_type_versions`.
 * **Timeouts**: Gunicorn's threaded workers don't stop requests that hang,
   so requests to the remote WES are limited: forwarding runs by
   `custom.post_runs.timeout_post` (now 30 seconds; before: none), also for

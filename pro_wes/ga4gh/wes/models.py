@@ -171,8 +171,16 @@ class RunRequest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def workflow_type_and_version_supported(self) -> "RunRequest":
+    def workflow_type_and_version_supported(self, info: ValidationInfo) -> "RunRequest":
         """Ensure that this instance supports the workflow type and version.
+
+        Requests of stored runs (validation context `{"stored": True}`) are
+        not checked: the app accepted them, possibly with another
+        configuration than that of the process reading them (e.g., the
+        worker).
+
+        Args:
+            info: Validation context.
 
         Returns:
             The validated model.
@@ -180,12 +188,13 @@ class RunRequest(BaseModel):
         Raises:
             NoSuitableEngine: No suitable workflow engine known to process request.
         """
+        if info.context and info.context.get("stored"):
+            return self
         type_versions = workflow_type_versions()
         _type = self.workflow_type
         version = self.workflow_type_version
-        if (
-            _type not in type_versions
-            or version not in type_versions[_type]["workflow_type_version"]
+        if _type not in type_versions or version not in (
+            type_versions[_type].get("workflow_type_version") or []
         ):
             raise NoSuitableEngine(
                 f"No suitable workflow engine known for workflow type '{_type}' and"
@@ -501,6 +510,10 @@ class ServiceInfoBase(ServiceInfoWesBase, Service):
 
 class ServiceInfo(ServiceInfoBase):
     """Full model for service info.
+
+    Checks the service info that FOCA serves on startup (`pro_wes.app`), as
+    FOCA checks the fields of the GA4GH service info only, and the service
+    info of remote WES services (`pro_wes.ga4gh.wes.client_wes`).
 
     Args:
         system_state_counts: State counts for workflow runs available on this
