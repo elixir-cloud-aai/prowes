@@ -29,7 +29,7 @@ services:
       - ${PROWES_DATA_DIR:-../data/pro_wes/runs}:/data
 
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:4-management
     restart: unless-stopped
     links:
       - mongodb
@@ -45,7 +45,7 @@ services:
       - "27027:27017"
 
   flower:
-    image: mher/flower:0.9.7
+    image: mher/flower:2.1.0
     restart: unless-stopped
     links:
       - prowes-worker
