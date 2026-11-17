@@ -181,13 +181,20 @@ jobs:
           echo "dummy" > pro_wes/tls.key
       - name: Start app
         run: docker compose up -d --build
-      - name: Wait for app startup
-        run: sleep 20
+      # Up to 2 minutes for the app and its services to start
       - name: Check that app responds
         run: |
-          test "$(curl -sL -o /dev/null -w '%{http_code}' \
-            --header 'Accept: application/json' \
-            "${PROBE_ENDPOINT}")" == '200'
+          for _ in $(seq 1 24); do
+            status="$(curl -sL -o /dev/null -w '%{http_code}' \
+              --header 'Accept: application/json' \
+              "${PROBE_ENDPOINT}" || true)"
+            if [[ "${status}" == '200' ]]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::App did not respond with 200 (last: ${status})"
+          exit 1
       # `prowes:latest` is the image that `docker-compose.yaml` builds
       - name: Check that secret files are not in the image
         run: |
@@ -206,6 +213,11 @@ jobs:
     timeout-minutes: 30
     if: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
     needs: [lint, test, smoke]
+    # One push at a time, in order, so that an older commit never
+    # overwrites the tags of a newer one
+    concurrency:
+      group: ${{ github.workflow }}-push-image
+      cancel-in-progress: false
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -216,7 +228,7 @@ jobs:
           echo "TAG=$(date '+%Y%m%d')" >> "$GITHUB_ENV"
       - name: Build and publish image
         id: docker
-        uses: philips-software/docker-ci-scripts@v5.0.0
+        uses: philips-software/docker-ci-scripts@69ca3b3e358f8746c67341d6ab551ef5ec25a36c # v5.0.0
         with:
           dockerfile: .
           image-name: "prowes"

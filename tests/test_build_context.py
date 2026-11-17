@@ -6,8 +6,8 @@ files or private keys), also not within the paths that the image needs.
 
 These tests re-implement Docker's matching of `.dockerignore` patterns, to
 fail early and without Docker. The authoritative check is the image build in
-CI (`.github/workflows/main.yml`), which plants dummy secret files and checks
-that they don't reach the image.
+CI (job `smoke` of `.github/workflows/ci.yml`), which plants dummy secret
+files and checks that they don't reach the image.
 """
 
 import contextlib
