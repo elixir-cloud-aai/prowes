@@ -2,13 +2,13 @@
 ## uv, to install the locked requirements (`uv.lock`); mounted into the step
 ## that uses it only, so that the image doesn't contain it. Pinned by digest
 ## (the same as in proTES)
-FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d AS uv
 
 ##### BASE IMAGE #####
 ## Python 3.13, as in proTES (`requires-python` in `pyproject.toml`); FOCA is
 ## installed with the app, until the image is built on the FOCA base image
 ## (#111). Pinned by digest, so that rebuilds use the same base image
-FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 ##### METADATA #####
 LABEL version="3.0"
