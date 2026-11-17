@@ -1,11 +1,11 @@
 """proWES schema models."""
 
 from enum import Enum, EnumMeta
-from json import loads, JSONDecodeError
+from json import JSONDecodeError, loads
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any
 
-from pydantic import (  # pylint: disable=no-name-in-module
+from pydantic import (
     BaseModel,
     root_validator,
     validator,
@@ -15,15 +15,14 @@ from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
 from pro_wes.ga4gh.wes.service_info import ServiceInfo as ServiceInfoController
 
-# pragma pylint: disable=too-few-public-methods
-
 
 class MetaEnum(EnumMeta):
     """Metaclass for enumerators."""
 
-    def __contains__(cls, item):
+    def __contains__(cls, item: object) -> bool:
+        """Tell whether a value is a value of the enumerator."""
         try:
-            cls(item)  # pylint: disable=no-value-for-parameter
+            cls(item)
         except ValueError:
             return False
         return True
@@ -86,8 +85,8 @@ class RunRequest(BaseModel):
     workflow_params: str
     workflow_type: str
     workflow_type_version: str
-    tags: Optional[str] = "{}"
-    workflow_engine_parameters: Optional[str] = "{}"
+    tags: str | None = "{}"
+    workflow_engine_parameters: str | None = "{}"
     workflow_url: str
 
     @validator(
@@ -96,7 +95,7 @@ class RunRequest(BaseModel):
         "workflow_url",
         always=True,
     )
-    def required_str_field_not_empty(  # pylint: disable=no-self-argument
+    def required_str_field_not_empty(
         cls,
         value: str,
     ) -> str:
@@ -122,7 +121,7 @@ class RunRequest(BaseModel):
         "workflow_engine_parameters",
         always=True,
     )
-    def json_serialized_object_field_valid(  # pylint: disable=no-self-argument
+    def json_serialized_object_field_valid(
         cls,
         value: str,
         field: str,
@@ -157,7 +156,7 @@ class RunRequest(BaseModel):
             ValueError: The value could be JSON decoded, but the deserialized
                 value does not represent an object/dictionary.
         """
-        if value == "" or value == "null" or value is None:
+        if value in {"", "null", None}:
             if field == "workflow_params":
                 raise ValueError("field required")
             return "{}"
@@ -170,12 +169,11 @@ class RunRequest(BaseModel):
         return value
 
     @root_validator
-    def workflow_type_and_version_supported(  # pylint: disable=no-self-argument
+    def workflow_type_and_version_supported(
         cls,
-        values: Dict,
-    ) -> Dict:
-        """Ensure that workflow type and version are supported by this service
-        instance.
+        values: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Ensure that this instance supports the workflow type and version.
 
         Args:
             values (Dict): Field values dictionary.
@@ -218,13 +216,13 @@ class Log(BaseModel):
         stdout: A URL to retrieve standard output logs of the task.
     """
 
-    cmd: Optional[List[str]] = []
-    end_time: Optional[str] = None
-    exit_code: Optional[int] = None
-    name: Optional[str] = None
-    start_time: Optional[str] = None
-    stderr: Optional[str] = None
-    stdout: Optional[str] = None
+    cmd: list[str] | None = []
+    end_time: str | None = None
+    exit_code: int | None = None
+    name: str | None = None
+    start_time: str | None = None
+    stderr: str | None = None
+    stdout: str | None = None
 
 
 class State(BaseEnum):
@@ -260,7 +258,7 @@ class State(BaseEnum):
     CANCELING = "CANCELING"
 
     @property
-    def is_finished(self):
+    def is_finished(self) -> bool:
         """Check if a state is among the set of finished states."""
         return self in (
             self.COMPLETE,
@@ -270,7 +268,7 @@ class State(BaseEnum):
         )
 
     @property
-    def is_cancelable(self):
+    def is_cancelable(self) -> bool:
         """Check if a state is among the set of cancelable states."""
         return self in (
             self.QUEUED,
@@ -300,12 +298,12 @@ class RunLog(BaseModel):
         task_logs: List of workflow task/job logs.
     """
 
-    outputs: Optional[Dict] = None
-    request: Optional[RunRequest] = None
-    run_id: Optional[str] = None
-    run_log: Optional[Log] = None
+    outputs: dict[str, Any] | None = None
+    request: RunRequest | None = None
+    run_id: str | None = None
+    run_log: Log | None = None
     state: State = State.UNKNOWN
-    task_logs: Optional[List[Log]] = []
+    task_logs: list[Log] | None = []
 
     class Config:
         """Pydantic model configuration."""
@@ -314,8 +312,9 @@ class RunLog(BaseModel):
 
 
 class WesEndpoint(BaseModel):
-    """Model for information on the external WES endpoint to which the incoming
-    workflow run request was relayed.
+    """Model for information on the external WES endpoint.
+
+    The endpoint to which the incoming workflow run request was relayed.
 
     Args:
         host: Host at which the WES API is served that is processing this
@@ -339,8 +338,8 @@ class WesEndpoint(BaseModel):
     """
 
     host: str
-    base_path: Optional[str] = "/ga4gh/wes/v1"
-    run_id: Optional[str] = None
+    base_path: str | None = "/ga4gh/wes/v1"
+    run_id: str | None = None
 
 
 class DbDocument(BaseModel):
@@ -365,12 +364,12 @@ class DbDocument(BaseModel):
         work_dir: Working directory for workflow run.
     """
 
-    attachments: List[Attachment] = []
+    attachments: list[Attachment] = []
     run_log: RunLog = RunLog()
-    task_id: Optional[str] = None
-    user_id: Optional[str] = None
-    work_dir: Optional[str] = None
-    wes_endpoint: Optional[WesEndpoint] = None
+    task_id: str | None = None
+    user_id: str | None = None
+    work_dir: str | None = None
+    wes_endpoint: WesEndpoint | None = None
 
 
 class RunId(BaseModel):
@@ -414,7 +413,7 @@ class ErrorResponse(BaseModel):
         status_code: HTTP status code.
     """
 
-    msg: Optional[str]
+    msg: str | None
     status_code: int
 
 
@@ -426,8 +425,8 @@ class RunListResponse(BaseModel):
         next_page_token: Token to receive the next page of results.
     """
 
-    runs: Optional[List[RunStatus]] = []
-    next_page_token: Optional[str]
+    runs: list[RunStatus] | None = []
+    next_page_token: str | None
 
 
 class WorkflowTypeVersion(BaseModel):
@@ -438,7 +437,7 @@ class WorkflowTypeVersion(BaseModel):
             workflow type.
     """
 
-    workflow_type_version: Optional[List[str]] = []
+    workflow_type_version: list[str] | None = []
 
 
 class DefaultWorkflowEngineParameter(BaseModel):
@@ -455,9 +454,9 @@ class DefaultWorkflowEngineParameter(BaseModel):
         default_value: Stringified version of default parameter.
     """
 
-    name: Optional[str]
-    type: Optional[str]
-    default_value: Optional[str]
+    name: str | None
+    type: str | None
+    default_value: str | None
 
 
 class ServiceInfoWesBase(BaseModel):
@@ -494,13 +493,13 @@ class ServiceInfoWesBase(BaseModel):
         tags: Additional information about this service as key-value pairs.
     """
 
-    workflow_type_versions: Dict[str, WorkflowTypeVersion]
-    supported_wes_versions: List[str] = []
-    supported_filesystem_protocols: List[str] = []
-    workflow_engine_versions: Dict[str, str]
-    default_workflow_engine_parameters: List[DefaultWorkflowEngineParameter] = []
+    workflow_type_versions: dict[str, WorkflowTypeVersion]
+    supported_wes_versions: list[str] = []
+    supported_filesystem_protocols: list[str] = []
+    workflow_engine_versions: dict[str, str]
+    default_workflow_engine_parameters: list[DefaultWorkflowEngineParameter] = []
     auth_instructions_url: str
-    tags: Dict[str, str]
+    tags: dict[str, str]
 
 
 class ServiceInfoBase(ServiceInfoWesBase, Service):
@@ -519,4 +518,4 @@ class ServiceInfo(ServiceInfoBase):
             service.
     """
 
-    system_state_counts: Dict[str, int]
+    system_state_counts: dict[str, int]

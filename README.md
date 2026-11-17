@@ -112,6 +112,67 @@ firefox http://localhost:8090/ga4gh/wes/v1/ui
 > **Note:** Host and port may differ if you have changed the configuration or
 > use an HTTP server to reroute calls to a different host.
 
+### Secrets
+
+Secrets (e.g., passwords, tokens, private keys) are never part of the image:
+pass them only at runtime, as environment variables or mounted secrets (e.g.,
+Kubernetes Secrets), never as build arguments, which are recorded in the image
+history. The image build receives only the files it needs (an allowlist in
+[`.dockerignore`](.dockerignore)). As a safety net, common secret files are
+left out even within `pro_wes/`: `.env` files (except `.env.example`), key,
+certificate and keystore files (e.g., `*.pem`, `*.key`, `*.p12`, `*.jks`), SSH
+keys, `.netrc`, `.pgpass`, `.aws/` and kubeconfig files. Don't keep other
+secrets in the working tree either.
+
+## Development
+
+proWES is packaged with [`pyproject.toml`](pyproject.toml); all dependencies
+are locked in [`uv.lock`](uv.lock). You need [uv][res-uv] and
+[Git][res-git]; uv also provides the Python version that proWES targets (see
+`requires-python` in `pyproject.toml`, currently Python 3.13, the version of
+the base image in the [`Dockerfile`](Dockerfile)).
+
+Clone the repository and install the app with its development tools (the
+`dev` extra) from the lock into a virtual environment (`.venv`):
+
+```bash
+git clone https://github.com/elixir-cloud-aai/prowes.git
+cd prowes
+uv sync --locked --extra dev
+```
+
+Install the [pre-commit][res-pre-commit] hooks, so that the checks run on
+every commit, and run them on all files once:
+
+```bash
+uv run pre-commit install
+uv run pre-commit run --all-files
+```
+
+The hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)) format and
+lint the code with [ruff][res-ruff] (Google style docstrings), check types with
+[mypy][res-mypy], lint the GitHub Actions workflows with actionlint, scan
+for hardcoded secrets with gitleaks and check that `uv.lock` matches
+`pyproject.toml`. CI runs the same hooks.
+
+Run the tests:
+
+```bash
+uv run pytest
+```
+
+After changing dependencies in `pyproject.toml`, update the lock with
+`uv lock` and commit both files. The version of the package comes from Git
+tags (`vX.Y.Z`) via [setuptools-scm][res-setuptools-scm]; there is no version
+to edit in the code.
+
+## Citation
+
+If you use proWES, please cite it with the metadata in
+[`CITATION.cff`](CITATION.cff): on GitHub, "Cite this repository" in the
+sidebar of the repository formats it as APA or BibTeX. A DOI follows with the
+first release archived on [Zenodo](https://zenodo.org/).
+
 ## Contributing
 
 This project is a community effort and lives off your contributions, be it in
@@ -149,10 +210,10 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [![ELIXIR Cloud & AAI logo](images/logo-elixir-cloud.png)](https://elixir-europe.github.io/cloud/)
 
 [badge-chat]: <https://img.shields.io/static/v1?label=chat&message=Slack&color=ff6994>
-[badge-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/main.yml/badge.svg>
+[badge-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/ci.yml/badge.svg>
 [badge-license]: <https://img.shields.io/badge/license-Apache%202.0-blue.svg>
 [badge-url-chat]: <https://join.slack.com/t/elixir-cloud/shared_invite/zt-1uvebyx1e-NcC0Hof2guT9df~haBdQaw>
-[badge-url-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/main.yml>
+[badge-url-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/ci.yml>
 [badge-url-license]: <http://www.apache.org/licenses/LICENSE-2.0>
 [contact-email]: <mailto:cloud-service@elixir-europe.org>
 [contact-issue-tracker]: <https://github.com/elixir-cloud-aai/landing-page/issues>
@@ -174,6 +235,11 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [res-helm]: <https://helm.sh/>
 [res-kubernetes]: <https://kubernetes.io/>
 [res-mongodb]: <https://www.mongodb.com/>
+[res-mypy]: <https://mypy-lang.org/>
 [res-oauth2]: <https://oauth.net/2/>
+[res-pre-commit]: <https://pre-commit.com/>
 [res-rabbitmq]: <https://www.rabbitmq.com/>
+[res-ruff]: <https://docs.astral.sh/ruff/>
 [res-sem-ver]: <https://semver.org/>
+[res-setuptools-scm]: <https://setuptools-scm.readthedocs.io/>
+[res-uv]: <https://docs.astral.sh/uv/>

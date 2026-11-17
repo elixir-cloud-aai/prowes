@@ -54,21 +54,69 @@ Don't forget to add your name and GitHub profile URL to the
 Important: Note that all your contributions are understood to be covered by the
 [same license](LICENSE.md) that covers the entire project.
 
+## Citation metadata
+
+proWES is cited with the metadata in [`CITATION.cff`](CITATION.cff)
+([Citation File Format](https://citation-file-format.github.io/)), which
+GitHub ("Cite this repository") and Zenodo use. Its authors follow the
+[citation metadata rule of the contributing
+guide](https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md#citation-metadata)
+of the organisation (not counting vendored files, such as the GA4GH
+specifications in `pro_wes/api/`, the lock `uv.lock`, and the reformatting
+commits in `.git-blame-ignore-revs`); open a pull request to add or correct
+your entry. CI validates the file (`cffconvert --validate`, job `lint`).
+
+The file has no `version` and `date-released` yet: before each release, the
+release-prep pull request sets both to the release's version (`X.Y.Z`,
+without the `v` of the tag) and date. Once a release is archived on Zenodo,
+a follow-up pull request adds the concept DOI (`doi` and `identifiers`), which
+always resolves to the latest version, and a DOI badge to the README.
+
 ## Code & documentation style
 
 ### Python
 
-Please use a recent version of Python 3.6 or higher. Python code, docstring and
-comment style loosely follows the
-[Google Python Style Guide](https://github.com/google/styleguide/blob/gh-pages/pyguide.md).
-Please try to conform to the used style to maintain consistency. Include
-[type hints/annotations](https://docs.python.org/3.6/library/typing.html) at
-least for function/method signatures.
+Use the Python version that `requires-python` in `pyproject.toml` names.
+Python code, docstring and comment style follows the
+[Google Python Style Guide](https://github.com/google/styleguide/blob/gh-pages/pyguide.md),
+with Google style docstrings and complete
+[type hints](https://docs.python.org/3/library/typing.html) for all
+functions and methods.
 
-Please use **all** of the following linters and validation tools with default
-settings and ensure that no warnings/errors are reported in any files before you
-commit:
+The pre-commit hooks check this: [ruff](https://docs.astral.sh/ruff/) formats
+and lints the code and [mypy](https://mypy-lang.org/) checks the types (see
+the "Development" section of the [README](README.md) for the setup). Make
+sure that `uv run pre-commit run --all-files` and `uv run pytest` pass before
+you open a pull request; CI runs the same checks.
 
-- [`pylint`](https://github.com/PyCQA/pylint)
-- [`flake8`](https://gitlab.com/pycqa/flake8)
-- [`mypy`](https://github.com/python/mypy)
+### Continuous integration
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), workflow `CI`)
+runs on pull requests and on pushes to `dev`. Its jobs, and how to run them
+locally:
+
+| Job | Name | Locally |
+| --- | --- | --- |
+| `title` | PR title | Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/), at most 50 characters |
+| `lint` | Lint | `uv run pre-commit run --all-files`, `pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff`, `uv build` |
+| `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
+| `smoke` | Smoke test | `docker compose up -d --build`, then `curl localhost:8090/ga4gh/wes/v1/service-info` |
+| `push` | Push image | Pushes to `dev` in this repository only |
+| `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
+
+`CI passed` is the only required check. Add every new job to its `needs`.
+
+### Dependency updates
+
+Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) opens
+pull requests labelled `type: dependencies` once a month, to `dev`, grouped
+per ecosystem: Python dependencies (`pyproject.toml` and `uv.lock`), GitHub
+Actions, the images of the `Dockerfile`, the service images of Docker Compose
+(MongoDB, RabbitMQ, Flower) and the pre-commit hook revisions. Some updates
+are made by hand instead:
+
+- FOCA, in `pyproject.toml` and `uv.lock` together with the FOCA base image
+  (the image build fails unless the base image has the locked FOCA); run
+  `uv lock` after changing `pyproject.toml`.
+- connexion 3, which needs a FOCA upgrade.
+- MongoDB minor and major versions (patches still come).

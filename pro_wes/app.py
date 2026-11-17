@@ -6,8 +6,8 @@ from connexion import App
 from flask import current_app
 from foca import Foca
 
-from pro_wes.ga4gh.wes.service_info import ServiceInfo
 from pro_wes.exceptions import NotFound
+from pro_wes.ga4gh.wes.service_info import ServiceInfo
 
 
 def init_app() -> App:

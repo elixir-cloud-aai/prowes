@@ -1,16 +1,38 @@
-# Ignore Git- and GitHub-specific files and dirs
-.git
-.github
-.gitignore
+# Allowlist: only the files the image build needs are sent to the build
+# context. Everything the `Dockerfile` copies ends up in a layer of the image,
+# so keep this list in sync with its `COPY` instructions and keep secrets out
+# (`tests/test_build_context.py` checks that each `COPY` source is sent and
+# that secret files are not)
+*
+!pro_wes/
+!LICENSE
+!README.md
+!pyproject.toml
+# Locked requirements of the image (installed by uv in the image build)
+!uv.lock
 
-# Remove all docs but README.md from root directory
-*.md
-!README*.md
-
-# Ignore build-specific files and dirs
+# Exclude caches and local files within the included paths
+**/__pycache__
+**/*.py[cod]
 **/*.egg-info
-src
 
-# Ignore CI-related files and dirs
-.travis.yml
-
+# Safety net for secrets within the included paths (e.g., `pro_wes/.env`);
+# secrets come in only at runtime (environment variables, mounted secrets)
+**/.[Ee][Nn][Vv]*
+!**/.env.example
+**/.env.example/**
+**/*.[Pp][Ee][Mm]
+**/*.[Kk][Ee][Yy]
+**/*.[Kk][Ee][Yy].*
+**/*.[Pp]12
+**/*.[Pp][Ff][Xx]
+**/*.[Jj][Kk][Ss]
+**/*.[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee]
+**/id_rsa*
+**/id_dsa*
+**/id_ecdsa*
+**/id_ed25519*
+**/.netrc
+**/.pgpass
+**/.aws
+**/[Kk][Uu][Bb][Ee][Cc][Oo][Nn][Ff][Ii][Gg]*

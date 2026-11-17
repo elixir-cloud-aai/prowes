@@ -1,10 +1,11 @@
 """Utility functions for MongoDB document insertion, updates and retrieval."""
 
+from collections.abc import Mapping
 import logging
-from typing import Mapping, Optional
+from typing import Any
 
-from pymongo.collection import ReturnDocument
 from pymongo import collection as Collection
+from pymongo.collection import ReturnDocument
 
 from pro_wes.ga4gh.wes.models import DbDocument, State
 
@@ -30,7 +31,7 @@ class DbDocumentConnector:
 
     def get_document(
         self,
-        projection: Optional[Mapping] = None,
+        projection: Mapping[str, Any] | None = None,
     ) -> DbDocument:
         """Get document associated with task.
 
@@ -57,8 +58,7 @@ class DbDocumentConnector:
             document: DbDocument = DbDocument(**document_unvalidated)
         except Exception as exc:
             raise ValueError(
-                "Database document does not conform to schema: "
-                f"{document_unvalidated}"
+                f"Database document does not conform to schema: {document_unvalidated}"
             ) from exc
         return document
 
@@ -82,15 +82,21 @@ class DbDocumentConnector:
             {"task_id": self.task_id},
             {"$set": {"run_log.state": state}},
         )
-        logger.info(f"[{self.task_id}] {state}")
+        logger.info("[%s] %s", self.task_id, state)
 
     def upsert_fields_in_root_object(
         self,
         root: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> DbDocument:
-        """Insert (or update) fields in(to) the same root object and return
-        document.
+        """Insert or update fields in the same root object.
+
+        Args:
+            root: Root object of the fields.
+            **kwargs: Fields to insert or update, with their values.
+
+        Returns:
+            Updated document.
         """
         document_unvalidated = self.collection.find_one_and_update(
             {"task_id": self.task_id},
@@ -101,7 +107,6 @@ class DbDocumentConnector:
             document: DbDocument = DbDocument(**document_unvalidated)
         except Exception as exc:
             raise ValueError(
-                "Database document does not conform to schema: "
-                f"{document_unvalidated}"
+                f"Database document does not conform to schema: {document_unvalidated}"
             ) from exc
         return document

@@ -1,0 +1,272 @@
+# Everything that must pass on pull requests and pushes to `dev`: the pull
+# request title, lint and build, test, run the app with Docker Compose, and,
+# on pushes, push the Docker image. Forks, which have none of the secrets,
+# run the same checks without the push. The gate `passed` ("CI passed") is
+# the only required check. No `paths:` filters, so that the gate always
+# reports; skip jobs with `if:` instead (and allow the skip in the gate).
+# Runs also when a pull request is edited, so that the title check follows
+# the title; all jobs run then, as a run that skipped the tests would report
+# "CI passed" for the commit
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: [dev]
+
+permissions:
+  contents: read
+
+env:
+  # "true" if this run pushes the image: pushes to this repository. Jobs'
+  # `if:` can't read `env`, so `push` repeats the expression
+  PUBLISH: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
+
+# Only a new head commit of a pull request cancels its runs in progress
+# (action `synchronize`, first attempt); runs for other actions and reruns
+# wait, so that a run on the same commit never leaves a cancelled, failed
+# `CI passed` (see "Cancelled runs" in `actions/gate/README.md` of
+# `elixir-cloud-aai/.github`). Runs for pushes get their own group, so that
+# none is dropped. Runs for edits that leave the title unchanged share a
+# group of their own, so that they don't wait for the run for the pull
+# request's commit
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event_name == 'push' && github.sha ||
+      github.event.action == 'edited' && !github.event.changes.title &&
+        format('{0}-edited', github.ref) ||
+      github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request'
+    && github.event.action == 'synchronize'
+    && github.run_attempt == 1 }}
+
+jobs:
+
+  # Pull request titles become the commit messages on `dev` (squash merges):
+  # Conventional Commits, at most 50 characters (shared action of
+  # elixir-cloud-aai/.github, pinned to the commit of a release). Skipped on
+  # pushes and for Dependabot, whose titles can't be configured to pass,
+  # unless someone else edits the title
+  title:
+    name: PR title
+    if: >-
+      github.event_name == 'pull_request' && (
+        github.event.pull_request.user.login != 'dependabot[bot]' ||
+        github.event.changes.title &&
+        github.event.sender.login != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check PR title
+        uses: elixir-cloud-aai/.github/actions/pr-title@31f22fccc1f3c597ed7c1d1f75b2f85522155348 # v1.1.0
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Python version of the base image in the `Dockerfile`
+      # (`requires-python` in `pyproject.toml`)
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      # uv, at the version locked in `uv.lock` (a dev dependency)
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: uv.lock
+      # The lock must match `pyproject.toml` (run `uv lock` after changing
+      # dependencies; `uv sync --locked` below checks it too, but this step
+      # names the failure)
+      - name: Check lock file
+        run: uv lock --check
+      # The versions of `uv.lock`, into `.venv`, with the Python set up
+      # above; mypy checks imports, so runtime dependencies are needed too
+      - name: Install dependencies
+        run: |
+          uv sync --locked --extra dev --python "$(which python)"
+          echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Cache pre-commit hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      # ruff, mypy, actionlint, the lock check and file checks
+      # (`.pre-commit-config.yaml`), and secrets in the whole checkout
+      - name: Run linters, type checks and security checks
+        run: |
+          pre-commit run --all-files --show-diff-on-failure
+          pre-commit run --all-files --hook-stage manual gitleaks-all
+      # The citation metadata (`CITATION.cff`), against the schema of its
+      # `cff-version`. cffconvert 2.0.0 is pinned (as in proTES) and runs in
+      # an environment of its own (pipx), so that its dependencies resolve
+      # within its own bounds (not bumped by Dependabot; update by hand)
+      - name: Validate citation metadata
+        run: pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff
+      - name: Build distributions
+        run: uv build --out-dir dist
+      - name: Check wheel contents
+        run: |
+          unzip -Z1 dist/*.whl | tee wheel-contents.txt
+          if grep -Ev '^pro_wes(/|-[^/]+\.dist-info/)' wheel-contents.txt; then
+            echo "::error::Unexpected files in wheel"
+            exit 1
+          fi
+          grep -qx 'pro_wes/config.yaml' wheel-contents.txt
+          grep -Eqx 'pro_wes-[^/]+\.dist-info/licenses/LICENSE' wheel-contents.txt
+          grep -q '^pro_wes/api/.*\.yaml$' wheel-contents.txt
+
+  # The tests use mongomock (`tests/`); a MongoDB entry follows once tests
+  # can run against a real database
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      # As in `lint`
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: uv.lock
+      - name: Install dependencies
+        run: |
+          uv sync --locked --extra dev --python "$(which python)"
+          echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      # Coverage is reported only, without a threshold, until #81
+      - name: Calculate unit test coverage
+        run: |
+          coverage run -m pytest
+          coverage report
+          coverage xml
+      # Upload errors fail the workflow only on pushes to the upstream
+      # repository, because pull requests from forks and Dependabot get no
+      # access to the Codecov token, and forks have none
+      - name: Submit report to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
+          verbose: true
+
+  # Temporary: probes the app started with Docker Compose, until the smoke
+  # test replaces it
+  smoke:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PROBE_ENDPOINT: localhost:8090/ga4gh/wes/v1/service-info
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Dummy secret files, which must not reach the image (see below)
+      - name: Plant dummy secret files
+        run: |
+          echo "DUMMY=not-a-secret" > pro_wes/.env
+          echo "dummy" > pro_wes/tls.key
+      - name: Start app
+        run: docker compose up -d --build
+      # Up to 2 minutes for the app and its services to start
+      - name: Check that app responds
+        run: |
+          for _ in $(seq 1 24); do
+            status="$(curl -sL -o /dev/null -w '%{http_code}' \
+              --header 'Accept: application/json' \
+              "${PROBE_ENDPOINT}" || true)"
+            if [[ "${status}" == '200' ]]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::App did not respond with 200 (last: ${status})"
+          exit 1
+      # `prowes:latest` is the image that `docker-compose.yaml` builds
+      - name: Check that secret files are not in the image
+        run: |
+          docker run --rm --entrypoint sh prowes:latest -c \
+            'test ! -e /app/pro_wes/.env && test ! -e /app/pro_wes/tls.key'
+      - name: Show app logs
+        if: failure()
+        run: docker compose logs
+
+  # Pushes the image on pushes to `dev` (unchanged from the former
+  # `main.yml`; push, scan and publish by digest follow with their own
+  # issue). Skipped on pull requests and in forks, which have no secrets
+  push:
+    name: Push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
+    needs: [lint, test, smoke]
+    # One push at a time, in order, so that an older commit never
+    # overwrites the tags of a newer one
+    concurrency:
+      group: ${{ github.workflow }}-push-image
+      cancel-in-progress: false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate tag
+        run: |
+          echo "TAG=$(date '+%Y%m%d')" >> "$GITHUB_ENV"
+      - name: Build and publish image
+        id: docker
+        uses: philips-software/docker-ci-scripts@69ca3b3e358f8746c67341d6ab551ef5ec25a36c # v5.0.0
+        with:
+          dockerfile: .
+          image-name: "prowes"
+          tags: "latest ${{ env.TAG }}"
+          push-branches: "${{ github.event.repository.default_branch }}"
+        env:
+          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_LOGIN }}
+          REGISTRY_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}"
+          DOCKER_ORGANIZATION: ${{ secrets.DOCKERHUB_ORG }}
+          GITHUB_ORGANIZATION: ${{ github.repository_owner }}
+      - name: Verify that image was pushed
+        env:
+          PUSH_INDICATOR: ${{ steps.docker.outputs.push-indicator }}
+        run: |
+          echo "Push indicator: ${PUSH_INDICATOR}"
+          echo "# Set to 'true' if image was pushed, empty string otherwise"
+          test "${PUSH_INDICATOR}" == "true"
+
+  # The only required check: passes if every other job passed, or was skipped
+  # where that is intended: `title` (pushes, Dependabot) and `push` where
+  # `PUBLISH` is "false" (pull requests, forks). Any other result (failure,
+  # cancelled, or an unintended skip) fails it. Add every new job to `needs`
+  passed:
+    name: CI passed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs: [title, lint, test, smoke, push]
+    permissions: {}
+    steps:
+      - name: Check results of all jobs
+        uses: elixir-cloud-aai/.github/actions/gate@31f22fccc1f3c597ed7c1d1f75b2f85522155348 # v1.1.0
+        with:
+          needs: ${{ toJSON(needs) }}
+          allow-skipped: ${{ env.PUBLISH == 'false' && 'title push' || 'title' }}

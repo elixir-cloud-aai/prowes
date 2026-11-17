@@ -1,6 +1,6 @@
 """Basic WES client."""
 
-from typing import Dict, Optional, Union
+from typing import Any
 
 from pydantic import ValidationError
 import requests
@@ -9,11 +9,11 @@ from requests.exceptions import RequestException
 from pro_wes.exceptions import EngineUnavailable
 from pro_wes.ga4gh.wes.models import (
     ErrorResponse,
-    RunRequest,
-    RunListResponse,
-    RunStatus,
     RunId,
+    RunListResponse,
     RunLog,
+    RunRequest,
+    RunStatus,
     ServiceInfo,
 )
 
@@ -43,17 +43,17 @@ class WesClient:
         self,
         host: str,
         base_path: str = "/ga4gh/wes/v1",
-        token: Optional[str] = None,
+        token: str | None = None,
     ) -> None:
-        """Class Constructor"""
+        """Class constructor."""
         self.url = f"{host.rstrip('/')}/{base_path.strip('/')}"
         self.set_token(token)
         self.session = requests.Session()
 
     def get_service_info(
         self,
-        **kwargs,
-    ) -> Union[ErrorResponse, ServiceInfo]:
+        **kwargs: Any,
+    ) -> ErrorResponse | ServiceInfo:
         """Retrieve information about the WES instance.
 
         Args:
@@ -65,7 +65,7 @@ class WesClient:
         """
         self.set_headers()
         url = f"{self.url}/service-info"
-        response: Union[ErrorResponse, ServiceInfo]
+        response: ErrorResponse | ServiceInfo
         try:
             response_unvalidated = self.session.get(url, **kwargs).json()
         except (RequestException, ValueError) as exc:
@@ -81,10 +81,10 @@ class WesClient:
 
     def post_run(
         self,
-        form_data: Dict[str, str],
-        files: Optional[Dict] = None,
-        **kwargs,
-    ) -> Union[ErrorResponse, RunId]:
+        form_data: dict[str, str],
+        files: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ErrorResponse | RunId:
         """Send workflow run request.
 
         Args:
@@ -101,8 +101,9 @@ class WesClient:
             files: Dictionary of files to be attached. Cf.
                 https://requests.readthedocs.io/en/latest/api/#requests.request
                 for possible structures of dictionary.
-            timeout: Request timeout in seconds. Set to `None` to disable
-                timeout.
+            **kwargs: Additional keyword arguments passed along with request,
+                e.g., `timeout`, the request timeout in seconds (`None`
+                disables it).
 
         Returns:
             WES API schema `RunId`. Cf.
@@ -115,7 +116,7 @@ class WesClient:
         """
         self.set_headers()
         url = f"{self.url}/runs"
-        response: Union[ErrorResponse, RunId]
+        response: ErrorResponse | RunId
         if files is None:
             files = {}
         try:
@@ -142,13 +143,14 @@ class WesClient:
 
     def get_runs(
         self,
-        **kwargs,
-    ) -> Union[ErrorResponse, RunListResponse]:
+        **kwargs: Any,
+    ) -> ErrorResponse | RunListResponse:
         """Retrieve list of workflow runs.
 
         Args:
-            timeout: Request timeout in seconds. Set to `None` to disable
-                timeout.
+            **kwargs: Additional keyword arguments passed along with request,
+                e.g., `timeout`, the request timeout in seconds (`None`
+                disables it).
 
         Returns:
             WES API schema `RunListResponse`. Cf.
@@ -158,10 +160,9 @@ class WesClient:
             ValueError: The response does not conform to any of the expected
                 schemas.
         """
-
         self.set_headers()
         url = f"{self.url}/runs"
-        response: Union[ErrorResponse, RunListResponse]
+        response: ErrorResponse | RunListResponse
         try:
             response_unvalidated = self.session.get(url, **kwargs).json()
         except (RequestException, ValueError) as exc:
@@ -178,14 +179,15 @@ class WesClient:
     def get_run(
         self,
         run_id: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> RunLog:
         """Retrieve detailed information about a workflow run.
 
         Args:
             run_id: Workflow run identifier.
-            timeout: Request timeout in seconds. Set to `None` to disable
-                timeout.
+            **kwargs: Additional keyword arguments passed along with request,
+                e.g., `timeout`, the request timeout in seconds (`None`
+                disables it).
 
         Returns:
             WES API schema `RunLog`. Cf.
@@ -195,7 +197,6 @@ class WesClient:
             ValueError: The response does not conform to any of the expected
                 schemas.
         """
-
         self.set_headers()
         url = f"{self.url}/runs/{run_id}"
         try:
@@ -204,7 +205,7 @@ class WesClient:
             raise EngineUnavailable("external workflow engine unavailable") from exc
         # skip validation; workaround for cwl-WES
         return response_unvalidated
-        try:  # pylint: disable=unreachable
+        try:
             response = RunLog(**response_unvalidated)
         except ValidationError:
             try:
@@ -216,14 +217,15 @@ class WesClient:
     def get_run_status(
         self,
         run_id: str,
-        **kwargs,
-    ) -> Union[ErrorResponse, RunStatus]:
+        **kwargs: Any,
+    ) -> ErrorResponse | RunStatus:
         """Retrieve status information about a workflow run.
 
         Args:
             run_id: Workflow run identifier.
-            timeout: Request timeout in seconds. Set to `None` to disable
-                timeout.
+            **kwargs: Additional keyword arguments passed along with request,
+                e.g., `timeout`, the request timeout in seconds (`None`
+                disables it).
 
         Returns:
             WES API schema `RunStatus`. Cf.
@@ -235,7 +237,7 @@ class WesClient:
         """
         self.set_headers()
         url = f"{self.url}/runs/{run_id}/status"
-        response: Union[ErrorResponse, RunStatus]
+        response: ErrorResponse | RunStatus
         try:
             response_unvalidated = self.session.get(url, **kwargs).json()
         except (RequestException, ValueError) as exc:
@@ -252,14 +254,15 @@ class WesClient:
     def cancel_run(
         self,
         run_id: str,
-        **kwargs,
-    ) -> Union[ErrorResponse, RunId]:
+        **kwargs: Any,
+    ) -> ErrorResponse | RunId:
         """Cancel workflow run.
 
         Args:
             run_id: Workflow run identifier.
-            timeout: Request timeout in seconds. Set to `None` to disable
-                timeout.
+            **kwargs: Additional keyword arguments passed along with request,
+                e.g., `timeout`, the request timeout in seconds (`None`
+                disables it).
 
         Returns:
             WES API schema `RunId`. Cf.
@@ -271,7 +274,7 @@ class WesClient:
         """
         self.set_headers()
         url = f"{self.url}/runs/{run_id}/cancel"
-        response: Union[ErrorResponse, RunId]
+        response: ErrorResponse | RunId
         try:
             response_unvalidated = self.session.post(url, **kwargs).json()
         except (RequestException, ValueError) as exc:
@@ -287,7 +290,7 @@ class WesClient:
 
     def set_token(
         self,
-        token: Optional[str] = None,
+        token: str | None = None,
     ) -> None:
         """Set access token for session.
 
@@ -300,7 +303,7 @@ class WesClient:
     def set_headers(
         self,
         content_accept: str = "application/json",
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> None:
         """Set session headers.
 

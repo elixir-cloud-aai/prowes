@@ -1,0 +1,5 @@
+# Bulk formatting changes, ignored by `git blame` (GitHub applies this file
+# automatically; locally, run
+# `git config blame.ignoreRevsFile .git-blame-ignore-revs`). List commits of
+# the default branch only: pull requests are squash-merged, so commits of
+# their branches don't exist there

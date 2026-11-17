@@ -1,11 +1,11 @@
 """Controllers for the `/service-info route."""
 
 import logging
-from typing import Dict
+from typing import Any
 
 from bson.objectid import ObjectId
-from foca.models.config import Config
 from flask import current_app
+from foca.models.config import Config
 from pymongo.collection import Collection
 
 from pro_wes.exceptions import NotFound
@@ -29,7 +29,7 @@ class ServiceInfo:
 
     def __init__(self) -> None:
         """Class constructor."""
-        self.config: Dict = current_app.config
+        self.config: dict[str, Any] = current_app.config
         self.foca_config: Config = self.config.foca  # type: ignore
         self.db_client_service_info: Collection = (
             self.foca_config.db.dbs["runStore"].collections["service_info"].client
@@ -39,7 +39,7 @@ class ServiceInfo:
         )
         self.object_id: str = "000000000000000000000000"
 
-    def get_service_info(self, get_counts: bool = True) -> Dict:
+    def get_service_info(self, get_counts: bool = True) -> dict[str, Any]:
         """Get latest service info from database.
 
         Args:
@@ -63,7 +63,7 @@ class ServiceInfo:
 
     def set_service_info(
         self,
-        data: Dict,
+        data: dict[str, Any],
     ) -> None:
         """Create or update service info.
 
@@ -77,9 +77,9 @@ class ServiceInfo:
         )
         logger.info("Service info set.")
 
-    def _get_state_counts(self) -> Dict[str, int]:
+    def _get_state_counts(self) -> dict[str, int]:
         """Gets current system state counts."""
-        current_counts = {state: 0 for state in States.ALL}
+        current_counts = dict.fromkeys(States.ALL, 0)
         cursor = self.db_client_runs.find(
             filter={},
             projection={

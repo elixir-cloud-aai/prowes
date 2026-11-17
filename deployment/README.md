@@ -109,4 +109,3 @@ Simply run:
 ```bash
 helm uninstall prowes
 ```
-

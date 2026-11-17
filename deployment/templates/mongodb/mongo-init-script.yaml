@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mongo-init-script 
+  name: mongo-init-script
 data:
   init-script.js: |
     db = db.getSiblingDB('runStore');
