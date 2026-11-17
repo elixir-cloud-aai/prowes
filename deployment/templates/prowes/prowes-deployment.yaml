@@ -40,7 +40,7 @@ spec:
         args: [ '-p', '/data/db', '/data/specs' ]
         {{- else }}
         command: [ 'sh', '-c' ]
-        args: [ 'mkdir -p /data/db /data/specs && chown 1000:0 /data && chmod 2775 /data' ]
+        args: [ 'mkdir -p /data/db /data/specs && { chown 1000:0 /data && chmod 2775 /data || echo "warning: could not hand /data to user 1000" >&2; }' ]
         {{- end }}
         resources: {{- toYaml .Values.prowes.initResources | nindent 10 }}
         volumeMounts:

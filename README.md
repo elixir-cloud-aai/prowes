@@ -230,10 +230,13 @@ following:
   chart to 2.0.4 before pods pull the new image** (e.g., charts with
   `elixircloud/prowes:latest` and `imagePullPolicy: Always`, on their next
   restart), or make the volume writable for user `1000` first; 2.0.4's init
-  containers hand `/data` to the user, also on volumes whose ownership
-  Kubernetes doesn't manage (e.g., NFS). The image now
-  has a health check (the Swagger UI) and a default command (Gunicorn, see
-  above).
+  containers hand `/data` itself (not its contents) to the user where they
+  can, also on volumes whose ownership Kubernetes doesn't manage (e.g., NFS;
+  with `root_squash`, they only log a warning). Run directories that root
+  created before stay root's; to make them writable too, run
+  `chown -R 1000:0 /data` as root on the volume (e.g., from a debug pod). The
+  image now has a health check (the Swagger UI) and a default command
+  (Gunicorn, see above).
 * **Docker Compose**: [`docker-compose.yaml`](docker-compose.yaml) builds the
   image `prowes:local` (before: `prowes:latest`) and keeps its data in named
   volumes instead of `PROWES_DATA_DIR` (default `../data/pro_wes`), whose data

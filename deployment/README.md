@@ -104,7 +104,8 @@ These deployments depend on setting up a shared ReadWriteMany volume between
 The image runs as the non-root user `1000` and writes the runs to `/data`. On
 Kubernetes (`clusterType: kubernetes`), both deployments set `fsGroup: 1000`,
 and their init containers (as root) give `/data` to user `1000` and group
-`0` (for volumes whose ownership Kubernetes doesn't manage, e.g., NFS), so
+`0` where they can (for volumes whose ownership Kubernetes doesn't manage,
+e.g., NFS; a failure, e.g., with `root_squash`, is only logged), so
 that the volume is writable for it; on OpenShift
 (`clusterType: openshift`), OpenShift assigns user and group itself.
 

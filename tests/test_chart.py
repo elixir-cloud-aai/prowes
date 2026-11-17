@@ -58,7 +58,12 @@ def test_kubernetes_data_writable_for_user(name: str) -> None:
     (init,) = spec["initContainers"]
     assert init["command"] == ["sh", "-c"]
     (script,) = init["args"]
-    assert script.endswith("&& chown 1000:0 /data && chmod 2775 /data")
+    # Best effort: a failure (e.g., NFS with `root_squash`) doesn't stop the
+    # pod, as the volume may be writable anyway; the app fails at startup
+    # if it isn't
+    assert script.startswith("mkdir -p /data/")
+    assert "{ chown 1000:0 /data && chmod 2775 /data || echo " in script
+    assert script.endswith(">&2; }")
 
 
 @pytest.mark.parametrize("name", DEPLOYMENTS)
