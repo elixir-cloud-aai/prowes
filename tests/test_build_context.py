@@ -191,6 +191,7 @@ def test_dockerignore_allowlist() -> None:
         "LICENSE",
         "README.md",
         "pyproject.toml",
+        "uv.lock",
     ):
         assert not _ignored(path, patterns), f"{path} is not sent to the build"
 
