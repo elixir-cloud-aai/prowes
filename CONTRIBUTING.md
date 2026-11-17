@@ -54,6 +54,24 @@ Don't forget to add your name and GitHub profile URL to the
 Important: Note that all your contributions are understood to be covered by the
 [same license](LICENSE.md) that covers the entire project.
 
+## Citation metadata
+
+proWES is cited with the metadata in [`CITATION.cff`](CITATION.cff)
+([Citation File Format](https://citation-file-format.github.io/)), which
+GitHub ("Cite this repository") and Zenodo use. Its authors follow the
+[citation metadata rule of the contributing
+guide](https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md#citation-metadata)
+of the organisation (not counting vendored files, such as the GA4GH
+specifications in `pro_wes/api/`, the lock `uv.lock`, and the reformatting
+commits in `.git-blame-ignore-revs`); open a pull request to add or correct
+your entry. CI validates the file (`cffconvert --validate`, job `lint`).
+
+The file has no `version` and `date-released` yet: before each release, the
+release-prep pull request sets both to the release's version (`X.Y.Z`,
+without the `v` of the tag) and date. Once a release is archived on Zenodo,
+a follow-up pull request adds the concept DOI (`doi` and `identifiers`), which
+always resolves to the latest version, and a DOI badge to the README.
+
 ## Code & documentation style
 
 ### Python
@@ -80,7 +98,7 @@ locally:
 | Job | Name | Locally |
 | --- | --- | --- |
 | `title` | PR title | Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/), at most 50 characters |
-| `lint` | Lint | `uv run pre-commit run --all-files`, `uv build` |
+| `lint` | Lint | `uv run pre-commit run --all-files`, `pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff`, `uv build` |
 | `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
 | `smoke` | Smoke test | `docker compose up -d --build`, then `curl localhost:8090/ga4gh/wes/v1/service-info` |
 | `push` | Push image | Pushes to `dev` in this repository only |

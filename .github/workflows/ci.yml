@@ -107,6 +107,12 @@ jobs:
         run: |
           pre-commit run --all-files --show-diff-on-failure
           pre-commit run --all-files --hook-stage manual gitleaks-all
+      # The citation metadata (`CITATION.cff`), against the schema of its
+      # `cff-version`. cffconvert 2.0.0 is pinned (as in proTES) and runs in
+      # an environment of its own (pipx), so that its dependencies resolve
+      # within its own bounds (not bumped by Dependabot; update by hand)
+      - name: Validate citation metadata
+        run: pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff
       - name: Build distributions
         run: uv build --out-dir dist
       - name: Check wheel contents
