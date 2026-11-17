@@ -54,16 +54,23 @@ def test_kubernetes_data_writable_for_user(name: str) -> None:
         name: Name of the deployment.
     """
     spec = _deployments("kubernetes")[name]
-    assert spec["securityContext"] == {"fsGroup": 1000}
+    # Recursive changes only while `/data` lacks the group, not on each mount
+    assert spec["securityContext"] == {
+        "fsGroup": 1000,
+        "fsGroupChangePolicy": "OnRootMismatch",
+    }
     (init,) = spec["initContainers"]
     assert init["command"] == ["sh", "-c"]
     (script,) = init["args"]
-    # Best effort: a failure (e.g., NFS with `root_squash`) doesn't stop the
-    # pod, as the volume may be writable anyway; the app fails at startup
-    # if it isn't
-    assert script.startswith("mkdir -p /data/")
-    assert "{ chown 1000:0 /data && chmod 2775 /data || echo " in script
-    assert script.endswith(">&2; }")
+    # Best effort: failures (e.g., NFS with `root_squash`) don't stop the pod,
+    # as the volume may be writable anyway; the app refuses to start if it
+    # isn't. The group is the `fsGroup`, so that `OnRootMismatch` holds
+    steps = [step.strip() for step in script.split(";")]
+    assert len(steps) == 2, steps
+    assert steps[0].startswith("mkdir -p /data/")
+    assert steps[0].endswith(">&2")
+    assert steps[1].startswith("chown 1000:1000 /data && chmod 2775 /data || echo ")
+    assert steps[1].endswith(">&2")
 
 
 @pytest.mark.parametrize("name", DEPLOYMENTS)

@@ -279,6 +279,34 @@ def test_downloads_hash_checked() -> None:
             assert "--seed" not in args, args
 
 
+def test_runtime_installs() -> None:
+    """The image installs the runtime requirements and the app's wheel.
+
+    Into the Python of the image (`--system`): the requirements that
+    `scripts/image_requirements.py` lists, hash-checked, and the wheel of the
+    build stage, offline. The other tests only check that the installs that
+    are there are safe, not that they are there.
+    """
+    installs = [
+        args
+        for args in map(_uv_args, _run_commands())
+        if args is not None and args[:3] == ["pip", "install", "--system"]
+    ]
+    requirements = [args for args in installs if "-r" in args]
+    assert len(requirements) == 1, installs
+    assert {"--require-hashes", "--no-deps"} <= set(requirements[0])
+    (listed,) = [
+        command
+        for command in _run_commands()
+        if command.startswith("python /tmp/src/image_requirements.py")
+    ]
+    target = requirements[0][requirements[0].index("-r") + 1]
+    assert listed.endswith(f"> {target}"), (listed, target)
+    wheels = [args for args in installs if any(a.endswith(".whl") for a in args)]
+    assert len(wheels) == 1, installs
+    assert {"--offline", "--no-index", "--no-deps"} <= set(wheels[0])
+
+
 def test_builds_offline() -> None:
     """The steps that build and install the app have no network.
 

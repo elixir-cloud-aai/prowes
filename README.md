@@ -153,7 +153,8 @@ digest:
   storage of the runs (`custom.post_runs.storage_path`), owned by the user and
   writable for group `0`, for platforms that run images with an arbitrary user
   ID in group `0` (e.g., OpenShift). Volumes mounted at `/data` must be
-  writable for the user (the Helm chart sets `fsGroup: 1000` on Kubernetes).
+  writable for the user (the Helm chart sets `fsGroup: 1000` on Kubernetes);
+  the app refuses to start if it can't write to the storage of the runs.
 * **Command**: `gunicorn --config python:pro_wes.gunicorn pro_wes.wsgi:app`;
   the Celery worker runs `celery -A pro_wes.celery_worker worker` with the
   same image.
@@ -232,9 +233,11 @@ following:
   restart), or make the volume writable for user `1000` first; 2.0.4's init
   containers hand `/data` itself (not its contents) to the user where they
   can, also on volumes whose ownership Kubernetes doesn't manage (e.g., NFS;
-  with `root_squash`, they only log a warning). Run directories that root
-  created before stay root's; to make them writable too, run
-  `chown -R 1000:0 /data` as root on the volume (e.g., from a debug pod). The
+  with `root_squash`, they only log a warning). The app now refuses to start
+  if it can't write to `custom.post_runs.storage_path` (before: only
+  `POST /runs` failed). Run directories that root created before stay root's;
+  to make them writable too, run `chown -R 1000:1000 /data` as root on the
+  volume (e.g., from a debug pod). The
   image now has a health check (the Swagger UI) and a default command
   (Gunicorn, see above).
 * **Docker Compose**: [`docker-compose.yaml`](docker-compose.yaml) builds the

@@ -15,9 +15,12 @@ spec:
       # The image runs as the non-root user 1000; `fsGroup` makes the data
       # volume writable for it where Kubernetes manages the volume's
       # ownership, and `vol-init` (as root) hands `/data` over where it
-      # doesn't (e.g., NFS); OpenShift assigns user and group itself
+      # doesn't (e.g., NFS); OpenShift assigns user and group itself.
+      # `OnRootMismatch`: the volume is changed recursively only while
+      # `/data` doesn't have the group yet, not on every mount
       securityContext:
         fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       {{- end }}
       initContainers:
       - name: vol-init
@@ -27,7 +30,9 @@ spec:
         args: [ '-p', '/data/db', '/data/output', '/data/tmp' ]
         {{- else }}
         command: [ 'sh', '-c' ]
-        args: [ 'mkdir -p /data/db /data/output /data/tmp && { chown 1000:0 /data && chmod 2775 /data || echo "warning: could not hand /data to user 1000" >&2; }' ]
+        # Best effort (e.g., NFS with `root_squash` refuses both): the app
+        # refuses to start if it can't write to `/data`
+        args: [ 'mkdir -p /data/db /data/output /data/tmp || echo "warning: could not create the subdirectories of /data" >&2; chown 1000:1000 /data && chmod 2775 /data || echo "warning: could not hand /data to user 1000" >&2' ]
         {{- end }}
         resources: {{- toYaml .Values.celeryWorker.initResources | nindent 10 }}
         volumeMounts:
