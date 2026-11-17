@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it using the metadata from this file.
+  Authors are listed by the number of lines they committed, then by the
+  number of their commits; equal contributors, if any, are listed
+  alphabetically by family name and marked with an asterisk (*) after their
+  family names. See "Citation metadata" in the contributing guide
+  (`CONTRIBUTING.md`) for who is an author and how to add or correct your
+  entry.
+title: proWES
+abstract: >-
+  proWES is a gateway for the GA4GH Workflow Execution Service (WES) API that
+  federates WES instances. Clients send their workflow runs to proWES as to
+  any WES instance; proWES forwards each run to a WES instance and tracks its
+  state. It is built with FOCA and deployed with Docker Compose or its Helm
+  chart.
+type: software
+authors:
+  - given-names: Alexander
+    family-names: Kanitz
+    orcid: "https://orcid.org/0000-0002-3468-0652"
+    affiliation: >-
+      Biozentrum, University of Basel, Basel, Switzerland; SIB Swiss Institute
+      of Bioinformatics, Lausanne, Switzerland
+  - given-names: Javed
+    family-names: Habib
+  - given-names: Ayush
+    family-names: Kumar
+  - given-names: Tristan
+    family-names: Perard
+  - given-names: Alvaro
+    family-names: Gonzalez
+  - given-names: Joris
+    family-names: Vankerschaver
+  - given-names: Sarthak
+    family-names: Gupta
+repository-code: "https://github.com/elixir-cloud-aai/prowes"
+keywords:
+  - GA4GH
+  - Workflow Execution Service
+  - WES
+  - gateway
+  - federation
+  - workflow distribution
+  - REST API
+  - FOCA
+license: Apache-2.0

@@ -166,6 +166,13 @@ After changing dependencies in `pyproject.toml`, update the lock with
 tags (`vX.Y.Z`) via [setuptools-scm][res-setuptools-scm]; there is no version
 to edit in the code.
 
+## Citation
+
+If you use proWES, please cite it with the metadata in
+[`CITATION.cff`](CITATION.cff): on GitHub, "Cite this repository" in the
+sidebar of the repository formats it as APA or BibTeX. A DOI follows with the
+first release archived on [Zenodo](https://zenodo.org/).
+
 ## Contributing
 
 This project is a community effort and lives off your contributions, be it in
