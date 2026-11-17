@@ -92,8 +92,33 @@ cd proWES
 
 The following user-configurable files are available:
 
-* [app configuration](pro_wes/config/app_config.yaml)
+* [app configuration](pro_wes/config.yaml)
 * [deployment configuration](docker-compose.yaml)
+
+The app configuration is a [FOCA][res-foca] configuration (FOCA 0.22; see
+[FOCA's configuration reference][res-foca-config]); the comments in the file
+describe each section. The settings that deployments usually change:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `db.host`, `db.port` | `mongodb`, `27017` | MongoDB; overridden by the environment variables `MONGO_HOST` and `MONGO_PORT`, with credentials from `MONGO_USERNAME` and `MONGO_PASSWORD`, the database name from `MONGO_DBNAME` (default: `runStore`), or the whole connection string from `MONGO_URI` |
+| `jobs.host`, `jobs.port` | `${RABBIT_HOST:-rabbitmq}`, `${RABBIT_PORT:-5672}` | RabbitMQ broker of the Celery worker; the environment variable `CELERY_BROKER_URL` takes precedence (e.g., for brokers with credentials) |
+| `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
+| `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type |
+| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), polling of the remote WES (`polling_wait`, `polling_attempts`) |
+| `custom.service_info` | | Service info, stored in the database on the first start |
+
+Strings in the configuration may reference environment variables, as
+`${VAR}` or, with a default, `${VAR:-default}`; an unset variable without
+default stops the app. Write `$$` for a literal `$`. Further configuration
+files can be merged over `pro_wes/config.yaml` with the environment variable
+`FOCA_CONFIG_OVERLAY` (paths separated by `:`).
+
+The app is served by Gunicorn with FOCA's settings for containers
+([`pro_wes/gunicorn.py`](pro_wes/gunicorn.py): port 8080, or the environment
+variable `PORT`; workers and threads from `GUNICORN_PROCESSES` and
+`GUNICORN_THREADS`, default 1 and 4; other settings via `GUNICORN_CMD_ARGS`),
+and the Celery worker is started with `celery -A pro_wes.celery_worker worker`.
 
 ### Deploy
 
@@ -123,6 +148,51 @@ left out even within `pro_wes/`: `.env` files (except `.env.example`), key,
 certificate and keystore files (e.g., `*.pem`, `*.key`, `*.p12`, `*.jks`), SSH
 keys, `.netrc`, `.pgpass`, `.aws/` and kubeconfig files. Don't keep other
 secrets in the working tree either.
+
+## Upgrading
+
+### To 0.20.0 (FOCA 0.22)
+
+proWES 0.20.0 upgrades FOCA from 0.12 to 0.22. Operators need to check the
+following:
+
+* **MongoDB 4.4 or later**: current PyMongo releases refuse to connect to
+  older servers; Docker Compose now runs MongoDB 7.0 (before: 3.2). The data
+  files of MongoDB 3.2 can't be opened by MongoDB 7.0: either start with an
+  empty database (`$PROWES_DATA_DIR/db`; the runs stored so far are lost), or
+  upgrade the database one major version at a time (3.2 → 3.4 → 3.6 → 4.0 →
+  4.2 → 4.4 → 5.0 → 6.0 → 7.0, with `setFeatureCompatibilityVersion` after
+  each step), or export the runs with `mongodump` before and import them with
+  `mongorestore` after the upgrade.
+* **Configuration**: configuration files of earlier versions fail
+  validation, naming the keys that FOCA removed. Changed sections:
+  `server` (no `environment` and `use_reloader`; `debug` is `False`),
+  `security.auth` (no `validation_methods` and `validation_checks`),
+  `exceptions` (`mapping` instead of `exceptions`, `required_members` and
+  `status_member`), and `custom.post_runs.id_charset`, whose characters are
+  now taken as is (before: a Python expression such as
+  `string.ascii_uppercase + string.digits`). Start from
+  [`pro_wes/config.yaml`](pro_wes/config.yaml).
+* **Errors**: error responses are problem details (`title`, `status` and
+  `detail`, as `application/json`) instead of `message` and `code`. Clients
+  that read `message` or `code` need to read `detail` and `status` instead.
+* **Commands**: the app is served with
+  `gunicorn --config python:pro_wes.gunicorn pro_wes.wsgi:app` and the worker
+  started with `celery -A pro_wes.celery_worker worker`, both from `/app`
+  (before: `gunicorn -c gunicorn.py wsgi:app` and `celery -A celery_worker
+  worker` from `/app/pro_wes`), as in [`docker-compose.yaml`](docker-compose.yaml)
+  and the Helm chart. The app is created once per Gunicorn worker (no longer
+  also by the Gunicorn master), and the Celery worker replaces its MongoDB
+  client after forking (no more `MongoClient opened before fork` warnings).
+  Gunicorn now runs one worker with 4 threads by default
+  (`GUNICORN_THREADS`; before: 1).
+* **Broker**: `RABBIT_HOST` and `RABBIT_PORT` are read by the app
+  configuration (`jobs`); `CELERY_BROKER_URL` takes precedence.
+* **Logs**: the Celery worker logs in the format of the app (section `log`)
+  instead of Celery's own.
+* **Service info**: the service info in the database is kept; a new database
+  gets that of `custom.service_info`, with timestamps as RFC 3339 strings.
+  Startup no longer fetches the GA4GH service info schema from GitHub.
 
 ## Development
 
@@ -222,6 +292,7 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [res-elixir-cloud-aai]: <https://elixir-cloud.dcc.sib.swiss/>
 [res-flask]: <http://flask.pocoo.org/>
 [res-foca]: <https://github.com/elixir-cloud-aai/foca>
+[res-foca-config]: <https://foca.readthedocs.io/en/latest/configuration/>
 [res-ga4gh]: <https://www.ga4gh.org/>
 [res-ga4gh-wes]: <https://github.com/ga4gh/workflow-execution-service-schemas>
 [res-git]: <https://git-scm.com/>
