@@ -119,6 +119,7 @@ dependencies = [
 [project.optional-dependencies]
 # Local hooks of `.pre-commit-config.yaml` use these too
 dev = [
+    "ast-grep-cli>=0.51",
     "celery-types>=0.20.0",
     "coverage>=7.16",
     "mongomock>=4.3",

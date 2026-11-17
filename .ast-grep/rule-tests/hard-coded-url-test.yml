@@ -1,0 +1,15 @@
+id: hard-coded-url
+valid:
+  - url = config.custom.wes.url
+  - url = f"{base_url}/runs"
+  - path = "/ga4gh/wes/v1/runs"
+  - 'message = "Not a URL: https"'
+  - |
+    def run() -> None:
+        """Run, e.g., at https://wes.example.org/ga4gh/wes/v1."""
+invalid:
+  - url = "https://wes.example.org/ga4gh/wes/v1"
+  - url = 'http://localhost:8080'
+  - url = f"https://{host}/ga4gh/wes/v1"
+  - requests.get("HTTPS://wes.example.org/runs", timeout=10)
+  - url = ("https://wes.example.org" "/runs")

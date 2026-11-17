@@ -238,9 +238,11 @@ uv run pre-commit run --all-files
 
 The hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)) format and
 lint the code with [ruff][res-ruff] (Google style docstrings), check types with
-[mypy][res-mypy], lint the GitHub Actions workflows with actionlint, scan
+[mypy][res-mypy], check the project's semgrep (security) and ast-grep
+(anti-patterns) rules, lint the GitHub Actions workflows with actionlint, scan
 for hardcoded secrets with gitleaks and check that `uv.lock` matches
-`pyproject.toml`. CI runs the same hooks.
+`pyproject.toml`. CI runs the same hooks. The rules, and how to suppress a
+finding, are listed in the [contributing guidelines](CONTRIBUTING.md#static-analysis-rules).
 
 Run the tests:
 

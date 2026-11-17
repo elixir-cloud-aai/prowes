@@ -89,6 +89,53 @@ the "Development" section of the [README](README.md) for the setup). Make
 sure that `uv run pre-commit run --all-files` and `uv run pytest` pass before
 you open a pull request; CI runs the same checks.
 
+### Static analysis rules
+
+Besides ruff's security rules (`S`, from bandit), pre-commit runs
+project-specific rules, each with tests:
+
+- [semgrep](https://semgrep.dev/), security rules in
+  [`.semgrep/pro-wes.yml`](.semgrep/pro-wes.yml), shared with FOCA and the
+  other FOCA apps (keep their patterns, messages and severities identical):
+  - `flask-debug-enabled`: debug mode in the app config or the Helm chart
+  - `jwt-decode-without-verification`: JWTs decoded without verifying the
+    signature
+  - `jwt-decode-unsafe-algorithms`: JWTs verified with the algorithm `none`
+    or the one the token's header names
+  - `yaml-unsafe-load`: YAML loaded with PyYAML's full or unsafe loader
+  - `tls-verification-disabled`: certificate verification turned off
+- [ast-grep](https://ast-grep.github.io/), anti-patterns in
+  [`.ast-grep/rules/`](.ast-grep/rules) (configured in
+  [`sgconfig.yml`](sgconfig.yml)); all but `pydantic-v1-dict`,
+  `root-logger-call` and `string-status-code` check the package
+  (`pro_wes/`) only:
+  - `foca-config-attribute`: untyped access to the FOCA config
+    (`app.config.foca`)
+  - `framework-free-tasks`: Flask, Werkzeug, Connexion or Starlette
+    imported outside the app, the controllers and the exceptions
+  - `generic-exception-raised`: `Exception` or `BaseException` raised
+  - `hard-coded-url`: URLs in string literals (not docstrings); backends
+    and other services come from the config
+  - `print-call`: output with `print()` instead of a logger
+  - `pydantic-v1-dict`: Pydantic v1's `.dict()` instead of `.model_dump()`
+  - `root-logger-call`: messages logged with the root logger
+  - `string-status-code`: HTTP status codes returned as strings
+
+pre-commit runs the rule tests when the rules change. To run them by hand:
+`uv run ast-grep test --skip-snapshot-tests`, and `semgrep --test .` in
+`.semgrep/` (semgrep is not a dev dependency: pre-commit installs its own,
+so install it separately for this). Add a rule together with its test cases: for semgrep in
+`.semgrep/pro-wes.py` (Python rules) or `.semgrep/pro-wes.test.yaml` (YAML
+rules), marked with `# ruleid: <rule-id>` and `# ok: <rule-id>`; for
+ast-grep in `.ast-grep/rule-tests/<rule-id>-test.yml`, with `valid` and
+`invalid` snippets.
+
+Suppress a finding only if it is a false positive or can't be avoided yet,
+on its line, with a comment that gives the reason (on the line before, if
+the suppression comment takes no text): `# nosemgrep: <rule-id>`,
+`# ast-grep-ignore: <rule-id>`, `# noqa: <code>` (ruff),
+`# type: ignore[<code>]` (mypy) or `# gitleaks:allow`.
+
 ### Continuous integration
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), workflow `CI`)
