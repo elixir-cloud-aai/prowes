@@ -1,32 +1,26 @@
-"""Gunicorn entry point."""
+"""Gunicorn settings of proWES.
+
+FOCA's settings for apps in containers (:py:mod:`foca.gunicorn_config`; e.g.,
+the address `0.0.0.0:8080`, or the port of the environment variable `PORT`),
+e.g.::
+
+    gunicorn --config python:pro_wes.gunicorn pro_wes.wsgi:app
+
+The app is not created here, but by each Gunicorn worker after it forked
+(`pro_wes.wsgi`), so that it is initialized once per worker and MongoDB
+clients aren't shared across forks. The number of workers and threads can
+be set with the environment variables `GUNICORN_PROCESSES` and
+`GUNICORN_THREADS`, as before; other settings via `GUNICORN_CMD_ARGS`, which
+takes precedence over this module.
+"""
 
 import os
 
-from foca.models.config import Config
+from foca.gunicorn_config import *  # noqa: F403
 
-from pro_wes.app import init_app
-
-# Source application configuration
-app_config: Config = init_app().app.config.foca
-
-# Set Gunicorn number of workers and threads
+# Workers and threads; FOCA's defaults unless set
 workers = int(os.environ.get("GUNICORN_PROCESSES", "1"))
-threads = int(os.environ.get("GUNICORN_THREADS", "1"))
+threads = int(os.environ.get("GUNICORN_THREADS", "4"))
 
-# Set allowed IPs
+# Trust `X-Forwarded-*` headers of any proxy, as before
 forwarded_allow_ips = "*"
-
-# Set Gunicorn bind address
-bind = f"{app_config.server.host}:{app_config.server.port}"
-
-# Source environment variables for Gunicorn workers
-raw_env = [
-    f"WES_CONFIG={os.environ.get('WES_CONFIG', '')}",
-    f"RABBIT_HOST={os.environ.get('RABBIT_HOST', app_config.jobs.host)}",
-    f"RABBIT_PORT={os.environ.get('RABBIT_PORT', app_config.jobs.port)}",
-    f"MONGO_HOST={os.environ.get('MONGO_HOST', app_config.db.host)}",
-    f"MONGO_PORT={os.environ.get('MONGO_PORT', app_config.db.port)}",
-    f"MONGO_DBNAME={os.environ.get('MONGO_DBNAME', 'runStore')}",
-    f"MONGO_USERNAME={os.environ.get('MONGO_USERNAME', '')}",
-    f"MONGO_PASSWORD={os.environ.get('MONGO_PASSWORD', '')}",
-]

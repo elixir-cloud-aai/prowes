@@ -46,10 +46,14 @@ following simple rules to make sure your pull request will indeed be merged:
 4. Ensure that all tests pass.
 5. Document your code and update all relevant documentation.
 6. Stick to the code and documentation style (see below).
-7. Issue the pull request.
+7. Issue the pull request against `dev`. GitHub fills in the
+   organisation's [pull request
+   template](https://github.com/elixir-cloud-aai/.github/blob/main/.github/pull_request_template.md):
+   give enough detail for a review, close the issue with `Closes #<issue>`
+   and say how you verified the change.
 
 Don't forget to add your name and GitHub profile URL to the
-[list of contributors](contributors.md).
+[list of contributors](contributors.md) once your pull request is merged.
 
 Important: Note that all your contributions are understood to be covered by the
 [same license](LICENSE.md) that covers the entire project.
@@ -88,6 +92,60 @@ and lints the code and [mypy](https://mypy-lang.org/) checks the types (see
 the "Development" section of the [README](README.md) for the setup). Make
 sure that `uv run pre-commit run --all-files` and `uv run pytest` pass before
 you open a pull request; CI runs the same checks.
+
+### Static analysis rules
+
+Besides ruff's security rules (`S`, from bandit), pre-commit runs
+project-specific rules, each with tests:
+
+- [semgrep](https://semgrep.dev/), security rules in
+  [`.semgrep/pro-wes.yml`](.semgrep/pro-wes.yml), shared with FOCA and the
+  other FOCA apps (keep their patterns, messages and severities identical):
+  - `flask-debug-enabled`: debug mode in the app config or the Helm chart
+  - `jwt-decode-without-verification`: JWTs decoded without verifying the
+    signature
+  - `jwt-decode-unsafe-algorithms`: JWTs verified with the algorithm `none`
+    or the one the token's header names
+  - `yaml-unsafe-load`: YAML loaded with PyYAML's full or unsafe loader
+  - `tls-verification-disabled`: certificate verification turned off
+- [ast-grep](https://ast-grep.github.io/), anti-patterns in
+  [`.ast-grep/rules/`](.ast-grep/rules) (configured in
+  [`sgconfig.yml`](sgconfig.yml)); all but `pydantic-v1-dict`,
+  `root-logger-call` and `string-status-code` check the package
+  (`pro_wes/`) only:
+  - `foca-config-attribute`: untyped access to the FOCA config
+    (`app.config.foca`)
+  - `framework-free-tasks`: Flask, Werkzeug, Connexion or Starlette
+    imported outside the app, the controllers and the exceptions
+  - `generic-exception-raised`: `Exception` or `BaseException` raised
+  - `hard-coded-url`: string literals that start with a URL (not
+    docstrings or other strings that stand alone as a statement); backends
+    and other services come from the config
+  - `print-call`: output with `print()` instead of a logger
+  - `pydantic-v1-dict`: Pydantic v1's `.dict()` instead of `.model_dump()`
+  - `root-logger-call`: messages logged with the root logger
+  - `string-status-code`: HTTP status codes returned as strings
+
+pre-commit runs the rule tests when the rules change; run it with
+`uv run pre-commit ...`, as the ast-grep hooks use the ast-grep of the dev
+dependencies. To run the rule tests by
+hand: `uv run ast-grep test --skip-snapshot-tests`, and `semgrep --test .`
+in `.semgrep/` (semgrep is not a dev dependency: pre-commit installs its
+own, so install it separately for this).
+
+Add a rule together with its test cases: for semgrep in
+`.semgrep/pro-wes.py` (Python rules) or `.semgrep/pro-wes.test.yaml` (YAML
+rules), marked with `# ruleid: <rule-id>` and `# ok: <rule-id>`; for
+ast-grep in `.ast-grep/rule-tests/<rule-id>-test.yml`, with `valid` and
+`invalid` snippets. The tests can't check which files a rule applies to
+(`files` and `ignores` of ast-grep rules, `paths` of semgrep rules): check
+the scoping by hand, e.g., with a finding planted in `pro_wes/`.
+
+Suppress a finding only if it is a false positive or can't be avoided yet,
+with a suppression comment on its line: `# nosemgrep: <rule-id>`,
+`# ast-grep-ignore: <rule-id>`, `# noqa: <code>` (ruff),
+`# type: ignore[<code>]` (mypy) or `# gitleaks:allow`. Give the reason in a
+comment on the line before, as most suppression comments can't hold it.
 
 ### Continuous integration
 

@@ -92,8 +92,34 @@ cd proWES
 
 The following user-configurable files are available:
 
-* [app configuration](pro_wes/config/app_config.yaml)
+* [app configuration](pro_wes/config.yaml)
 * [deployment configuration](docker-compose.yaml)
+
+The app configuration is a [FOCA][res-foca] configuration (FOCA 0.22; see
+[FOCA's configuration reference][res-foca-config]); the comments in the file
+describe each section. The settings that deployments usually change:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `db.host`, `db.port` | `mongodb`, `27017` | MongoDB; overridden by the environment variables `MONGO_HOST` and `MONGO_PORT`, with credentials from `MONGO_USERNAME` and `MONGO_PASSWORD`, the database name from `MONGO_DBNAME` (default: `runStore`), or the whole connection string from `MONGO_URI` |
+| `jobs.host`, `jobs.port` | `${RABBIT_HOST:-rabbitmq}`, `${RABBIT_PORT:-5672}` | RabbitMQ broker of the Celery worker; the environment variable `CELERY_BROKER_URL` takes precedence (e.g., for brokers with credentials) |
+| `service_info.service` | example values | Service info (`GET /service-info`), served by FOCA (see [FOCA's service info reference][res-foca-service-info]): the fields of the GA4GH service info (`id`, `name`, `type`, `organization`, `contactUrl`, ...) and the WES fields (`workflow_type_versions`, `supported_wes_versions`, `supported_filesystem_protocols`, `workflow_engine_versions`, `default_workflow_engine_parameters`, `auth_instructions_url`, `tags`), checked on startup; `version` defaults to the version of the installed package (`service_info.package`); `system_state_counts` is computed for each request and can't be set |
+| `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
+| `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type |
+| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`) |
+| `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds |
+
+Strings in the configuration may reference environment variables, as
+`${VAR}` or, with a default, `${VAR:-default}`; an unset variable without
+default stops the app. Write `$$` for a literal `$`. Further configuration
+files can be merged over `pro_wes/config.yaml` with the environment variable
+`FOCA_CONFIG_OVERLAY` (paths separated by `:`).
+
+The app is served by Gunicorn with FOCA's settings for containers
+([`pro_wes/gunicorn.py`](pro_wes/gunicorn.py): port 8080, or the environment
+variable `PORT`; workers and threads from `GUNICORN_PROCESSES` and
+`GUNICORN_THREADS`, default 1 and 4; other settings via `GUNICORN_CMD_ARGS`),
+and the Celery worker is started with `celery -A pro_wes.celery_worker worker`.
 
 ### Deploy
 
@@ -124,6 +150,92 @@ certificate and keystore files (e.g., `*.pem`, `*.key`, `*.p12`, `*.jks`), SSH
 keys, `.netrc`, `.pgpass`, `.aws/` and kubeconfig files. Don't keep other
 secrets in the working tree either.
 
+## Upgrading
+
+### To 0.20.0 (FOCA 0.22)
+
+proWES 0.20.0 upgrades FOCA from 0.12 to 0.22. Operators need to check the
+following:
+
+* **MongoDB 4.4 or later**: current PyMongo releases refuse to connect to
+  older servers; Docker Compose now runs MongoDB 7.0 (before: 3.2). The data
+  files of MongoDB 3.2 can't be opened by MongoDB 7.0: either start with an
+  empty database (`$PROWES_DATA_DIR/db`; the runs stored so far are lost), or
+  upgrade the database one major version at a time (3.2 → 3.4 → 3.6 → 4.0 →
+  4.2 → 4.4 → 5.0 → 6.0 → 7.0, with `setFeatureCompatibilityVersion` after
+  each step), or export the runs with `mongodump` before and import them with
+  `mongorestore` after the upgrade.
+* **Configuration**: configuration files of earlier versions fail
+  validation, naming the keys that FOCA removed. Changed sections:
+  `server` (no `environment` and `use_reloader`; `debug` is `False`),
+  `security.auth` (no `validation_methods` and `validation_checks`),
+  `exceptions` (`mapping` instead of `exceptions`, `required_members` and
+  `status_member`), and `custom.post_runs.id_charset`, whose characters are
+  now taken as is (before: a Python expression such as
+  `string.ascii_uppercase + string.digits`). Start from
+  [`pro_wes/config.yaml`](pro_wes/config.yaml).
+* **Run identifiers**: `POST /runs` returns the run's own identifier, by
+  which `GET /runs/{run_id}` finds it (before: the identifier at the remote
+  WES, which proWES didn't find).
+* **Errors**: error responses are problem details (`title`, `status` and
+  `detail`, as `application/json`) instead of `message` and `code`. Clients
+  that read `message` or `code` need to read `detail` and `status` instead.
+* **Commands**: the app is served with
+  `gunicorn --config python:pro_wes.gunicorn pro_wes.wsgi:app` and the worker
+  started with `celery -A pro_wes.celery_worker worker`, both from `/app`
+  (before: `gunicorn -c gunicorn.py wsgi:app` and `celery -A celery_worker
+  worker` from `/app/pro_wes`), as in [`docker-compose.yaml`](docker-compose.yaml)
+  and the Helm chart (2.0.2 or later; deployments that set their own
+  `command` or `args` need the same change). The app is created once per Gunicorn worker (no longer
+  also by the Gunicorn master), and the Celery worker replaces its MongoDB
+  client after forking (no more `MongoClient opened before fork` warnings).
+  Gunicorn now runs one worker with 4 threads by default
+  (`GUNICORN_THREADS`; before: 1).
+* **Broker**: `RABBIT_HOST` and `RABBIT_PORT` are read by the app
+  configuration (`jobs`); `CELERY_BROKER_URL` takes precedence.
+* **Logs**: the Celery worker logs in the format of the app (section `log`)
+  instead of Celery's own.
+* **Service info (breaking)**: the service info is served by FOCA from the
+  configuration, no longer from the database:
+  * Move `custom.service_info` to `service_info.service` (the app refuses to
+    start with `custom.service_info`). The WES fields
+    (`workflow_type_versions`, ...) stay in it and are checked on startup;
+    `contactUrl` must be a URI (e.g., `mailto:support@example.org`, not
+    `support@example.org`).
+  * `POST /service-info` is gone (`405 Method Not Allowed`): change the
+    service info in the configuration and restart the app. Service info
+    posted to or changed in the database before is ignored; the collection
+    `service_info` is no longer used and can be dropped
+    (`db.service_info.drop()` in the database of the runs).
+  * `version` is the version of the installed package unless
+    `service_info.service.version` is set (before: `0.18.0` from the
+    example configuration). Images built without
+    `--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=<version>` report
+    `0.0.0.dev0`.
+  * Fields that aren't set are left out instead of being served as `null`,
+    and values are served as configured (e.g., URLs are no longer
+    normalized). Runs with states that proWES doesn't know are left out of
+    `system_state_counts`. Startup no longer fetches the GA4GH service info
+    schema from GitHub.
+  * The Helm chart (2.0.3 or later) no longer creates the collection
+    `service_info`. The chart can't pass a configuration overlay yet
+    (`FOCA_CONFIG_OVERLAY`), so deployments with the chart serve the
+    service info of `pro_wes/config.yaml` in the image until it can (#38).
+  * Runs that proWES accepted keep being tracked if their workflow type or
+    version is later removed from `workflow_type_versions` (new runs are
+    still checked). Workers of earlier versions still check stored runs
+    against the service info in the database: stop them before the app of
+    this version accepts runs (no rolling update across this upgrade).
+* **Timeouts**: Gunicorn's threaded workers don't stop requests that hang,
+  so requests to the remote WES are limited: forwarding runs by
+  `custom.post_runs.timeout_post` (now 30 seconds; before: none), also for
+  reading run logs, canceling runs by `custom.defaults.timeout`.
+* **Run logs**: the Celery worker stores the outputs, the engine log and the
+  task logs of the remote run log, each if it is valid (invalid ones and run
+  logs that can't be read are logged as warnings); the run keeps its own
+  identifier and state (before: the task failed before storing any). Other
+  fields, e.g., of WES 1.1, are left out.
+
 ## Development
 
 proWES is packaged with [`pyproject.toml`](pyproject.toml); all dependencies
@@ -151,9 +263,11 @@ uv run pre-commit run --all-files
 
 The hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)) format and
 lint the code with [ruff][res-ruff] (Google style docstrings), check types with
-[mypy][res-mypy], lint the GitHub Actions workflows with actionlint, scan
+[mypy][res-mypy], check the project's semgrep (security) and ast-grep
+(anti-patterns) rules, lint the GitHub Actions workflows with actionlint, scan
 for hardcoded secrets with gitleaks and check that `uv.lock` matches
-`pyproject.toml`. CI runs the same hooks.
+`pyproject.toml`. CI runs the same hooks. The rules, and how to suppress a
+finding, are listed in the [contributing guidelines](CONTRIBUTING.md#static-analysis-rules).
 
 Run the tests:
 
@@ -218,8 +332,8 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [contact-email]: <mailto:cloud-service@elixir-europe.org>
 [contact-issue-tracker]: <https://github.com/elixir-cloud-aai/landing-page/issues>
 [contact-qa]: <https://github.com/elixir-cloud-aai/elixir-cloud-aai/discussions>
-[docs-coc]: <https://github.com/elixir-cloud-aai/elixir-cloud-aai/blob/dev/CODE_OF_CONDUCT.md>
-[docs-contributing]: <https://elixir-cloud-aai.github.io/guides/guide-contributor/>
+[docs-coc]: <https://github.com/elixir-cloud-aai/.github/blob/main/CODE_OF_CONDUCT.md>
+[docs-contributing]: <https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md>
 [docs-deploy]: deployment/README.md
 [docs-license]: LICENSE
 [image-prowes-overview]: <images/overview.svg>
@@ -229,6 +343,8 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [res-elixir-cloud-aai]: <https://elixir-cloud.dcc.sib.swiss/>
 [res-flask]: <http://flask.pocoo.org/>
 [res-foca]: <https://github.com/elixir-cloud-aai/foca>
+[res-foca-config]: <https://foca.readthedocs.io/en/latest/configuration/>
+[res-foca-service-info]: <https://foca.readthedocs.io/en/latest/configuration/service-info/>
 [res-ga4gh]: <https://www.ga4gh.org/>
 [res-ga4gh-wes]: <https://github.com/ga4gh/workflow-execution-service-schemas>
 [res-git]: <https://git-scm.com/>

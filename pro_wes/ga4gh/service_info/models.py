@@ -72,11 +72,11 @@ class Service(BaseModel):
     id: str
     name: str
     type: ServiceType
-    description: str | None
+    description: str | None = None
     organization: Organization
-    contactUrl: AnyUrl | EmailStr | None
-    documentationUrl: AnyUrl | None
-    createdAt: datetime | None
-    updatedAt: datetime | None
-    environment: str | None
+    contactUrl: AnyUrl | EmailStr | None = None
+    documentationUrl: AnyUrl | None = None
+    createdAt: datetime | None = None
+    updatedAt: datetime | None = None
+    environment: str | None = None
     version: str

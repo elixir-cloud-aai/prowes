@@ -101,8 +101,9 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      # ruff, mypy, actionlint, the lock check and file checks
-      # (`.pre-commit-config.yaml`), and secrets in the whole checkout
+      # ruff, mypy, semgrep, ast-grep (rules and their tests), actionlint,
+      # the lock check and file checks (`.pre-commit-config.yaml`), and
+      # secrets in the whole checkout
       - name: Run linters, type checks and security checks
         run: |
           pre-commit run --all-files --show-diff-on-failure
