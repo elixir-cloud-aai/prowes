@@ -129,7 +129,7 @@ dependencies = [
     "gunicorn>=22",
     # FOCA 0.12 imports `pkg_resources`, which setuptools 81 removed; drop
     # with the FOCA upgrade (#107)
-    "setuptools<81",
+    "setuptools<85",
 ]
 
 [project.optional-dependencies]
