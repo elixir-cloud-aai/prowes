@@ -46,10 +46,14 @@ following simple rules to make sure your pull request will indeed be merged:
 4. Ensure that all tests pass.
 5. Document your code and update all relevant documentation.
 6. Stick to the code and documentation style (see below).
-7. Issue the pull request.
+7. Issue the pull request against `dev`. GitHub fills in the
+   organisation's [pull request
+   template](https://github.com/elixir-cloud-aai/.github/blob/main/.github/pull_request_template.md):
+   give enough detail for a review, close the issue with `Closes #<issue>`
+   and say how you verified the change.
 
 Don't forget to add your name and GitHub profile URL to the
-[list of contributors](contributors.md).
+[list of contributors](contributors.md) once your pull request is merged.
 
 Important: Note that all your contributions are understood to be covered by the
 [same license](LICENSE.md) that covers the entire project.
