@@ -15,7 +15,7 @@ from pydantic import (
 
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
-from pro_wes.ga4gh.wes.service_info import ServiceInfo as ServiceInfoController
+from pro_wes.ga4gh.wes.service_info import workflow_type_versions
 
 
 class MetaEnum(EnumMeta):
@@ -180,8 +180,7 @@ class RunRequest(BaseModel):
         Raises:
             NoSuitableEngine: No suitable workflow engine known to process request.
         """
-        service_info = ServiceInfoController().get_service_info(get_counts=False)
-        type_versions = service_info["workflow_type_versions"]
+        type_versions = workflow_type_versions()
         _type = self.workflow_type
         version = self.workflow_type_version
         if (

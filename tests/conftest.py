@@ -84,7 +84,8 @@ def app_env(
         f"    storage_path: {storage_path}\n"
         "    polling_wait: 0\n"
         "    polling_attempts: 2\n"
-        "  service_info:\n"
+        "service_info:\n"
+        "  service:\n"
         f"    id: {SERVICE_INFO_ID}\n",
         encoding="utf-8",
     )
