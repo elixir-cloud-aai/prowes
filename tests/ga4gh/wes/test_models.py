@@ -91,7 +91,7 @@ def test_stored_run_request_not_checked_against_service_info() -> None:
     configuration, or before workflow types were removed from it.
     """
     stored = {"run_log": {"request": {**RUN_REQUEST, "workflow_type": "WDL"}}}
-    document = DbDocument.model_validate(stored, context={"stored": True})
+    document = DbDocument.model_validate(stored, context=models.STORED_CONTEXT)
     assert document.run_log.request is not None
     assert document.run_log.request.workflow_type == "WDL"
     with pytest.raises(NoSuitableEngine):

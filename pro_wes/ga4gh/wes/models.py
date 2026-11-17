@@ -17,6 +17,12 @@ from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
 from pro_wes.ga4gh.wes.service_info import workflow_type_versions
 
+# Validation context of stored documents (e.g., `DbDocument`): their run
+# requests aren't checked against the service info of the process reading
+# them (cf. `RunRequest.workflow_type_and_version_supported`)
+STORED_KEY = "stored"
+STORED_CONTEXT = {STORED_KEY: True}
+
 
 class MetaEnum(EnumMeta):
     """Metaclass for enumerators."""
@@ -174,7 +180,7 @@ class RunRequest(BaseModel):
     def workflow_type_and_version_supported(self, info: ValidationInfo) -> "RunRequest":
         """Ensure that this instance supports the workflow type and version.
 
-        Requests of stored runs (validation context `{"stored": True}`) are
+        Requests of stored runs (validation context `STORED_CONTEXT`) are
         not checked: the app accepted them, possibly with another
         configuration than that of the process reading them (e.g., the
         worker).
@@ -188,7 +194,7 @@ class RunRequest(BaseModel):
         Raises:
             NoSuitableEngine: No suitable workflow engine known to process request.
         """
-        if info.context and info.context.get("stored"):
+        if info.context and info.context.get(STORED_KEY):
             return self
         type_versions = workflow_type_versions()
         _type = self.workflow_type
