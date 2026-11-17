@@ -36,8 +36,11 @@ jobs:
         run: |
           pre-commit run --all-files --show-diff-on-failure
           pre-commit run --all-files --hook-stage manual gitleaks-all
+      # Coverage is reported only, without a threshold, until #81
       - name: Run unit tests
-        run: pytest
+        run: |
+          coverage run -m pytest
+          coverage report
   test:
     name: Run tests
     runs-on: ubuntu-latest
