@@ -1,18 +1,40 @@
-"""App exceptions."""
+"""App exceptions and their problem details.
 
-from connexion.exceptions import (
-    BadRequestProblem,
+The app raises and maps the framework-neutral error classes of FOCA
+(:py:mod:`foca.errors`) rather than those of Werkzeug and Connexion. Errors
+are sent as problem details (RFC 9457: `title`, `status` and `detail`), with
+the media type `application/json` (cf. `exceptions` in `config.yaml`).
+"""
+
+from foca.errors import (
+    AccessDeniedProblem,
+    AuthenticationProblem,
+    BadRequest,
     ExtraParameterProblem,
     Forbidden,
+    InternalServerError,
+    NotFound,
+    RequestValidationProblem,
     Unauthorized,
 )
 from pydantic import ValidationError
 from pymongo.errors import PyMongoError
-from werkzeug.exceptions import (
-    BadRequest,
-    InternalServerError,
-    NotFound,
-)
+
+__all__ = [
+    "BadRequest",
+    "EngineProblem",
+    "EngineUnavailable",
+    "Forbidden",
+    "IdsUnavailableProblem",
+    "InternalServerError",
+    "NoSuitableEngine",
+    "NotFound",
+    "RunNotFound",
+    "StorageUnavailableProblem",
+    "Unauthorized",
+    "WesEndpointProblem",
+    "exceptions",
+]
 
 
 class EngineProblem(InternalServerError):
@@ -39,69 +61,96 @@ class StorageUnavailableProblem(OSError):
     """Storage unavailable for OS operations."""
 
 
-class WesEndpointProblem(NotFound):
-    """No/few reuirements provided for WES endpoint."""
+class WesEndpointProblem(InternalServerError):
+    """No or incomplete information on the external WES endpoint."""
 
 
+# Problem details of exceptions (cf. `exceptions.mapping` in `config.yaml`);
+# exceptions that are not listed get those of their closest listed base class
 exceptions = {
     Exception: {
-        "message": "An unexpected error occurred.",
-        "code": "500",
+        "title": "Internal server error",
+        "detail": "An unexpected error occurred.",
+        "status": 500,
     },
     BadRequest: {
-        "message": "The request is malformed.",
-        "code": "400",
+        "title": "Bad request",
+        "detail": "The request is malformed.",
+        "status": 400,
     },
-    BadRequestProblem: {
-        "message": "The request is malformed.",
-        "code": "400",
+    RequestValidationProblem: {
+        "title": "Bad request",
+        "detail": "The request is malformed.",
+        "status": 400,
     },
     ExtraParameterProblem: {
-        "message": "The request is malformed.",
-        "code": "400",
+        "title": "Bad request",
+        "detail": "The request is malformed.",
+        "status": 400,
     },
     NoSuitableEngine: {
-        "message": "No suitable workflow engine known.",
-        "code": "400",
+        "title": "Bad request",
+        "detail": "No suitable workflow engine known.",
+        "status": 400,
     },
     ValidationError: {
-        "message": "The request is malformed.",
-        "code": "400",
+        "title": "Bad request",
+        "detail": "The request is malformed.",
+        "status": 400,
     },
     Unauthorized: {
-        "message": " The request is unauthorized.",
-        "code": "401",
+        "title": "Unauthorized",
+        "detail": "The request is unauthorized.",
+        "status": 401,
+    },
+    AuthenticationProblem: {
+        "title": "Unauthorized",
+        "detail": "The request is unauthorized.",
+        "status": 401,
     },
     Forbidden: {
-        "message": "The requester is not authorized to perform this action.",
-        "code": "403",
+        "title": "Forbidden",
+        "detail": "The requester is not authorized to perform this action.",
+        "status": 403,
+    },
+    AccessDeniedProblem: {
+        "title": "Forbidden",
+        "detail": "The requester is not authorized to perform this action.",
+        "status": 403,
     },
     NotFound: {
-        "message": "The requested resource wasn't found.",
-        "code": "404",
+        "title": "Not found",
+        "detail": "The requested resource wasn't found.",
+        "status": 404,
     },
     RunNotFound: {
-        "message": "The requested run wasn't found.",
-        "code": "404",
+        "title": "Not found",
+        "detail": "The requested run wasn't found.",
+        "status": 404,
     },
     EngineUnavailable: {
-        "message": "Could not reach remote WES service.",
-        "code": "500",
+        "title": "Internal server error",
+        "detail": "Could not reach remote WES service.",
+        "status": 500,
     },
     InternalServerError: {
-        "message": "An unexpected error occurred.",
-        "code": "500",
+        "title": "Internal server error",
+        "detail": "An unexpected error occurred.",
+        "status": 500,
     },
     IdsUnavailableProblem: {
-        "message": "No/few unique run identifiers available.",
-        "code": "500",
+        "title": "Internal server error",
+        "detail": "No/few unique run identifiers available.",
+        "status": 500,
     },
     StorageUnavailableProblem: {
-        "message": "Storage is not accessible.",
-        "code": "500",
+        "title": "Internal server error",
+        "detail": "Storage is not accessible.",
+        "status": 500,
     },
     WesEndpointProblem: {
-        "message": "No/few reuirements provided for WES endpoint.",
-        "code": "500",
+        "title": "Internal server error",
+        "detail": "No/few requirements provided for WES endpoint.",
+        "status": 500,
     },
 }

@@ -3,19 +3,19 @@
 import logging
 from pathlib import Path
 from shutil import copyfileobj
-import string  # noqa: F401 (for ID charsets of the config, e.g., `string.digits`)
 from typing import Any
 
 from bson.objectid import ObjectId
 from celery import uuid
-from flask import current_app, request
-from foca.models.config import Config
+from flask import request
+from foca import get_collection, get_custom_config
 from foca.utils.misc import generate_id
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 from werkzeug.datastructures import ImmutableMultiDict
 from werkzeug.utils import secure_filename
 
+from pro_wes.config_models import CustomConfig
 from pro_wes.exceptions import (
     BadRequest,
     EngineUnavailable,
@@ -38,6 +38,7 @@ from pro_wes.ga4gh.wes.models import (
 )
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db import DbDocumentConnector
+from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
 logger = logging.getLogger(__name__)
 
@@ -46,19 +47,15 @@ class WorkflowRuns:
     """Class for WES API server-side controller methods.
 
     Attributes:
-        config: App configuration.
-        foca_config: FOCA configuration.
+        config: Custom configuration of the app.
         db_client: Database collection storing workflow run objects.
-        document: Document to be inserted into the collection. Note that this is
-            iteratively built up.
     """
 
     def __init__(self) -> None:
         """Class constructor."""
-        self.config: dict[str, Any] = current_app.config
-        self.foca_config: Config = current_app.config.foca  # type: ignore
-        self.db_client: Collection = (
-            self.foca_config.db.dbs["runStore"].collections["runs"].client
+        self.config: CustomConfig = get_custom_config(CustomConfig)
+        self.db_client: Collection[dict[str, Any]] = get_collection(
+            RUN_DB, RUN_COLLECTION
         )
 
     def run_workflow(
@@ -76,7 +73,7 @@ class WorkflowRuns:
             Workflow run identifier.
         """
         document: DbDocument = DbDocument()
-        controller_config = self.foca_config.custom.post_runs
+        controller_config = self.config.post_runs
 
         # validate and attach request
         document.run_log.request = self._validate_run_request(
@@ -134,7 +131,7 @@ class WorkflowRuns:
         )
         try:
             response = wes_client.post_run(
-                form_data=document.run_log.request.dict(),
+                form_data=document.run_log.request.model_dump(),
                 timeout=controller_config.timeout_post,
             )
         except EngineUnavailable:
@@ -164,7 +161,11 @@ class WorkflowRuns:
         if updated_document_stored.wes_endpoint.run_id is None:
             raise WesEndpointProblem
 
-        # track workflow progress in background
+        # track workflow progress in background; without time limit unless
+        # `timeout_job` is set
+        options: dict[str, Any] = {}
+        if controller_config.timeout_job is not None:
+            options["soft_time_limit"] = controller_config.timeout_job
         task__track_run_progress.apply_async(
             None,
             {
@@ -174,10 +175,13 @@ class WorkflowRuns:
                 "remote_run_id": updated_document_stored.wes_endpoint.run_id,
             },
             task_id=updated_document_stored.task_id,
-            soft_time_limit=controller_config.timeout_job,
+            **options,
         )
 
-        return {"run_id": updated_document_stored.wes_endpoint.run_id}
+        # the run's own identifier, by which it is found (`GET /runs/{run_id}`)
+        if updated_document_stored.run_log.run_id is None:
+            raise IdsUnavailableProblem
+        return {"run_id": updated_document_stored.run_log.run_id}
 
     def list_runs(
         self,
@@ -195,8 +199,8 @@ class WorkflowRuns:
                 https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L495-L510
         """
         # set query params
-        page_size = kwargs.get(
-            "page_size", self.foca_config.custom.list_runs.default_page_size
+        page_size: int = kwargs.get(
+            "page_size", self.config.list_runs.default_page_size
         )
         page_token = kwargs.get("page_token", "")
 
@@ -379,7 +383,10 @@ class WorkflowRuns:
             base_path=document["wes_endpoint"]["base_path"],
             token=kwargs.get("jwt"),
         )
-        wes_client.cancel_run(run_id=document["wes_endpoint"]["run_id"])
+        wes_client.cancel_run(
+            run_id=document["wes_endpoint"]["run_id"],
+            timeout=self.config.defaults.timeout,
+        )
 
         return {"run_id": run_id}
 
@@ -404,7 +411,7 @@ class WorkflowRuns:
             pro_wes.exceptions.IdsUnavailableProblem: Raised if no unique run identifier
                 could be found.
         """
-        controller_config = self.foca_config.custom.post_runs
+        controller_config = self.config.post_runs
         # try until unused run id was found
         attempt = 1
         while attempt <= controller_config.db_insert_attempts:
@@ -433,8 +440,8 @@ class WorkflowRuns:
 
             # insert document into database
             try:
-                self.db_client.insert(
-                    document.dict(
+                self.db_client.insert_one(
+                    document.model_dump(
                         exclude_none=True,
                     )
                 )

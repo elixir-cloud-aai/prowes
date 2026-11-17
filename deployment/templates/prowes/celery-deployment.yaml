@@ -24,9 +24,9 @@ spec:
       - name: celery-worker
         image: {{ .Values.celeryWorker.image }}
         imagePullPolicy: Always
-        workingDir: '/app/pro_wes'
+        workingDir: '/app'
         command: [ 'celery' ]
-        args: [ '-A', 'celery_worker', 'worker', '-E', '--loglevel=info', '-c', '1', '-Q', 'celery' ]
+        args: [ '-A', 'pro_wes.celery_worker', 'worker', '-E', '--loglevel=info', '-c', '1', '-Q', 'celery' ]
         env:
         - name: MONGO_HOST
           value: {{ .Values.mongodb.appName }}

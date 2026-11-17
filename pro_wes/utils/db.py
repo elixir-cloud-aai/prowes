@@ -4,8 +4,7 @@ from collections.abc import Mapping
 import logging
 from typing import Any
 
-from pymongo import collection as Collection
-from pymongo.collection import ReturnDocument
+from pymongo.collection import Collection, ReturnDocument
 
 from pro_wes.ga4gh.wes.models import DbDocument, State
 
@@ -22,11 +21,11 @@ class DbDocumentConnector:
 
     def __init__(
         self,
-        collection: Collection,
+        collection: Collection[dict[str, Any]],
         task_id: str,
     ) -> None:
         """Class constructor."""
-        self.collection: Collection = collection
+        self.collection: Collection[dict[str, Any]] = collection
         self.task_id: str = task_id
 
     def get_document(
@@ -55,7 +54,7 @@ class DbDocumentConnector:
             projection=projection,
         )
         try:
-            document: DbDocument = DbDocument(**document_unvalidated)
+            document: DbDocument = DbDocument.model_validate(document_unvalidated)
         except Exception as exc:
             raise ValueError(
                 f"Database document does not conform to schema: {document_unvalidated}"
@@ -104,7 +103,7 @@ class DbDocumentConnector:
             return_document=ReturnDocument.AFTER,
         )
         try:
-            document: DbDocument = DbDocument(**document_unvalidated)
+            document: DbDocument = DbDocument.model_validate(document_unvalidated)
         except Exception as exc:
             raise ValueError(
                 f"Database document does not conform to schema: {document_unvalidated}"

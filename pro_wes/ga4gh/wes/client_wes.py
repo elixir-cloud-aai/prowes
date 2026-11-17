@@ -11,7 +11,6 @@ from pro_wes.ga4gh.wes.models import (
     ErrorResponse,
     RunId,
     RunListResponse,
-    RunLog,
     RunRequest,
     RunStatus,
     ServiceInfo,
@@ -180,8 +179,11 @@ class WesClient:
         self,
         run_id: str,
         **kwargs: Any,
-    ) -> RunLog:
+    ) -> dict[str, Any]:
         """Retrieve detailed information about a workflow run.
+
+        The response is not validated against the WES API schema `RunLog`
+        (workaround for cwl-WES, whose responses don't conform to it).
 
         Args:
             run_id: Workflow run identifier.
@@ -190,12 +192,13 @@ class WesClient:
                 disables it).
 
         Returns:
-            WES API schema `RunLog`. Cf.
+            Response object, as sent; according to WES API schema `RunLog` if
+                the service conforms to it. Cf.
                 https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L511-L533
 
         Raises:
-            ValueError: The response does not conform to any of the expected
-                schemas.
+            pro_wes.exceptions.EngineUnavailable: The service is unavailable,
+                or its response is no JSON object.
         """
         self.set_headers()
         url = f"{self.url}/runs/{run_id}"
@@ -203,16 +206,9 @@ class WesClient:
             response_unvalidated = self.session.get(url, **kwargs).json()
         except (RequestException, ValueError) as exc:
             raise EngineUnavailable("external workflow engine unavailable") from exc
-        # skip validation; workaround for cwl-WES
+        if not isinstance(response_unvalidated, dict):
+            raise EngineUnavailable("external workflow engine sent no JSON object")
         return response_unvalidated
-        try:
-            response = RunLog(**response_unvalidated)
-        except ValidationError:
-            try:
-                response = ErrorResponse(**response_unvalidated)
-            except ValidationError as exc:
-                raise ValueError(f"invalid response: {response_unvalidated}") from exc
-        return response
 
     def get_run_status(
         self,
