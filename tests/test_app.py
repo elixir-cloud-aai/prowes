@@ -7,10 +7,12 @@ from connexion import App
 from foca import get_collection, get_config, get_custom_config
 from foca.testing import Client
 from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
 import pytest
 
 from pro_wes.app import init_app
 from pro_wes.config_models import CustomConfig
+from pro_wes.ga4gh.wes.service_info import ServiceInfo
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB, SERVICE_INFO_COLLECTION
 from tests.conftest import SERVICE_INFO_ID
 
@@ -53,6 +55,27 @@ def test_init_app_keeps_stored_service_info(app_env: None) -> None:
         stored = collection.find_one({}, {"_id": False})
     assert stored is not None
     assert stored["name"] == "Changed"
+
+
+def test_init_app_service_info_stored_concurrently(
+    app_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Startup goes on if another worker stored the service info first."""
+
+    def _conflict(*_args: Any, **_kwargs: Any) -> None:
+        """Fail as if another worker stored the service info first.
+
+        Args:
+            *_args: Positional arguments; ignored.
+            **_kwargs: Keyword arguments; ignored.
+
+        Raises:
+            DuplicateKeyError: Always.
+        """
+        raise DuplicateKeyError("E11000 duplicate key error")
+
+    monkeypatch.setattr(ServiceInfo, "set_service_info", _conflict)
+    assert init_app() is not None
 
 
 def test_config(foca_app: App) -> None:

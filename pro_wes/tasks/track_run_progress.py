@@ -5,6 +5,7 @@ from time import sleep
 from typing import Any
 
 from celery import Task
+from celery.exceptions import SoftTimeLimitExceeded
 from foca import get_collection, get_custom_config
 from pydantic import TypeAdapter, ValidationError
 
@@ -63,10 +64,15 @@ def task__track_run_progress(
         ValueError: The task has no identifier.
         pro_wes.exceptions.EngineUnavailable: The remote service is unavailable
             or is not a valid WES service.
+        ValueError: The remote service sent too many invalid status
+            responses.
         pro_wes.exceptions.EngineProblem: The remote service sent too many
             error responses.
         pro_wes.exceptions.WesEndpointProblem: The run document has no
             identifier of the run at the remote service.
+        celery.exceptions.SoftTimeLimitExceeded: Tracking took longer than
+            `custom.post_runs.timeout_job`; the run state is set to
+            `SYSTEM_ERROR`.
     """
     custom_config: CustomConfig = get_custom_config(CustomConfig)
     controller_config = custom_config.post_runs
@@ -99,46 +105,54 @@ def task__track_run_progress(
         timeout=controller_config.timeout_post,
     )
 
-    # track workflow run progress
-    run_state: State = State.UNKNOWN
-    attempt: int = 1
-    while not run_state.is_finished:
-        sleep(controller_config.polling_wait)
+    # track workflow run progress, from the state stored last (so that a
+    # remote `UNKNOWN` is stored, too)
+    try:
+        run_state: State = State.INITIALIZING
+        attempt: int = 1
+        while not run_state.is_finished:
+            sleep(controller_config.polling_wait)
 
-        # ensure WES endpoint is available
-        if document.wes_endpoint is None or document.wes_endpoint.run_id is None:
-            raise WesEndpointProblem
-        try:
-            response = wes_client.get_run_status(
-                run_id=document.wes_endpoint.run_id,
-                timeout=custom_config.defaults.timeout,
-            )
-        except EngineUnavailable as exc:
-            if attempt <= controller_config.polling_attempts:
-                attempt += 1
-                logger.warning(exc, exc_info=True)
-                continue
-            db_client.update_run_state(state=State.SYSTEM_ERROR.value)
-            raise
-        if not isinstance(response, RunStatus):
-            if attempt <= controller_config.polling_attempts:
-                attempt += 1
-                logger.warning("Received error response: %s", response)
-                continue
-            db_client.update_run_state(state=State.SYSTEM_ERROR.value)
-            raise EngineProblem("Received too many error responses.")
-        attempt = 1
-        if response.state != run_state:
-            run_state = response.state
-            db_client.update_run_state(state=run_state.value)
+            # ensure WES endpoint is available
+            if document.wes_endpoint is None or document.wes_endpoint.run_id is None:
+                raise WesEndpointProblem
+            try:
+                response = wes_client.get_run_status(
+                    run_id=document.wes_endpoint.run_id,
+                    timeout=custom_config.defaults.timeout,
+                )
+            except (EngineUnavailable, ValueError) as exc:
+                # unavailable, or a response that is neither a status nor an
+                # error (e.g., a state of a later WES version)
+                if attempt <= controller_config.polling_attempts:
+                    attempt += 1
+                    logger.warning(exc, exc_info=True)
+                    continue
+                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                raise
+            if not isinstance(response, RunStatus):
+                if attempt <= controller_config.polling_attempts:
+                    attempt += 1
+                    logger.warning("Received error response: %s", response)
+                    continue
+                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                raise EngineProblem("Received too many error responses.")
+            attempt = 1
+            if response.state != run_state:
+                run_state = response.state
+                db_client.update_run_state(state=run_state.value)
 
-    # fetch final run log and upsert database document
-    _update_run_log(
-        db_client=db_client,
-        wes_client=wes_client,
-        run_id=remote_run_id,
-        timeout=controller_config.timeout_post,
-    )
+        # fetch final run log and upsert database document
+        _update_run_log(
+            db_client=db_client,
+            wes_client=wes_client,
+            run_id=remote_run_id,
+            timeout=controller_config.timeout_post,
+        )
+    except SoftTimeLimitExceeded:
+        # tracking took longer than `custom.post_runs.timeout_job`
+        db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+        raise
 
     logger.info("[%s] Processing completed.", task_id)
     return task_id

@@ -1,9 +1,11 @@
 """proWES application entry point."""
 
+from contextlib import suppress
 from pathlib import Path
 
 from connexion import App
 from foca import Foca, get_custom_config
+from pymongo.errors import DuplicateKeyError
 
 from pro_wes.config_models import CustomConfig
 from pro_wes.exceptions import NotFound
@@ -41,12 +43,14 @@ def _setup_first_start(app: App) -> None:
         work_dir.mkdir(parents=True, exist_ok=True)
         # set service info; JSON values (e.g., URLs as strings), which the
         # database can store
+        # (another worker starting at the same time may store it first)
         try:
             ServiceInfo().get_service_info()
         except NotFound:
-            ServiceInfo().set_service_info(
-                data=custom_config.service_info.model_dump(mode="json")
-            )
+            with suppress(DuplicateKeyError):
+                ServiceInfo().set_service_info(
+                    data=custom_config.service_info.model_dump(mode="json")
+                )
 
 
 def run_app(app: App) -> None:

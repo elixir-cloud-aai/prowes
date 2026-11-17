@@ -121,7 +121,6 @@ def test_post_run(
     """A run is stored, sent to the remote WES and tracked in the background."""
     response = _post_run(foca_client, RUN_REQUEST)
     assert response.status_code == 200
-    assert response.json() == {"run_id": REMOTE_RUN_ID}
     assert remote_wes[0]["workflow_type"] == "CWL"
     assert remote_wes[0]["tags"] == "{}"
     stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
@@ -129,6 +128,10 @@ def test_post_run(
     assert stored["wes_endpoint"]["run_id"] == REMOTE_RUN_ID
     assert stored["run_log"]["request"]["workflow_url"] == RUN_REQUEST["workflow_url"]
     assert len(stored["run_log"]["run_id"]) == 6
+    # the run's own identifier, by which it is found
+    assert response.json() == {"run_id": stored["run_log"]["run_id"]}
+    run = foca_client.get(f"{BASE_PATH}/runs/{response.json()['run_id']}")
+    assert run.status_code == 200
     assert queued == [
         {
             "kwargs": {

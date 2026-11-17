@@ -178,7 +178,10 @@ class WorkflowRuns:
             **options,
         )
 
-        return {"run_id": updated_document_stored.wes_endpoint.run_id}
+        # the run's own identifier, by which it is found (`GET /runs/{run_id}`)
+        if updated_document_stored.run_log.run_id is None:
+            raise IdsUnavailableProblem
+        return {"run_id": updated_document_stored.run_log.run_id}
 
     def list_runs(
         self,

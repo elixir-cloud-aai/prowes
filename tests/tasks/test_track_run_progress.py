@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from typing import Any
 
+from celery.exceptions import SoftTimeLimitExceeded
 from connexion import App
 from foca import get_collection
 import pytest
@@ -12,6 +13,7 @@ from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import ErrorResponse, RunStatus, State
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.tasks.utils import set_run_state
+from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
 TASK_ID = "task-1"
@@ -196,6 +198,52 @@ def test_track_run_error_response_as_log(monkeypatch: pytest.MonkeyPatch) -> Non
     assert _track() == TASK_ID
     document = _stored()
     assert document["run_log"] == {"run_id": RUN_ID, "state": "COMPLETE"}
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_remote_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A remote `UNKNOWN` state is stored."""
+    states: list[str] = []
+    _fake_remote(
+        monkeypatch,
+        [
+            RunStatus(run_id=REMOTE_RUN_ID, state=State.UNKNOWN),
+            RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE),
+        ],
+    )
+    update = DbDocumentConnector.update_run_state
+
+    def _record(self: DbDocumentConnector, state: str = "UNKNOWN") -> None:
+        """Record and store a state.
+
+        Args:
+            self: Database connector.
+            state: New state.
+        """
+        states.append(state)
+        update(self, state=state)
+
+    monkeypatch.setattr(DbDocumentConnector, "update_run_state", _record)
+    _track()
+    assert states == ["INITIALIZING", "UNKNOWN", "COMPLETE"]
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_invalid_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid status responses are retried, then fail with `SYSTEM_ERROR`."""
+    _fake_remote(monkeypatch, [ValueError("invalid response") for _ in range(3)])
+    with pytest.raises(ValueError, match="invalid response"):
+        _track()
+    assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_soft_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs whose tracking takes too long fail with `SYSTEM_ERROR`."""
+    _fake_remote(monkeypatch, [SoftTimeLimitExceeded()])
+    with pytest.raises(SoftTimeLimitExceeded):
+        _track()
+    assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
 
 
 @pytest.mark.usefixtures("run")

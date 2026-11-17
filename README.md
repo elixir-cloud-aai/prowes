@@ -174,6 +174,9 @@ following:
   now taken as is (before: a Python expression such as
   `string.ascii_uppercase + string.digits`). Start from
   [`pro_wes/config.yaml`](pro_wes/config.yaml).
+* **Run identifiers**: `POST /runs` returns the run's own identifier, by
+  which `GET /runs/{run_id}` finds it (before: the identifier at the remote
+  WES, which proWES didn't find).
 * **Errors**: error responses are problem details (`title`, `status` and
   `detail`, as `application/json`) instead of `message` and `code`. Clients
   that read `message` or `code` need to read `detail` and `status` instead.
