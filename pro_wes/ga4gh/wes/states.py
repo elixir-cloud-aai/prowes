@@ -1,31 +1,32 @@
 """WES run states."""
 
-# pragma pylint: disable=too-few-public-methods
+from typing import ClassVar
 
 
 class States:
     """WES run states."""
 
-    UNDEFINED = [
+    UNDEFINED: ClassVar[list[str]] = [
         "UNKNOWN",
     ]
 
-    CANCELABLE = [
+    CANCELABLE: ClassVar[list[str]] = [
         "INITIALIZING",
         "PAUSED",
         "QUEUED",
         "RUNNING",
     ]
 
-    FINISHED = [
+    FINISHED: ClassVar[list[str]] = [
         "COMPLETE",
         "EXECUTOR_ERROR",
         "SYSTEM_ERROR",
         "CANCELED",
     ]
 
-    UNFINISHED = CANCELABLE + [
+    UNFINISHED: ClassVar[list[str]] = [
+        *CANCELABLE,
         "CANCELING",
     ]
 
-    ALL = FINISHED + UNFINISHED + UNDEFINED
+    ALL: ClassVar[list[str]] = FINISHED + UNFINISHED + UNDEFINED

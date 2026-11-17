@@ -1,17 +1,15 @@
 """Custom app config models."""
 
-from typing import Optional
 from pathlib import Path
 
-from pydantic import BaseModel  # pylint: disable=no-name-in-module
+from pydantic import BaseModel
 
 from pro_wes.ga4gh.wes.models import ServiceInfoBase as ServiceInfo
-
-# pragma pylint: disable=too-few-public-methods
 
 
 class Defaults(BaseModel):
     """Model for global default parameters.
+
     Args:
         timeout: Timeout for outgoing requests. May be overridden by more
         specific parameters for each endpoint.
@@ -21,7 +19,7 @@ class Defaults(BaseModel):
         specific parameters for each endpoint.
     """
 
-    timeout: Optional[int] = 3
+    timeout: int | None = 3
 
 
 class PostRuns(BaseModel):
@@ -49,8 +47,8 @@ class PostRuns(BaseModel):
     db_insert_attempts: int = 10
     id_charset: str = "string.ascii_uppercase + string.digits"
     id_length: int = 6
-    timeout_post: Optional[int] = None
-    timeout_job: Optional[int] = None
+    timeout_post: int | None = None
+    timeout_job: int | None = None
     polling_wait: float = 3
     polling_attempts: int = 100
 

@@ -124,6 +124,47 @@ certificate and keystore files (e.g., `*.pem`, `*.key`, `*.p12`, `*.jks`), SSH
 keys, `.netrc`, `.pgpass`, `.aws/` and kubeconfig files. Don't keep other
 secrets in the working tree either.
 
+## Development
+
+proWES is packaged with [`pyproject.toml`](pyproject.toml); all dependencies
+are locked in [`uv.lock`](uv.lock). You need [uv][res-uv] and
+[Git][res-git]; uv also provides the Python version that proWES targets (see
+`requires-python` in `pyproject.toml`, currently Python 3.13, the version of
+the base image in the [`Dockerfile`](Dockerfile)).
+
+Clone the repository and install the app with its development tools (the
+`dev` extra) from the lock into a virtual environment (`.venv`):
+
+```bash
+git clone https://github.com/elixir-cloud-aai/prowes.git
+cd prowes
+uv sync --locked --extra dev
+```
+
+Install the [pre-commit][res-pre-commit] hooks, so that the checks run on
+every commit, and run them on all files once:
+
+```bash
+uv run pre-commit install
+uv run pre-commit run --all-files
+```
+
+The hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)) format and
+lint the code with [ruff][res-ruff] (Google style docstrings), check types with
+[mypy][res-mypy], scan for hardcoded secrets with gitleaks and check that
+`uv.lock` matches `pyproject.toml`. CI runs the same hooks.
+
+Run the tests:
+
+```bash
+uv run pytest
+```
+
+After changing dependencies in `pyproject.toml`, update the lock with
+`uv lock` and commit both files. The version of the package comes from Git
+tags (`vX.Y.Z`) via [setuptools-scm][res-setuptools-scm]; there is no version
+to edit in the code.
+
 ## Contributing
 
 This project is a community effort and lives off your contributions, be it in
@@ -186,6 +227,11 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [res-helm]: <https://helm.sh/>
 [res-kubernetes]: <https://kubernetes.io/>
 [res-mongodb]: <https://www.mongodb.com/>
+[res-mypy]: <https://mypy-lang.org/>
 [res-oauth2]: <https://oauth.net/2/>
+[res-pre-commit]: <https://pre-commit.com/>
 [res-rabbitmq]: <https://www.rabbitmq.com/>
+[res-ruff]: <https://docs.astral.sh/ruff/>
 [res-sem-ver]: <https://semver.org/>
+[res-setuptools-scm]: <https://setuptools-scm.readthedocs.io/>
+[res-uv]: <https://docs.astral.sh/uv/>

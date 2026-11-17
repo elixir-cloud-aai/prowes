@@ -2,23 +2,23 @@
 
 import logging
 from time import sleep
-from typing import Dict, Optional
+from typing import Any
 
+from celery import Task
+from flask import Flask, current_app
 from foca.database.register_mongodb import _create_mongo_client
 from foca.models.config import Config
-from flask import Flask, current_app
 
-from pro_wes.exceptions import EngineProblem, EngineUnavailable
-from pro_wes.ga4gh.wes.models import (  # noqa: F401 pylint: disable=unused-import
+from pro_wes.celery_worker import celery
+from pro_wes.exceptions import EngineProblem, EngineUnavailable, WesEndpointProblem
+from pro_wes.ga4gh.wes.client_wes import WesClient
+from pro_wes.ga4gh.wes.models import (
     DbDocument,
     RunLog,
     RunStatus,
     State,
 )
 from pro_wes.utils.db import DbDocumentConnector
-from pro_wes.ga4gh.wes.client_wes import WesClient
-from pro_wes.celery_worker import celery
-from pro_wes.exceptions import WesEndpointProblem
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +29,17 @@ logger = logging.getLogger(__name__)
     ignore_result=True,
     track_started=True,
 )
-def task__track_run_progress(  # pylint: disable=too-many-statements
-    self,
+def task__track_run_progress(
+    self: Task,
     remote_host: str,
     remote_base_path: str,
     remote_run_id: str,
-    jwt: Optional[str],
+    jwt: str | None,
 ) -> str:
     """Relay workflow run request to remote WES and track run progress.
 
     Args:
+        self: The bound task (`bind=True`).
         jwt: Authorization bearer token to be passed on with workflow run
             request to remote service.
         remote_host: Host at which the WES API is served that is processing
@@ -54,13 +55,17 @@ def task__track_run_progress(  # pylint: disable=too-many-statements
         Task identifier.
 
     Raises:
+        ValueError: The task has no identifier.
         pro_wes.exceptions.EngineUnavailable: The remote service is unavailable
             or is not a valid WES service.
     """
     foca_config: Config = current_app.config.foca  # type: ignore
-    controller_config: Dict = foca_config.custom.post_runs
+    controller_config: dict[str, Any] = foca_config.custom.post_runs
 
-    logger.info(f"[{self.request.id}] Start processing...")
+    task_id = self.request.id
+    if task_id is None:
+        raise ValueError("Task has no identifier.")
+    logger.info("[%s] Start processing...", task_id)
 
     # create database client
     collection = _create_mongo_client(
@@ -71,7 +76,7 @@ def task__track_run_progress(  # pylint: disable=too-many-statements
     ).db["runs"]
     db_client = DbDocumentConnector(
         collection=collection,
-        task_id=self.request.id,
+        task_id=task_id,
     )
 
     # update state: INITIALIZING
@@ -108,8 +113,7 @@ def task__track_run_progress(  # pylint: disable=too-many-statements
         sleep(controller_config.polling_wait)  # type: ignore
 
         # ensure WES endpoint is available
-        assert document.wes_endpoint is not None, "No WES endpoint available."
-        if document.wes_endpoint.run_id is None:
+        if document.wes_endpoint is None or document.wes_endpoint.run_id is None:
             raise WesEndpointProblem
         try:
             wes_client.get_run_status(
@@ -126,7 +130,7 @@ def task__track_run_progress(  # pylint: disable=too-many-statements
         if not isinstance(response, RunStatus):
             if attempt <= controller_config.polling_attempts:  # type: ignore
                 attempt += 1
-                logger.warning(f"Received error response: {response}")
+                logger.warning("Received error response: %s", response)
                 continue
             db_client.update_run_state(state=State.SYSTEM_ERROR.value)
             raise EngineProblem("Received too many error responses.")
@@ -135,7 +139,8 @@ def task__track_run_progress(  # pylint: disable=too-many-statements
             run_state = response.state
             db_client.update_run_state(state=run_state.value)
 
-    assert response.run_id is not None, "WES run ID not available."
+    if response.run_id is None:
+        raise EngineProblem("WES run ID not available.")
 
     # fetch run log and upsert database document
     try:
@@ -154,5 +159,5 @@ def task__track_run_progress(  # pylint: disable=too-many-statements
         **dict(response),
     )
 
-    logger.info(f"[{self.request.id}] Processing completed.")
-    return self.request.id
+    logger.info("[%s] Processing completed.", task_id)
+    return task_id

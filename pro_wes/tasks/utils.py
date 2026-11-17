@@ -1,7 +1,6 @@
 """Utility functions for Celery background tasks."""
 
 import logging
-from typing import Optional
 
 from pymongo import collection as Collection
 from pymongo.errors import PyMongoError
@@ -15,9 +14,9 @@ logger = logging.getLogger(__name__)
 def set_run_state(
     collection: Collection,
     run_id: str,
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
     state: str = "UNKNOWN",
-):
+) -> None:
     """Set/update state of run associated with Celery task."""
     if not task_id:
         document = collection.find_one(
@@ -38,13 +37,19 @@ def set_run_state(
         db_connector.update_run_state(state=state)
     except PyMongoError as exc:
         logger.exception(
-            f"Database error. Could not update state of run '{run_id}' "
-            f"(task id: '{task_id}') to state '{state}'. Original error "
-            f"message: {type(exc).__name__}: {exc}"
+            "Database error. Could not update state of run '%s' (task id:"
+            " '%s') to state '%s'. Original error message: %s: %s",
+            run_id,
+            task_id,
+            state,
+            type(exc).__name__,
+            exc,
         )
     finally:
         if document:
             logger.info(
-                f"State of run '{run_id}' (task id: '{task_id}') "
-                f"changed to '{state}'."
+                "State of run '%s' (task id: '%s') changed to '%s'.",
+                run_id,
+                task_id,
+                state,
             )
