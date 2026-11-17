@@ -1,0 +1,19 @@
+id: hard-coded-url
+language: python
+severity: error
+message: URL hard-coded in the package
+note: |
+  Take the URLs of WES backends and other services from the config (the
+  section `custom` of `pro_wes/config.yaml`, or the run request), so that
+  deployments can set them. Docstrings are not checked.
+# Scoped to the package: tests may use example URLs
+files:
+  - pro_wes/**
+rule:
+  kind: string
+  # Literals that start with a URL, with any prefix (e.g., `f`, `r`)
+  regex: ^[a-zA-Z]*("|'|"""|''')(?i:https?)://
+  not:
+    # Docstrings (and other strings that stand alone as a statement)
+    inside:
+      kind: expression_statement

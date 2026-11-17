@@ -427,7 +427,10 @@ components:
     ServiceInfo:
       title: ServiceInfo
       allOf:
-        - $ref: 'https://raw.githubusercontent.com/ga4gh-discovery/ga4gh-service-info/v1.0.0/service-info.yaml#/components/schemas/Service'
+        # Deviation from upstream: referenced the schema in
+        # https://raw.githubusercontent.com/ga4gh-discovery/ga4gh-service-info/v1.0.0/service-info.yaml
+        # (fetched at startup); copied to `additions.openapi.yaml`
+        - $ref: '#/components/schemas/Service'
         - type: object
           properties:
             workflow_type_versions:

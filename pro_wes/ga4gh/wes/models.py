@@ -7,13 +7,21 @@ from typing import Any
 
 from pydantic import (
     BaseModel,
-    root_validator,
-    validator,
+    ConfigDict,
+    ValidationInfo,
+    field_validator,
+    model_validator,
 )
 
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
-from pro_wes.ga4gh.wes.service_info import ServiceInfo as ServiceInfoController
+from pro_wes.ga4gh.wes.service_info import workflow_type_versions
+
+# Validation context of stored documents (e.g., `DbDocument`): their run
+# requests aren't checked against the service info of the process reading
+# them (cf. `RunRequest.workflow_type_and_version_supported`)
+STORED_KEY = "stored"
+STORED_CONTEXT = {STORED_KEY: True}
 
 
 class MetaEnum(EnumMeta):
@@ -89,12 +97,12 @@ class RunRequest(BaseModel):
     workflow_engine_parameters: str | None = "{}"
     workflow_url: str
 
-    @validator(
+    @field_validator(
         "workflow_type",
         "workflow_type_version",
         "workflow_url",
-        always=True,
     )
+    @classmethod
     def required_str_field_not_empty(
         cls,
         value: str,
@@ -115,16 +123,16 @@ class RunRequest(BaseModel):
             raise ValueError("field required")
         return value
 
-    @validator(
+    @field_validator(
         "workflow_params",
         "tags",
         "workflow_engine_parameters",
-        always=True,
     )
+    @classmethod
     def json_serialized_object_field_valid(
         cls,
-        value: str,
-        field: str,
+        value: str | None,
+        info: ValidationInfo,
     ) -> str:
         """Ensure that a string can be JSON deserialized into an object.
 
@@ -144,7 +152,7 @@ class RunRequest(BaseModel):
 
         Args:
             value: Field value to be validated.
-            field: Name of field to be validated.
+            info: Validation context, with the name of the field.
 
         Returns:
             Validated (and possibly sanitized) field value.
@@ -156,8 +164,8 @@ class RunRequest(BaseModel):
             ValueError: The value could be JSON decoded, but the deserialized
                 value does not represent an object/dictionary.
         """
-        if value in {"", "null", None}:
-            if field == "workflow_params":
+        if value is None or value in {"", "null"}:
+            if info.field_name == "workflow_params":
                 raise ValueError("field required")
             return "{}"
         try:
@@ -168,35 +176,37 @@ class RunRequest(BaseModel):
             raise ValueError("could not be interpreted as object")
         return value
 
-    @root_validator
-    def workflow_type_and_version_supported(
-        cls,
-        values: dict[str, Any],
-    ) -> dict[str, Any]:
+    @model_validator(mode="after")
+    def workflow_type_and_version_supported(self, info: ValidationInfo) -> "RunRequest":
         """Ensure that this instance supports the workflow type and version.
 
+        Requests of stored runs (validation context `STORED_CONTEXT`) are
+        not checked: the app accepted them, possibly with another
+        configuration than that of the process reading them (e.g., the
+        worker).
+
         Args:
-            values (Dict): Field values dictionary.
+            info: Validation context.
 
         Returns:
-            The validated field values.
+            The validated model.
 
         Raises:
             NoSuitableEngine: No suitable workflow engine known to process request.
         """
-        service_info = ServiceInfoController().get_service_info(get_counts=False)
-        type_versions = service_info["workflow_type_versions"]
-        _type = values.get("workflow_type")
-        version = values.get("workflow_type_version")
-        if (
-            _type not in type_versions
-            or version not in type_versions[_type]["workflow_type_version"]
+        if info.context and info.context.get(STORED_KEY):
+            return self
+        type_versions = workflow_type_versions()
+        _type = self.workflow_type
+        version = self.workflow_type_version
+        if _type not in type_versions or version not in (
+            type_versions[_type].get("workflow_type_version") or []
         ):
             raise NoSuitableEngine(
                 f"No suitable workflow engine known for workflow type '{_type}' and"
                 f" version '{version}'; supported workflow engines: {type_versions}"
             )
-        return values
+        return self
 
 
 class Log(BaseModel):
@@ -305,10 +315,8 @@ class RunLog(BaseModel):
     state: State = State.UNKNOWN
     task_logs: list[Log] | None = []
 
-    class Config:
-        """Pydantic model configuration."""
-
-        use_enum_values = True
+    # States as their values, also the default (stored as is)
+    model_config = ConfigDict(use_enum_values=True, validate_default=True)
 
 
 class WesEndpoint(BaseModel):
@@ -413,7 +421,7 @@ class ErrorResponse(BaseModel):
         status_code: HTTP status code.
     """
 
-    msg: str | None
+    msg: str | None = None
     status_code: int
 
 
@@ -426,7 +434,7 @@ class RunListResponse(BaseModel):
     """
 
     runs: list[RunStatus] | None = []
-    next_page_token: str | None
+    next_page_token: str | None = None
 
 
 class WorkflowTypeVersion(BaseModel):
@@ -454,9 +462,9 @@ class DefaultWorkflowEngineParameter(BaseModel):
         default_value: Stringified version of default parameter.
     """
 
-    name: str | None
-    type: str | None
-    default_value: str | None
+    name: str | None = None
+    type: str | None = None
+    default_value: str | None = None
 
 
 class ServiceInfoWesBase(BaseModel):
@@ -508,6 +516,10 @@ class ServiceInfoBase(ServiceInfoWesBase, Service):
 
 class ServiceInfo(ServiceInfoBase):
     """Full model for service info.
+
+    Checks the service info that FOCA serves on startup (`pro_wes.app`), as
+    FOCA checks the fields of the GA4GH service info only, and the service
+    info of remote WES services (`pro_wes.ga4gh.wes.client_wes`).
 
     Args:
         system_state_counts: State counts for workflow runs available on this

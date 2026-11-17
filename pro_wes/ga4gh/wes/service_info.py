@@ -1,92 +1,73 @@
-"""Controllers for the `/service-info route."""
+"""WES fields of the service info (`GET /service-info`).
+
+The service info is served by FOCA (`foca.api.service_info`) from config
+section `service_info`: the fields of the GA4GH service info and the WES
+fields that are configured (e.g., `workflow_type_versions`) from
+`service_info.service`, the system state counts from :py:func:`runtime_fields`,
+which FOCA calls for each request.
+"""
 
 import logging
 from typing import Any
 
-from bson.objectid import ObjectId
-from flask import current_app
-from foca.models.config import Config
-from pymongo.collection import Collection
+from foca import get_collection, get_config
 
-from pro_wes.exceptions import NotFound
 from pro_wes.ga4gh.wes.states import States
+from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
 logger = logging.getLogger(__name__)
 
 
-class ServiceInfo:
-    """Class for WES API service info server-side controller methods.
+def runtime_fields() -> dict[str, Any]:
+    """Get the fields of the service info that are computed at runtime.
 
-    Creates service info upon first request, if it does not exist.
+    Called by FOCA (`service_info.runtime_fields` in the configuration) in an
+    app context, on startup and for each request.
 
-    Attributes:
-        config: App configuration.
-        foca_config: FOCA configuration.
-        db_client_service_info: Database collection storing service info objects.
-        db_client_runs: Database collection storing workflow run objects.
-        object_id: Database identifier for service info.
+    Returns:
+        System state counts (`system_state_counts`).
     """
+    return {"system_state_counts": state_counts()}
 
-    def __init__(self) -> None:
-        """Class constructor."""
-        self.config: dict[str, Any] = current_app.config
-        self.foca_config: Config = self.config.foca  # type: ignore
-        self.db_client_service_info: Collection = (
-            self.foca_config.db.dbs["runStore"].collections["service_info"].client
-        )
-        self.db_client_runs: Collection = (
-            self.foca_config.db.dbs["runStore"].collections["runs"].client
-        )
-        self.object_id: str = "000000000000000000000000"
 
-    def get_service_info(self, get_counts: bool = True) -> dict[str, Any]:
-        """Get latest service info from database.
+def state_counts() -> dict[str, int]:
+    """Count the stored runs by state.
 
-        Args:
-            get_counts: Whether system state counts should be returned.
+    Must be called in an app context.
 
-        Returns:
-            Latest service info details.
+    Returns:
+        Number of runs in each state that proWES knows; runs in other states
+        are left out (with a warning).
+    """
+    counts = dict.fromkeys(States.ALL, 0)
+    cursor = get_collection(RUN_DB, RUN_COLLECTION).find(
+        filter={},
+        projection={"run_log.state": True, "_id": False},
+    )
+    for record in cursor:
+        state = record.get("run_log", {}).get("state")
+        if state in counts:
+            counts[state] += 1
+        else:
+            logger.warning("Run with unknown state not counted: %s", state)
+    return counts
 
-        Raises:
-            NotFound: Service info was not found.
-        """
-        service_info = self.db_client_service_info.find_one(
-            {"_id": ObjectId(self.object_id)},
-            {"_id": False},
-        )
-        if service_info is None:
-            raise NotFound
-        if get_counts:
-            service_info["system_state_counts"] = self._get_state_counts()
-        return service_info
 
-    def set_service_info(
-        self,
-        data: dict[str, Any],
-    ) -> None:
-        """Create or update service info.
+def workflow_type_versions() -> dict[str, Any]:
+    """Get the workflow types and versions of the service info.
 
-        Arguments:
-            data: Dictionary of service info values. Cf.
-        """
-        self.db_client_service_info.replace_one(
-            filter={"_id": ObjectId(self.object_id)},
-            replacement=data,
-            upsert=True,
-        )
-        logger.info("Service info set.")
+    Must be called in an app context.
 
-    def _get_state_counts(self) -> dict[str, int]:
-        """Gets current system state counts."""
-        current_counts = dict.fromkeys(States.ALL, 0)
-        cursor = self.db_client_runs.find(
-            filter={},
-            projection={
-                "run_log.state": True,
-                "_id": False,
-            },
-        )
-        for record in cursor:
-            current_counts[record["run_log"]["state"]] += 1
-        return current_counts
+    Returns:
+        Workflow types and their versions, as configured
+        (`service_info.service.workflow_type_versions`); empty if not set.
+
+    Raises:
+        RuntimeError: No service info is configured (the app doesn't start
+            without one, as FOCA serves `GET /service-info` from it).
+    """
+    conf = get_config().service_info
+    if conf is None:
+        raise RuntimeError("No service info configured (section `service_info`)")
+    versions: dict[str, Any] = conf.service.get("workflow_type_versions") or {}
+    return versions
