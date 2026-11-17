@@ -114,27 +114,33 @@ project-specific rules, each with tests:
   - `framework-free-tasks`: Flask, Werkzeug, Connexion or Starlette
     imported outside the app, the controllers and the exceptions
   - `generic-exception-raised`: `Exception` or `BaseException` raised
-  - `hard-coded-url`: URLs in string literals (not docstrings); backends
+  - `hard-coded-url`: string literals that start with a URL (not
+    docstrings or other strings that stand alone as a statement); backends
     and other services come from the config
   - `print-call`: output with `print()` instead of a logger
   - `pydantic-v1-dict`: Pydantic v1's `.dict()` instead of `.model_dump()`
   - `root-logger-call`: messages logged with the root logger
   - `string-status-code`: HTTP status codes returned as strings
 
-pre-commit runs the rule tests when the rules change. To run them by hand:
-`uv run ast-grep test --skip-snapshot-tests`, and `semgrep --test .` in
-`.semgrep/` (semgrep is not a dev dependency: pre-commit installs its own,
-so install it separately for this). Add a rule together with its test cases: for semgrep in
+pre-commit (run with `uv run`, as the ast-grep hooks use the dev
+dependencies) runs the rule tests when the rules change. To run them by
+hand: `uv run ast-grep test --skip-snapshot-tests`, and `semgrep --test .`
+in `.semgrep/` (semgrep is not a dev dependency: pre-commit installs its
+own, so install it separately for this).
+
+Add a rule together with its test cases: for semgrep in
 `.semgrep/pro-wes.py` (Python rules) or `.semgrep/pro-wes.test.yaml` (YAML
 rules), marked with `# ruleid: <rule-id>` and `# ok: <rule-id>`; for
 ast-grep in `.ast-grep/rule-tests/<rule-id>-test.yml`, with `valid` and
-`invalid` snippets.
+`invalid` snippets. The tests can't check which files a rule applies to
+(`files` and `ignores` of ast-grep rules, `paths` of semgrep rules): check
+the scoping by hand, e.g., with a finding planted in `pro_wes/`.
 
 Suppress a finding only if it is a false positive or can't be avoided yet,
-on its line, with a comment that gives the reason (on the line before, if
-the suppression comment takes no text): `# nosemgrep: <rule-id>`,
+with a suppression comment on its line: `# nosemgrep: <rule-id>`,
 `# ast-grep-ignore: <rule-id>`, `# noqa: <code>` (ruff),
-`# type: ignore[<code>]` (mypy) or `# gitleaks:allow`.
+`# type: ignore[<code>]` (mypy) or `# gitleaks:allow`. Give the reason in a
+comment on the line before, as most suppression comments can't hold it.
 
 ### Continuous integration
 

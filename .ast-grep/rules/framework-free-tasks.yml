@@ -3,10 +3,10 @@ language: python
 severity: error
 message: Web framework import outside the app, controllers and exceptions
 note: |
-  The app's code gets plain data (the task, the request path, the inbound
-  request and caller of `foca.plugins.adapter`), so that it runs unchanged
-  after the move to Connexion 3 without Flask (FOCA 1.0), which then
-  changes the controller glue only. Read the request in the controllers
+  The app's code (e.g., `pro_wes/ga4gh/wes/workflow_runs.py` and the
+  Celery tasks) gets plain data (the run request, its attachments, the
+  caller), so that it runs unchanged after the move to Connexion 3 without
+  Flask (FOCA 1.0), which then changes the controller glue only. Read the request in the controllers
   (`pro_wes/ga4gh/wes/controllers.py`) and pass what is needed.
 files:
   - pro_wes/**/*.py

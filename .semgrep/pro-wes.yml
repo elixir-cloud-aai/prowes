@@ -14,8 +14,7 @@ rules:
     message: >-
       Flask debug mode allows executing arbitrary code; only enable it for
       local development, in an overlay config (`FOCA_CONFIG_OVERLAY`)
-    # The app config and the chart, not the overlay for local development
-    # (`config.dev.yaml`)
+    # The app config and the chart, not overlays for local development
     paths:
       include:
         - "/pro_wes/config.yaml"
