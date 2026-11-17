@@ -223,7 +223,9 @@ following:
     service info of `pro_wes/config.yaml` in the image until it can (#38).
   * Runs that proWES accepted keep being tracked if their workflow type or
     version is later removed from `workflow_type_versions` (new runs are
-    still checked).
+    still checked). Workers of earlier versions still check stored runs
+    against the service info in the database: stop them before the app of
+    this version accepts runs (no rolling update across this upgrade).
 * **Timeouts**: Gunicorn's threaded workers don't stop requests that hang,
   so requests to the remote WES are limited: forwarding runs by
   `custom.post_runs.timeout_post` (now 30 seconds; before: none), also for
