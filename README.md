@@ -151,8 +151,9 @@ uv run pre-commit run --all-files
 
 The hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)) format and
 lint the code with [ruff][res-ruff] (Google style docstrings), check types with
-[mypy][res-mypy], scan for hardcoded secrets with gitleaks and check that
-`uv.lock` matches `pyproject.toml`. CI runs the same hooks.
+[mypy][res-mypy], lint the GitHub Actions workflows with actionlint, scan
+for hardcoded secrets with gitleaks and check that `uv.lock` matches
+`pyproject.toml`. CI runs the same hooks.
 
 Run the tests:
 
@@ -202,10 +203,10 @@ thread in our [Q&A forum][contact-qa], or send us an [email][contact-email].
 [![ELIXIR Cloud & AAI logo](images/logo-elixir-cloud.png)](https://elixir-europe.github.io/cloud/)
 
 [badge-chat]: <https://img.shields.io/static/v1?label=chat&message=Slack&color=ff6994>
-[badge-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/main.yml/badge.svg>
+[badge-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/ci.yml/badge.svg>
 [badge-license]: <https://img.shields.io/badge/license-Apache%202.0-blue.svg>
 [badge-url-chat]: <https://join.slack.com/t/elixir-cloud/shared_invite/zt-1uvebyx1e-NcC0Hof2guT9df~haBdQaw>
-[badge-url-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/main.yml>
+[badge-url-ci]: <https://github.com/elixir-cloud-aai/proWES/actions/workflows/ci.yml>
 [badge-url-license]: <http://www.apache.org/licenses/LICENSE-2.0>
 [contact-email]: <mailto:cloud-service@elixir-europe.org>
 [contact-issue-tracker]: <https://github.com/elixir-cloud-aai/landing-page/issues>

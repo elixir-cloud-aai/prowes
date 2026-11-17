@@ -70,3 +70,20 @@ and lints the code and [mypy](https://mypy-lang.org/) checks the types (see
 the "Development" section of the [README](README.md) for the setup). Make
 sure that `uv run pre-commit run --all-files` and `uv run pytest` pass before
 you open a pull request; CI runs the same checks.
+
+### Continuous integration
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), workflow `CI`)
+runs on pull requests and on pushes to `dev`. Its jobs, and how to run them
+locally:
+
+| Job | Name | Locally |
+| --- | --- | --- |
+| `title` | PR title | Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/), at most 50 characters |
+| `lint` | Lint | `uv run pre-commit run --all-files`, `uv build` |
+| `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
+| `smoke` | Smoke test | `docker compose up -d --build`, then `curl localhost:8090/ga4gh/wes/v1/service-info` |
+| `push` | Push image | Pushes to `dev` in this repository only |
+| `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
+
+`CI passed` is the only required check. Add every new job to its `needs`.
