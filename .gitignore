@@ -184,6 +184,8 @@ venv.bak/
 [Ll]ib64
 [Ll]ocal
 [Ss]cripts
+# Scripts of the image build (not of a virtual environment)
+!/scripts/
 pyvenv.cfg
 pip-selfcheck.json
 

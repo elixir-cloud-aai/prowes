@@ -181,6 +181,8 @@ def test_dockerignore_allowlist() -> None:
         # Legacy packaging files, replaced by `pyproject.toml`
         "requirements.txt",
         "setup.py",
+        # Scripts other than those the image build runs
+        "scripts/other.py",
     ):
         assert _ignored(path, patterns), f"{path} is sent to the build"
     for path in (
@@ -192,6 +194,7 @@ def test_dockerignore_allowlist() -> None:
         "README.md",
         "pyproject.toml",
         "uv.lock",
+        "scripts/image_requirements.py",
     ):
         assert not _ignored(path, patterns), f"{path} is not sent to the build"
 

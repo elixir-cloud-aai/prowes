@@ -186,8 +186,9 @@ jobs:
         run: |
           echo "DUMMY=not-a-secret" > pro_wes/.env
           echo "dummy" > pro_wes/tls.key
+      # Waits until the health checks of all services pass
       - name: Start app
-        run: docker compose up -d --build
+        run: docker compose up -d --build --wait
       # Up to 2 minutes for the app and its services to start
       - name: Check that app responds
         run: |
@@ -202,11 +203,20 @@ jobs:
           done
           echo "::error::App did not respond with 200 (last: ${status})"
           exit 1
-      # `prowes:latest` is the image that `docker-compose.yaml` builds
-      - name: Check that secret files are not in the image
+      # `prowes:local` is the image that `docker-compose.yaml` builds; the
+      # app is installed from a wheel, so the files are looked for anywhere
+      # in the image. The app runs as the image's non-root user and can
+      # write to the storage of the runs
+      - name: Check image contents and user
         run: |
-          docker run --rm --entrypoint sh prowes:latest -c \
-            'test ! -e /app/pro_wes/.env && test ! -e /app/pro_wes/tls.key'
+          found="$(docker run --rm --user 0 --entrypoint sh prowes:local -c \
+            'find / -xdev \( -name .env -o -name tls.key \) -print')"
+          if [[ -n "${found}" ]]; then
+            echo "::error::Secret files in the image: ${found}"
+            exit 1
+          fi
+          docker compose exec -T prowes sh -c \
+            'test "$(id -u)" = 1000 && touch /data/.probe && rm /data/.probe'
       - name: Show app logs
         if: failure()
         run: docker compose logs

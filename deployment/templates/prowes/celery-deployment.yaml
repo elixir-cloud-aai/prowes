@@ -11,6 +11,12 @@ spec:
       labels:
         app: {{ .Values.celeryWorker.appName }}
     spec:
+      {{- if ne .Values.clusterType "openshift" }}
+      # The image runs as the non-root user 1000; `fsGroup` makes the data
+      # volume writable for it (OpenShift assigns user and group itself)
+      securityContext:
+        fsGroup: 1000
+      {{- end }}
       initContainers:
       - name: vol-init
         image: busybox

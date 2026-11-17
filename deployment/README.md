@@ -101,6 +101,11 @@ are deployed using:
 These deployments depend on setting up a shared ReadWriteMany volume between
 (`wes-configmap.yaml`).
 
+The image runs as the non-root user `1000` and writes the runs to `/data`. On
+Kubernetes (`clusterType: kubernetes`), both deployments set `fsGroup: 1000`,
+so that the volume is writable for it; on OpenShift
+(`clusterType: openshift`), OpenShift assigns user and group itself.
+
 
 ## Destroy
 

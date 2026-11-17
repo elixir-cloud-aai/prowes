@@ -1,4 +1,7 @@
 [build-system]
+# The dependency group `build-system` lists the same requirements, locked in
+# `uv.lock` with their hashes, which the image build installs
+# (`Dockerfile`; `tests/test_image_build.py` checks that they match)
 requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
@@ -132,6 +135,13 @@ dev = [
     # version of uv that CI installs (`astral-sh/setup-uv`)
     "uv>=0.13",
 ]
+
+[dependency-groups]
+# The build requirements of the app (the same as `build-system.requires`,
+# checked by the tests), locked in `uv.lock` with their hashes, so that the
+# image build installs them hash-checked; Dependabot updates them with the
+# other locked packages
+build-system = ["setuptools>=77", "setuptools-scm>=8"]
 
 [project.readme]
 file = "README.md"

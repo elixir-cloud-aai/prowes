@@ -57,36 +57,21 @@ use the instructions described below.
 
 Ensure you have the following software installed:
 
-* [Docker][res-docker]
-* [docker-compose][res-docker-compose]
+* [Docker][res-docker] with [Docker Compose][res-docker-compose] v2
 * [Git][res-git]
 
 ### Prerequisites
 
-Create data directory and required subdirectories
+Clone the repository and change into it:
 
 ```bash
-export PROWES_DATA_DIR=/path/to/data/directory
-mkdir -p $PROWES_DATA_DIR/{db,specs}
+git clone https://github.com/elixir-cloud-aai/prowes.git
+cd prowes
 ```
 
-> **Note:** If the `PROWES_DATA_DIR` environment variable is not set, proWES
-> will require the following default directories to be available:
->
-> * `../data/pro_wes/db`
-> * `../data/pro_wes/specs`
-
-Clone repository
-
-```bash
-git clone https://github.com/elixir-europe/proWES.git
-```
-
-Traverse to app directory
-
-```bash
-cd proWES
-```
+Docker Compose keeps the data of MongoDB, RabbitMQ and the runs in named
+volumes (`mongodb-data`, `rabbitmq-data`, `prowes-data`); no data directories
+need to be created.
 
 ### Configure (optional)
 
@@ -123,20 +108,63 @@ and the Celery worker is started with `celery -A pro_wes.celery_worker worker`.
 
 ### Deploy
 
-Build/pull and run services
+Build the image and start proWES, the Celery worker, MongoDB and RabbitMQ,
+waiting until their health checks pass:
 
 ```bash
-docker-compose up -d --build
+docker compose up -d --build --wait
 ```
 
-Visit Swagger UI
+Then open the Swagger UI at <http://localhost:8090/ga4gh/wes/v1/ui/>. Only
+proWES is published, on the host's loopback interface (`127.0.0.1:8090`); to
+publish it elsewhere, override `ports` in a `docker-compose.override.yaml`.
+The image reports version `0.0.0.dev0` unless you set
+`SETUPTOOLS_SCM_PRETEND_VERSION` on the host (e.g.,
+`SETUPTOOLS_SCM_PRETEND_VERSION=0.20.0 docker compose up -d --build --wait`).
+RabbitMQ's credentials default to `prowes:prowes`; set `RABBITMQ_DEFAULT_USER`
+and `RABBITMQ_DEFAULT_PASS` on the host to change them (on the first start, or
+after `docker compose down --volumes`, which also removes the database and
+the runs).
+
+To monitor the Celery worker with Flower, at <http://localhost:5565>, add the
+profile `monitoring` and set its basic authentication:
 
 ```bash
-firefox http://localhost:8090/ga4gh/wes/v1/ui
+FLOWER_BASIC_AUTH=<user>:<password> docker compose --profile monitoring up -d --wait
 ```
 
-> **Note:** Host and port may differ if you have changed the configuration or
-> use an HTTP server to reroute calls to a different host.
+Docker Compose is for local development and testing; for deployments, see
+the [Helm chart][docs-deploy].
+
+### Image
+
+The [`Dockerfile`](Dockerfile) builds the image on FOCA's image
+(`elixircloud/foca`, with the FOCA release that `uv.lock` locks), pinned by
+digest:
+
+* **Locked installs**: the runtime dependencies and the build requirements
+  (dependency group `build-system` of `pyproject.toml`) are installed at the
+  versions of `uv.lock`, checked against their hashes, as wheels only; the app
+  is built as a wheel in a separate stage, offline, and installed without its
+  build tools, pip or uv.
+* **User**: the image runs as the non-root user `1000` (group `0`); the app
+  files are read-only for it. The only writable directory is `/data`, the
+  storage of the runs (`custom.post_runs.storage_path`), owned by the user and
+  writable for group `0`, for platforms that run images with an arbitrary user
+  ID in group `0` (e.g., OpenShift). Volumes mounted at `/data` must be
+  writable for the user (the Helm chart sets `fsGroup: 1000` on Kubernetes).
+* **Command**: `gunicorn --config python:pro_wes.gunicorn pro_wes.wsgi:app`;
+  the Celery worker runs `celery -A pro_wes.celery_worker worker` with the
+  same image.
+* **Health check**: probes the Swagger UI
+  (`http://localhost:8080/ga4gh/wes/v1/ui/`); set `HEALTHCHECK_URL` if the
+  port, the base path or the Swagger UI setting change. Containers of the
+  Celery worker need their own health check (see
+  [`docker-compose.yaml`](docker-compose.yaml)).
+* **Version**: the build argument `SETUPTOOLS_SCM_PRETEND_VERSION` sets the
+  version of the package, which the service info reports unless
+  `service_info.service.version` is set; without it, `0.0.0.dev0`.
+* **Labels**: OCI annotations (`org.opencontainers.image.*`).
 
 ### Secrets
 
@@ -191,6 +219,24 @@ following:
   client after forking (no more `MongoClient opened before fork` warnings).
   Gunicorn now runs one worker with 4 threads by default
   (`GUNICORN_THREADS`; before: 1).
+* **Image**: the image is built on FOCA's image and runs as the non-root
+  user `1000` (group `0`; before: root); the app is installed from a wheel
+  into `site-packages` (before: editable, from `/app/pro_wes`, whose `api`
+  directory was world-writable). Only `/data` is writable: volumes mounted
+  there must be writable for the user (the Helm chart, 2.0.4 or later, sets
+  `fsGroup: 1000` on Kubernetes; OpenShift assigns user and group itself).
+  Runs stored before by root may not be writable for the user. The image now
+  has a health check (the Swagger UI) and a default command (Gunicorn, see
+  above).
+* **Docker Compose**: [`docker-compose.yaml`](docker-compose.yaml) builds the
+  image `prowes:local` (before: `prowes:latest`) and keeps its data in named
+  volumes instead of `PROWES_DATA_DIR` (default `../data/pro_wes`), whose data
+  isn't migrated. It runs MongoDB 7.0, RabbitMQ 4.3 with the credentials
+  `prowes:prowes` (configurable, see [Deploy](#deploy); before: `guest`) and
+  Flower 2.0 only with the profile `monitoring` and basic authentication.
+  proWES (port 8090) and Flower (port 5565) are published on the host's
+  loopback interface only; RabbitMQ (before: 5682) and MongoDB (before: 27027)
+  are no longer published.
 * **Broker**: `RABBIT_HOST` and `RABBIT_PORT` are read by the app
   configuration (`jobs`); `CELERY_BROKER_URL` takes precedence.
 * **Logs**: the Celery worker logs in the format of the app (section `log`)

@@ -1,58 +1,141 @@
+# Local development and testing; NOT for deployments (see
+# `deployment/README.md`). `docker compose up --build --wait` starts proWES,
+# the Celery worker, MongoDB and RabbitMQ; `--profile monitoring` adds Flower.
+# Only proWES (and Flower) are published, on the host's loopback interface;
+# to publish them on other interfaces, or to reach MongoDB or RabbitMQ from
+# the host, override `ports` in a `docker-compose.override.yaml`
+
+# Settings shared by the app and the Celery worker (same image)
+x-prowes: &prowes
+  image: prowes:local
+  # Always build locally instead of pulling an image of that name
+  pull_policy: build
+  build:
+    context: .
+    dockerfile: Dockerfile
+    # App version (the build gets no Git metadata); `0.0.0.dev0` if unset
+    args:
+      SETUPTOOLS_SCM_PRETEND_VERSION: ${SETUPTOOLS_SCM_PRETEND_VERSION:-}
+  restart: unless-stopped
+  # Storage of the runs (`custom.post_runs.storage_path`), shared by the app
+  # and the worker
+  volumes:
+    - prowes-data:/data
+  depends_on:
+    mongodb:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
+# Message broker URL with the RabbitMQ credentials, which default to
+# `prowes:prowes` (RabbitMQ is not published); set `RABBITMQ_DEFAULT_USER`
+# and `RABBITMQ_DEFAULT_PASS` on the host to change them, with URL-safe
+# characters only (letters, digits, `-`, `.`, `_`, `~`), as they are used
+# both as is and in the URL. RabbitMQ creates the user on its first start
+# only: to change the credentials later, remove its volume (`docker compose
+# down --volumes`, which also removes the database and the runs)
+x-broker-url: &broker-url "pyamqp://${RABBITMQ_DEFAULT_USER:-prowes}:${RABBITMQ_DEFAULT_PASS:-prowes}@rabbitmq:5672//"
+
 services:
+
+  # The app; the image's command serves it with Gunicorn
+  # (`pro_wes/gunicorn.py`); options from the host's `GUNICORN_CMD_ARGS`
+  # (e.g., `--workers 2`) override its settings (not `--bind`, which would
+  # break the published port and the health check)
+  prowes:
+    <<: *prowes
+    # Longer than Gunicorn's graceful timeout, which idle keep-alive
+    # connections (e.g., of browsers) use up on shutdown
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:8090:8080"
+    environment:
+      CELERY_BROKER_URL: *broker-url
+      GUNICORN_CMD_ARGS: ${GUNICORN_CMD_ARGS:-}
 
   # Celery worker, which tracks the progress of workflow runs
   prowes-worker:
-    image: prowes:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    links:
-      - mongodb
-      - rabbitmq
-    command: celery -A pro_wes.celery_worker worker -E --loglevel=info
-    volumes:
-      - ${PROWES_DATA_DIR:-../data/pro_wes/runs}:/data
-
-  # The app, served by Gunicorn with FOCA's settings
-  # (`pro_wes/gunicorn.py`)
-  prowes:
-    image: prowes:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    links:
-      - mongodb
-      - rabbitmq
-    command: gunicorn --config python:pro_wes.gunicorn pro_wes.wsgi:app
-    ports:
-      - "8090:8080"
-    volumes:
-      - ${PROWES_DATA_DIR:-../data/pro_wes/runs}:/data
+    <<: *prowes
+    command: ["celery", "-A", "pro_wes.celery_worker", "worker", "-E", "--loglevel=info"]
+    environment:
+      CELERY_BROKER_URL: *broker-url
+    # Replaces the image's health check, which probes the app
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A pro_wes.celery_worker inspect ping --destination celery@$$HOSTNAME --timeout 10"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
 
   rabbitmq:
-    image: rabbitmq:4-management
+    image: docker.io/library/rabbitmq:4.3.7
+    hostname: rabbitmq
     restart: unless-stopped
-    ports:
-      - "5682:5672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-prowes}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-prowes}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    configs:
+      - source: rabbitmq-foca
+        target: /etc/rabbitmq/conf.d/90-foca.conf
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "--quiet", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
 
   # MongoDB 7.0, the version FOCA is tested with (current PyMongo releases
-  # need MongoDB 4.4 or later)
+  # need MongoDB 4.4 or later); 8.0 refuses to start on Linux kernels 6.19 to
+  # 7.0.13 (https://jira.mongodb.org/browse/SERVER-121912)
   mongodb:
-    image: mongo:7.0
+    image: docker.io/library/mongo:7.0.45
     restart: unless-stopped
     volumes:
-      - ${PROWES_DATA_DIR:-../data/pro_wes}/db:/data/db
-    ports:
-      - "27027:27017"
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
+  # Monitoring of the Celery worker (opt-in: `--profile monitoring`), which
+  # shows task arguments; requires basic authentication, set on the host as
+  # `FLOWER_BASIC_AUTH=<user>:<password>`
   flower:
-    image: mher/flower:2.1.0
-    restart: unless-stopped
-    links:
-      - prowes-worker
-    # Flower 2 runs as a Celery subcommand; the image has no `flower` command
-    command: celery --broker=amqp://guest:guest@rabbitmq:5672// flower --port=5555
+    image: docker.io/mher/flower:2.1.0
+    profiles: [monitoring]
+    # Not restarted endlessly if `FLOWER_BASIC_AUTH` is unset
+    restart: on-failure:3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        test -n "$${FLOWER_BASIC_AUTH}"
+        || { echo "Set FLOWER_BASIC_AUTH (<user>:<password>)" >&2; exit 1; };
+        exec celery flower --port=5555
+    environment:
+      CELERY_BROKER_URL: *broker-url
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-}
     ports:
-      - "5565:5555"
+      - "127.0.0.1:5565:5555"
+
+# Config of RabbitMQ, as proTES's: Celery declares transient non-exclusive
+# queues (e.g., for the rpc:// result backend and remote control), which
+# RabbitMQ 4.3 denies by default
+configs:
+  rabbitmq-foca:
+    content: |
+      deprecated_features.permit.transient_nonexcl_queues = true
+
+# Named volumes; data of earlier versions of this file, in
+# `PROWES_DATA_DIR` (default `../data/pro_wes`), is not migrated
+volumes:
+  prowes-data:
+  mongodb-data:
+  rabbitmq-data:

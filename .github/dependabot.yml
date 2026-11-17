@@ -25,8 +25,8 @@ updates:
       - dependency-name: connexion
         update-types: ["version-update:semver-major"]
       # FOCA is bumped by hand, together with the base image (see the `docker`
-      # entry): once the image is built on FOCA's base image (#111), the build
-      # fails unless the base image has the locked FOCA, so separate pull
+      # entry): the image is built on FOCA's base image, and the build fails
+      # unless the base image has the locked FOCA, so separate pull
       # requests of this entry and the `docker` entry would each fail
       - dependency-name: foca
     groups:
