@@ -167,17 +167,35 @@ def test_track_run_until_finished(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("run")
 def test_track_run_invalid_log(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Runs whose remote run log is invalid fail, with `SYSTEM_ERROR`."""
+    """Invalid fields of remote run logs are left out; tracking goes on."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
     monkeypatch.setattr(
         WesClient,
         "get_run",
-        lambda *_args, **_kwargs: {"task_logs": [{"start_time": 1700000000}]},
+        lambda *_args, **_kwargs: {
+            "outputs": {"out": 1},
+            "task_logs": [{"start_time": 1700000000}],
+        },
     )
-    with pytest.raises(EngineProblem):
-        _track()
+    assert _track() == TASK_ID
     document = _stored()
-    assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert document["run_log"]["state"] == "COMPLETE"
+    assert document["run_log"]["outputs"] == {"out": 1}
     assert "task_logs" not in document["run_log"]
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_error_response_as_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run logs without stored fields (e.g., error responses) change nothing."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    monkeypatch.setattr(
+        WesClient,
+        "get_run",
+        lambda *_args, **_kwargs: {"msg": "not found", "status_code": 404},
+    )
+    assert _track() == TASK_ID
+    document = _stored()
+    assert document["run_log"] == {"run_id": RUN_ID, "state": "COMPLETE"}
 
 
 @pytest.mark.usefixtures("run")
@@ -203,7 +221,8 @@ def test_track_run_remote_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("run")
 def test_track_run_log_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Runs whose log can't be read fail with `SYSTEM_ERROR`."""
+    """Runs whose log can't be read are tracked; their state is kept."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
 
     def _unavailable(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         """Fail as an unavailable WES.
@@ -218,9 +237,8 @@ def test_track_run_log_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
         raise EngineUnavailable
 
     monkeypatch.setattr(WesClient, "get_run", _unavailable)
-    with pytest.raises(EngineUnavailable):
-        _track()
-    assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _track() == TASK_ID
+    assert _stored()["run_log"]["state"] == "COMPLETE"
 
 
 @pytest.mark.usefixtures("run")

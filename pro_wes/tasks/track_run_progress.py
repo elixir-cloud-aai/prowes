@@ -6,7 +6,7 @@ from typing import Any
 
 from celery import Task
 from foca import get_collection, get_custom_config
-from pydantic import BaseModel, ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from pro_wes.celery_worker import celery
 from pro_wes.config_models import CustomConfig
@@ -96,7 +96,7 @@ def task__track_run_progress(
         db_client=db_client,
         wes_client=wes_client,
         run_id=remote_run_id,
-        timeout=custom_config.defaults.timeout,
+        timeout=controller_config.timeout_post,
     )
 
     # track workflow run progress
@@ -137,29 +137,21 @@ def task__track_run_progress(
         db_client=db_client,
         wes_client=wes_client,
         run_id=remote_run_id,
-        timeout=custom_config.defaults.timeout,
+        timeout=controller_config.timeout_post,
     )
 
     logger.info("[%s] Processing completed.", task_id)
     return task_id
 
 
-class RunLogUpdate(BaseModel):
-    """Fields of a remote run log that are stored with the run.
-
-    Attributes:
-        outputs: Name and destination of workflow outputs.
-        run_log: Log of the workflow engine.
-        task_logs: Logs of the tasks of the workflow.
-    """
-
-    outputs: dict[str, Any] | None = None
-    run_log: Log | None = None
-    task_logs: list[Log] | None = None
-
-
-# Fields of remote run logs that are stored (cf. `RunLogUpdate`)
-RUN_LOG_FIELDS = tuple(RunLogUpdate.model_fields)
+# Fields of remote run logs that are stored, with their types (cf.
+# `pro_wes.ga4gh.wes.models.RunLog`); other fields (e.g., those of later WES
+# versions) are left out
+RUN_LOG_FIELDS: dict[str, TypeAdapter[Any]] = {
+    "outputs": TypeAdapter(dict[str, Any] | None),
+    "run_log": TypeAdapter(Log | None),
+    "task_logs": TypeAdapter(list[Log] | None),
+}
 
 
 def _update_run_log(
@@ -171,10 +163,12 @@ def _update_run_log(
     """Fetch the run log from the remote WES and store it in the run document.
 
     Only the outputs, the log of the workflow engine and the task logs of the
-    remote run log are stored, after validation: its state is tracked via
+    remote run log are stored, each if it is valid: its state is tracked via
     status requests, its run identifier is that of the remote WES (the run
     keeps its own), and its run request is left out (cwl-WES sends one that
-    doesn't conform to the model).
+    doesn't conform to the model). Run logs are informational: if the remote
+    WES is unavailable or a field is invalid, a warning is logged, and the
+    state of the run is left as it is.
 
     Args:
         db_client: Connector to the run document.
@@ -183,27 +177,33 @@ def _update_run_log(
         timeout: Timeout of the request, in seconds.
 
     Returns:
-        Updated run document.
-
-    Raises:
-        pro_wes.exceptions.EngineUnavailable: The remote service is
-            unavailable; the run state is set to `SYSTEM_ERROR`.
-        pro_wes.exceptions.EngineProblem: The run log of the remote service
-            is invalid; the run state is set to `SYSTEM_ERROR`.
+        Run document, updated if any field was stored.
     """
     try:
         response = wes_client.get_run(run_id=run_id, timeout=timeout)
-    except EngineUnavailable:
-        db_client.update_run_state(state=State.SYSTEM_ERROR.value)
-        raise
-    try:
-        run_log = RunLogUpdate.model_validate(
-            {key: response[key] for key in RUN_LOG_FIELDS if key in response}
+    except EngineUnavailable as exc:
+        logger.warning(
+            "[%s] Run log of remote run '%s' not available: %s",
+            db_client.task_id,
+            run_id,
+            exc,
         )
-    except ValidationError as exc:
-        db_client.update_run_state(state=State.SYSTEM_ERROR.value)
-        raise EngineProblem("Received invalid run log.") from exc
-    return db_client.upsert_fields_in_root_object(
-        root="run_log",
-        **run_log.model_dump(exclude_unset=True),
-    )
+        return db_client.get_document()
+    fields: dict[str, Any] = {}
+    for key, adapter in RUN_LOG_FIELDS.items():
+        if key not in response:
+            continue
+        try:
+            fields[key] = adapter.dump_python(adapter.validate_python(response[key]))
+        except ValidationError as exc:
+            logger.warning(
+                "[%s] Invalid field '%s' of the run log of remote run '%s' not"
+                " stored: %s",
+                db_client.task_id,
+                key,
+                run_id,
+                exc,
+            )
+    if not fields:
+        return db_client.get_document()
+    return db_client.upsert_fields_in_root_object(root="run_log", **fields)

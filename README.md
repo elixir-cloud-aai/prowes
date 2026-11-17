@@ -105,8 +105,8 @@ describe each section. The settings that deployments usually change:
 | `jobs.host`, `jobs.port` | `${RABBIT_HOST:-rabbitmq}`, `${RABBIT_PORT:-5672}` | RabbitMQ broker of the Celery worker; the environment variable `CELERY_BROKER_URL` takes precedence (e.g., for brokers with credentials) |
 | `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
 | `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type |
-| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`) |
-| `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, run log, cancel), in seconds |
+| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`) |
+| `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds |
 | `custom.service_info` | | Service info, stored in the database on the first start |
 
 Strings in the configuration may reference environment variables, as
@@ -200,11 +200,13 @@ following:
   info schema from GitHub.
 * **Timeouts**: Gunicorn's threaded workers don't stop requests that hang,
   so requests to the remote WES are limited: forwarding runs by
-  `custom.post_runs.timeout_post` (now 30 seconds; before: none), canceling
-  runs and reading run logs by `custom.defaults.timeout`.
+  `custom.post_runs.timeout_post` (now 30 seconds; before: none), also for
+  reading run logs, canceling runs by `custom.defaults.timeout`.
 * **Run logs**: the Celery worker stores the outputs, the engine log and the
-  task logs of the remote run log, after validation; the run keeps its own
-  identifier and state (before: the task failed before storing any).
+  task logs of the remote run log, each if it is valid (invalid ones and run
+  logs that can't be read are logged as warnings); the run keeps its own
+  identifier and state (before: the task failed before storing any). Other
+  fields, e.g., of WES 1.1, are left out.
 
 ## Development
 
