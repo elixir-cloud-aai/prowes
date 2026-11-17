@@ -7,13 +7,18 @@ from typing import Any
 
 from bson.objectid import ObjectId
 from celery import uuid
-from flask import request
+
+# The implementation of the controllers still reads the request and its files
+# from Flask, until they are read in `controllers.py` (#117)
+from flask import request  # ast-grep-ignore: framework-free-tasks
 from foca import get_collection, get_custom_config
 from foca.utils.misc import generate_id
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
-from werkzeug.datastructures import ImmutableMultiDict
-from werkzeug.utils import secure_filename
+from werkzeug.datastructures import (  # ast-grep-ignore: framework-free-tasks
+    ImmutableMultiDict,
+)
+from werkzeug.utils import secure_filename  # ast-grep-ignore: framework-free-tasks
 
 from pro_wes.config_models import CustomConfig
 from pro_wes.exceptions import (
@@ -82,7 +87,8 @@ class WorkflowRuns:
 
         # get and attach suitable WES endpoint
         document.wes_endpoint = WesEndpoint(
-            host="https://wes-na.cloud.e-infra.cz",
+            # The only backend until backends are configurable (#118)
+            host="https://wes-na.cloud.e-infra.cz",  # ast-grep-ignore: hard-coded-url
         )
 
         # get and attach workflow run owner

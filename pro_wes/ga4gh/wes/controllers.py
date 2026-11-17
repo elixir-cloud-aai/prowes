@@ -29,7 +29,7 @@ def GetServiceInfo() -> dict[str, Any]:
 @log_traffic
 def PostServiceInfo(
     **kwargs: Any,
-) -> tuple[None, Literal["201"], dict[str, str] | None]:
+) -> tuple[None, Literal[201], dict[str, str] | None]:
     """Set information about this service.
 
     Controller for `POST /service-info`.
@@ -43,7 +43,7 @@ def PostServiceInfo(
     service_info = ServiceInfo()
     service_info.set_service_info(data=request.json)
     headers = None
-    return (None, "201", headers)
+    return (None, 201, headers)
 
 
 @log_traffic

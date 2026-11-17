@@ -9,6 +9,7 @@ from foca import get_collection
 import pytest
 
 from pro_wes.exceptions import NotFound
+from pro_wes.ga4gh.wes.controllers import PostServiceInfo
 from pro_wes.ga4gh.wes.service_info import ServiceInfo
 from pro_wes.ga4gh.wes.states import States
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB, SERVICE_INFO_COLLECTION
@@ -101,3 +102,20 @@ def test_get_service_info_counts_states() -> None:
     assert counts["RUNNING"] == 2
     assert counts["COMPLETE"] == 1
     assert sum(counts.values()) == 3
+
+
+def test_post_service_info_status_code(app: App) -> None:
+    """`POST /service-info` stores the service info and answers `201`.
+
+    The status code is an integer (ast-grep rule `string-status-code`).
+
+    Args:
+        app: The app without service info, within its app context.
+    """
+    with app.app.test_request_context(
+        "/ga4gh/wes/v1/service-info", method="POST", json=deepcopy(SERVICE_INFO)
+    ):
+        assert PostServiceInfo() == (None, 201, None)
+    response = ServiceInfo().get_service_info()
+    response.pop("system_state_counts")
+    assert response == SERVICE_INFO
