@@ -80,7 +80,8 @@ proWES), with the same `413`.
   string, also in forms that lenient URL parsers accept (e.g.,
   `https:/user:password@host`) and in URLs inside strings (e.g.,
   `--url=https://user:password@host`); user names without password inside
-  strings (e.g., `--url=https://token@host`) are not found. Tabs and
+  strings (e.g., `--url=https://token@host`), and user information with
+  spaces inside strings, are not found: detection is a safety net. Tabs and
   newlines in URLs are ignored, as URL parsers remove them; keys that
   collide once stripped are rejected. Credentials found are not
   stored, forwarded or returned in run logs, and neither error responses
