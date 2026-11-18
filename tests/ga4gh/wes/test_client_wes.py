@@ -393,6 +393,20 @@ def test_default_timeout(call: Call) -> None:
 
 
 @pytest.mark.usefixtures("foca_app")
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan"), 1e10])
+def test_invalid_timeout(timeout: float) -> None:
+    """Timeouts of calls have the bounds of the config; nothing is sent.
+
+    Args:
+        timeout: Invalid timeout.
+    """
+    http = FakeHttp(body={"run_id": RUN_ID})
+    with pytest.raises(ValueError, match="validation error"):
+        _client(http).cancel_run(run_id=RUN_ID, timeout=timeout)
+    assert http.calls == []
+
+
+@pytest.mark.usefixtures("foca_app")
 def test_timeout_from_config() -> None:
     """The default timeout is `custom.defaults.timeout` (2 in `config.yaml`)."""
     assert WesClient(host=HOST).timeout == 2

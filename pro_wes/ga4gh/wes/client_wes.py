@@ -41,11 +41,11 @@ from foca.utils.http import (
     RequestNotSent,
     ResponseTooLarge,
 )
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 import requests
 from urllib3 import encode_multipart_formdata
 
-from pro_wes.config_models import CustomConfig
+from pro_wes.config_models import CustomConfig, Timeout
 from pro_wes.exceptions import (
     EngineOutcomeUnknown,
     EngineRequestNotSent,
@@ -67,6 +67,8 @@ CA_BUNDLE_ENV = "REQUESTS_CA_BUNDLE"
 """Environment variable with the path of the certificate authorities that
 WES instances are verified with, instead of the public ones (a file or a
 directory, as for requests)."""
+
+_TIMEOUT: TypeAdapter[float] = TypeAdapter(Timeout)
 
 
 class _GuardedHttp(GuardedClient):
@@ -495,11 +497,17 @@ class WesClient:
                 have got the request (e.g., the response timed out, or is
                 larger than `custom.wes.max_response_size`, a redirect, or
                 no JSON).
+            pydantic.ValidationError: The timeout is not positive, finite and
+                at most `pro_wes.config_models.MAX_TIMEOUT` (a `ValueError`;
+                nothing is sent).
         """
         url = f"{self.url}{path}"
         # FOCA's `request()` takes no timeout: set the client's per request
-        # (clients aren't shared between threads)
-        self.http.timeout = self.timeout if timeout is None else timeout
+        # (clients aren't shared between threads), within the bounds of the
+        # config, as larger ones overflow FOCA's deadlines
+        self.http.timeout = _TIMEOUT.validate_python(
+            self.timeout if timeout is None else timeout
+        )
         try:
             response: HttpResponse = self.http.request(
                 method, url, headers=self.headers(content_type), data=data
