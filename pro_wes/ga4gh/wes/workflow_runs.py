@@ -457,7 +457,13 @@ class WorkflowRuns:
         )
 
         wes_endpoint: dict[str, str] = document.get("wes_endpoint") or {}
-        has_remote_run = {"host", "base_path", "run_id"} <= wes_endpoint.keys()
+        # a remote run needs a host and a remote run identifier, and a base path
+        # (which may be empty)
+        has_remote_run = (
+            bool(wes_endpoint.get("host"))
+            and wes_endpoint.get("base_path") is not None
+            and bool(wes_endpoint.get("run_id"))
+        )
 
         # ensure workflow run is cancelable; runs stored without (valid) state
         # are of unknown state (as in `RunLog`), and runs of unknown state are

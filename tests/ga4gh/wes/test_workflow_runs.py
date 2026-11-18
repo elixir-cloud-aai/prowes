@@ -729,6 +729,7 @@ UNKNOWN_RUN_LOGS: dict[str, dict[str, Any]] = {
     "no state": {},
     "null state": {"state": None},
     "invalid state": {"state": "INVALID"},
+    "unhashable state": {"state": ["RUNNING"]},
 }
 
 
@@ -828,8 +829,16 @@ def test_cancel_run_cancelable(
                 "base_path": "/ga4gh/wes/v1",
             }
         },
+        {"wes_endpoint": {**REMOTE_ENDPOINT, "run_id": None}},
+        {"wes_endpoint": {**REMOTE_ENDPOINT, "base_path": None}},
     ],
-    ids=["no endpoint", "null endpoint", "no remote run"],
+    ids=[
+        "no endpoint",
+        "null endpoint",
+        "no remote run",
+        "null remote run",
+        "null base path",
+    ],
 )
 def test_cancel_run_without_remote_run(
     foca_client: Client,
