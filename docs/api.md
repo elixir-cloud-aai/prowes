@@ -23,6 +23,12 @@ fills in OpenAPI defaults, e.g., `style` of parameters):
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
 | `400` of the endpoints of a run (`/runs/{run_id}...`); `413` of `POST /runs`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
 
+Statuses that any request can get, whatever its operation, are not declared
+per operation: `404` for unknown paths, `405 Method Not Allowed`, and `413
+Content Too Large` for bodies larger than `server.max_content_length` (on
+operations other than `POST /runs`, which declares it). They are problem
+details too.
+
 The contract tests (`tests/ga4gh/wes/test_spec.py`) fail on any other
 change of the vendored file or deviation of the merged specification;
 `tests/ga4gh/wes/test_error_responses.py` checks that error responses are
