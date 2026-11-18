@@ -225,3 +225,6 @@ tags
 !.gitkeep
 celeryd.pid
 *.modified.yaml
+
+# Dependencies of the Helm chart (`helm dependency build deployment`)
+deployment/charts/

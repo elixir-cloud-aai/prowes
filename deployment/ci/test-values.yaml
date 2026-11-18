@@ -1,0 +1,9 @@
+# Values for rendering and installing the chart in CI (`helm lint`, the
+# chart tests and `ct install`, see `.github/workflows/ci.yml`): the settings
+# each deployment must make
+hostName: wes.example.org
+mongodb:
+  auth:
+    existingSecret: mongodb
+broker:
+  existingSecret: celery
