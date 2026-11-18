@@ -16,15 +16,166 @@ info:
     email: "alexander.kanitz@alumni.ethz.ch"
 servers:
   - url: /ga4gh/wes/v1
+# This file is merged over the vendored WES 1.1.0 specification
+# (`20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`): mappings
+# are merged, other values replaced. The served specification deviates from
+# the published one only in the following (cf. `docs/api.md`; the contract
+# tests in `tests/ga4gh/wes/test_spec.py` allow no other deviations):
+#
+# - `openapi`, `info` (but `version`) and `servers`: those of proWES
+# - `/service-info`: served by FOCA (`x-openapi-router-controller`)
+# - `Service` and `ServiceType`: the schemas of the GA4GH service info,
+#   which the WES specification references on GitHub; the vendored file
+#   references these copies instead (its only change)
+# - error responses: problem details (`ProblemDetails`), as proWES sends
+#   them (`pro_wes/exceptions.py`), instead of `ErrorResponse` (`msg`,
+#   `status_code`), for all error statuses of all operations
+# - proWES extensions: `413` of `POST /runs` and `501` of the task
+#   endpoints, which proWES answers with, but WES doesn't declare
 paths:
-  # Served by FOCA from the config (`service_info`); the controller set here
-  # takes precedence over the one added to all operations (`api.specs` in
-  # `config.yaml`)
   /service-info:
     get:
+      # Served by FOCA from the config (`service_info`); the controller set
+      # here takes precedence over the one added to all operations
+      # (`api.specs` in `config.yaml`)
       x-openapi-router-controller: foca.api.service_info
+      responses:
+        # Replaces the schema of the declared error response (`ErrorResponse`)
+        400: &problem
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        401: *problem
+        403: *problem
+        500: *problem
+  /runs:
+    get:
+      responses:
+        400: *problem
+        401: *problem
+        403: *problem
+        500: *problem
+    post:
+      responses:
+        400: *problem
+        401: *problem
+        403: *problem
+        # proWES extension
+        413:
+          description: >-
+            proWES extension: the request body is larger than
+            `server.max_content_length`, the run has more workflow
+            attachments than `custom.post_runs.max_attachments`, or an
+            attachment is larger than `custom.post_runs.max_attachment_size`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        500: *problem
+  /runs/{run_id}:
+    get:
+      responses:
+        401: *problem
+        403: *problem
+        404: *problem
+        500: *problem
+  /runs/{run_id}/status:
+    get:
+      responses:
+        401: *problem
+        403: *problem
+        404: *problem
+        500: *problem
+  /runs/{run_id}/tasks:
+    get:
+      responses:
+        401: *problem
+        403: *problem
+        404: *problem
+        500: *problem
+        # proWES extension, until the tasks are served (#124)
+        501: &tasks_not_served
+          description: >-
+            proWES extension: the tasks of runs are not served yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /runs/{run_id}/tasks/{task_id}:
+    get:
+      responses:
+        401: *problem
+        403: *problem
+        404: *problem
+        500: *problem
+        501: *tasks_not_served
+  /runs/{run_id}/cancel:
+    post:
+      responses:
+        401: *problem
+        403: *problem
+        404: *problem
+        500: *problem
 components:
   schemas:
+    # Problem details (RFC 9457), as proWES sends them (FOCA; cf.
+    # `pro_wes/exceptions.py` and `exceptions` in `config.yaml`); they
+    # replace `ErrorResponse` in all error responses
+    ProblemDetails:
+      description: >-
+        Problem details of an error (RFC 9457); further members may be
+        added.
+      type: object
+      required:
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: >-
+            URI of the problem type; only for requests with invalid fields.
+        title:
+          type: string
+          description: Short summary of the problem type.
+        status:
+          type: integer
+          format: int32
+          description: HTTP status code of the response.
+        detail:
+          type: string
+          description: Explanation of this occurrence of the problem.
+        code:
+          type: string
+          description: >-
+            Code of the problem (`invalid-request`); only for requests with
+            invalid fields.
+        errors:
+          type: array
+          description: >-
+            The invalid fields of a rejected request (at most 100); only for
+            requests with invalid fields.
+          items:
+            type: object
+            required:
+              - detail
+              - code
+            properties:
+              detail:
+                type: string
+                description: What is wrong with the field.
+              pointer:
+                type: string
+                description: >-
+                  JSON Pointer (as URI fragment) to the invalid field of the
+                  request body; for fields of the body.
+              parameter:
+                type: string
+                description: Name of the invalid parameter; for parameters.
+              code:
+                type: string
+                description: Code of the kind of error.
     # `Service` and `ServiceType` schemas of the GA4GH service info
     # specification (version 1.0.0), referenced by the WES specification
     Service:

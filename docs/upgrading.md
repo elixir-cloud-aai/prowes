@@ -73,7 +73,9 @@ are removed from the run logs returned (not from the database).
 
 Error responses are problem details (`title`, `status` and `detail`, as
 `application/json`) instead of `message` and `code`. Clients that read
-`message` or `code` need to read `detail` and `status` instead.
+`message` or `code` need to read `detail` and `status` instead. The served
+specification declares them (schema `ProblemDetails` instead of
+`ErrorResponse`); clients generated from it need to be generated again.
 
 ### Commands
 

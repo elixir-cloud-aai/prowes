@@ -72,6 +72,12 @@ ignore_missing_imports = true
 module = ["mongomock", "mongomock.*"]
 ignore_missing_imports = true
 
+# jsonschema (a dependency of Connexion and FOCA) ships no type information
+# (used by the tests only)
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
