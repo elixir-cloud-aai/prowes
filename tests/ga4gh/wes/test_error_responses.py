@@ -129,9 +129,9 @@ def assert_declared_error(
         status: Expected status code.
 
     Raises:
-        AssertionError: The response doesn't have the expected status, or
-            the status, the media type or the body isn't declared for the
-            operation.
+        AssertionError: The response doesn't have the expected status (as
+            HTTP status and member `status`), or the status, the media type
+            or the body isn't declared for the operation.
     """
     assert response.status_code == status
     declared = spec["paths"][path][method]["responses"]
@@ -143,8 +143,10 @@ def assert_declared_error(
     assert schema == {"$ref": "#/components/schemas/ProblemDetails"}
     # Draft 4 resolves `$ref` against the root, which has the components
     validator = Draft4Validator({"components": spec["components"], **schema})
-    errors = [error.message for error in validator.iter_errors(response.json())]
+    body = response.json()
+    errors = [error.message for error in validator.iter_errors(body)]
     assert errors == []
+    assert body["status"] == status
 
 
 def test_problem_details_declared(served_spec: dict[str, Any]) -> None:
