@@ -63,6 +63,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         500: *problem
+        # proWES extension
+        503:
+          description: >-
+            proWES extension: no WES instance is available for new runs
+            (`custom.wes.backends`); the run is not stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /runs/{run_id}:
     get:
       responses:
