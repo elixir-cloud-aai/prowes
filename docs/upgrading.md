@@ -65,6 +65,57 @@ pass on; WES instances must accept requests without credentials.
 /runs/{run_id}` finds it (before: the identifier at the remote WES, which
 proWES didn't find).
 
+### Database indexes
+
+The collection `runs` gets two indexes, which the app creates at its first
+start (see [Database indexes](operations.md#database-indexes)): a unique
+index on the run identifier (`run_log.run_id`), and one for listing the
+runs of a user (`user_id`, `_id` descending). Before, the unique index was
+on the keys `run_id` (which run documents don't have at the top level; the
+run identifier is `run_log.run_id`) and `task_id`: duplicate run
+identifiers were rejected only by the working directory of each run, not
+across instances of the app that share the database but not the storage.
+
+Stop all apps and Celery workers of the earlier version before the new app
+starts, and run the check below in between (no rolling upgrade): workers of
+earlier versions replace run identifiers (see below), which the new unique
+index rejects if another run has the same one, and their task then fails,
+leaving the run in its current state. Workers of this version don't change
+run identifiers.
+
+Before upgrading, check that no run identifier is stored twice, as the app
+doesn't start otherwise (`IndexConflictError`). Earlier versions replaced
+the identifier of a run with that of the remote WES, or with none, once the
+run was tracked, so databases of long-running deployments may well hold
+duplicates. In `mongosh`, connected to the database of proWES (default:
+`runStore`):
+
+```javascript
+db.runs.aggregate([
+  { $group: { _id: "$run_log.run_id", count: { $sum: 1 } } },
+  { $match: { count: { $gt: 1 } } },
+])
+```
+
+Without output, there are none. Otherwise, delete or change all but one of
+the runs of each identifier listed. The index is not sparse (the previous
+one was): runs without an identifier (`run_log.run_id`) count as runs of
+the same identifier, listed as `_id: null`.
+
+With `db.create_indexes_on_startup: false`, the app creates no indexes:
+create the new ones by hand (see [Database
+indexes](operations.md#database-indexes)).
+
+The previous index (`run_id_1_task_id_1`) is kept, but no longer used;
+drop it after the upgrade:
+
+```javascript
+db.runs.dropIndex("run_id_1_task_id_1")
+```
+
+On large collections, building the new indexes makes the first start take
+longer.
+
 ### Limits of run requests
 
 Run requests are limited and sanitized (see

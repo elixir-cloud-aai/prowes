@@ -50,13 +50,20 @@ db:
     runStore:
       collections:
         runs:
+          # Created at start if missing; existing indexes are kept (see
+          # "Database indexes" in `docs/operations.md`)
           indexes:
+            # Run identifiers are unique: a duplicate is rejected on insert,
+            # and `POST /runs` tries another identifier
             - keys:
-                run_id: 1
-                task_id: 1
+                run_log.run_id: 1
               options:
                 "unique": True
-                "sparse": True
+            # `GET /runs` with authentication: the runs of a user, newest
+            # first
+            - keys:
+                user_id: 1
+                _id: -1
 
 # API configuration
 # Cf. https://foca.readthedocs.io/en/latest/configuration/api/
