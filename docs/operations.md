@@ -25,7 +25,8 @@ For each forwarded run, the app starts a Celery task that polls the state of
 the run at the WES instance every `custom.post_runs.polling_wait` seconds
 (default: 3). If the WES instance doesn't answer with a valid state
 `custom.post_runs.polling_attempts` times in a row (default: 100), the run
-gets the state `SYSTEM_ERROR`. Once the run has finished, the worker stores
+gets the state `SYSTEM_ERROR`. Once the run has a final state (see [Run
+states](api.md#run-states)), the worker stores
 the outputs, the engine log and the task logs of the remote run log, each if
 it is valid (invalid ones, and run logs that can't be read, are logged as
 warnings); the run keeps its own identifier and state. Tasks run without a
