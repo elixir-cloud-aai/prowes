@@ -94,7 +94,9 @@ WES instances on the same host and port, set the path prefix of proWES in
 Requests to WES instances verify TLS certificates (with the public
 certificate authorities, or those of the environment variable
 `REQUESTS_CA_BUNDLE`), with the timeouts of `custom.post_runs.timeout_post`
-and `custom.defaults.timeout`. proWES sends no credentials to WES instances yet
+and `custom.defaults.timeout`, and don't follow redirects (a redirect fails
+the request, as if the WES instance were unavailable): set the URL that the
+WES API is served at. proWES sends no credentials to WES instances yet
 (neither its own nor the client's), so they must accept runs without them.
 
 ### Discovery in a service registry

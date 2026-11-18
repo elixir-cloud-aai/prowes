@@ -51,6 +51,11 @@ class WesClient:
         )
         self.set_token(token)
         self.session = requests.Session()
+        # Redirects are not followed (e.g., of a WES instance discovered in a
+        # registry, to an internal service): they fail as unavailable
+        # (`TooManyRedirects`), until requests go through FOCA's guarded
+        # client
+        self.session.max_redirects = 0
 
     def get_service_info(
         self,

@@ -54,8 +54,8 @@ def task__track_run_progress(
         remote_base_path: Override the default path suffix defined in the WES
             API specification, i.e., `/ga4gh/wes/v1`.
         remote_run_id: Workflow run identifier on remote WES service.
-        jwt: Authorization bearer token to be passed on with workflow run
-            request to remote service.
+        jwt: Ignored: the client's token is never passed on to WES instances
+            (kept for tasks queued by earlier versions).
 
     Returns:
         Task identifier.
@@ -95,7 +95,9 @@ def task__track_run_progress(
     wes_client: WesClient = WesClient(
         host=remote_host,
         base_path=remote_base_path,
-        token=jwt,
+        # never the client's token (also not of tasks queued by earlier
+        # versions): no credentials for WES instances until #120
+        token=None,
     )
 
     # fetch run log and upsert database document
