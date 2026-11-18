@@ -43,7 +43,8 @@ config: {}
 #         CWL:
 #           workflow_type_version: ["v1.0", "v1.2"]
 #       workflow_engine_versions:
-#         cwltool: "3.1"
+#         cwltool:
+#           workflow_engine_version: ["3.1"]
 
 prowes:
   # Image repository; may include a tag or digest instead of setting `tag`

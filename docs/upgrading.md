@@ -182,6 +182,27 @@ app and the worker as a configuration overlay, takes all credentials from
 Secrets of your own, and deploys the image tag `dev` by default (set
 `prowes.tag` for a fixed version).
 
+### WES 1.1.0 (breaking)
+
+proWES serves WES 1.1.0 instead of 1.0.1 (see [API](api.md#wes-110)):
+
+- Service info: `workflow_engine_versions` maps each engine to an object
+  (`cwltool: {workflow_engine_version: ["3.1"]}`; before: `cwltool:
+  "3.1"`); the app refuses to start with the old form. Set
+  `type.version` and `supported_wes_versions` to `1.1.0` if your
+  configuration sets them (see [Service info](configuration.md#service-info)).
+  The example of the Helm chart's `config` (`deployment/values.yaml`) has
+  the new form.
+- `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` are
+  part of the specification and answer `501 Not Implemented` for now.
+- `workflow_engine` and `workflow_engine_version` in `POST /runs` are
+  refused with `400 Bad Request` unless empty (as with WES 1.0.1, whose
+  specification didn't have them).
+- Run and task logs keep the `system_logs` of the WES instance (runs
+  tracked from now on).
+- Clients generated from the earlier specification keep working: the
+  endpoints and fields of WES 1.0.1 are unchanged.
+
 ### Timeouts
 
 Gunicorn's threaded workers don't stop requests that hang, so requests to
