@@ -231,6 +231,8 @@ def test_task_endpoints_not_implemented(foca_client: Client, path: str) -> None:
         {"workflow_engine": "cwltool"},
         {"workflow_engine_version": "3.1"},
         {"workflow_engine": "cwltool", "workflow_engine_version": "3.1"},
+        # only empty values choose no engine
+        {"workflow_engine": " "},
     ],
 )
 def test_post_run_workflow_engine_refused(
@@ -263,3 +265,24 @@ def test_post_run_empty_workflow_engine(
     assert response.status_code == 200
     assert "workflow_engine" not in remote_wes[0]
     assert "workflow_engine_version" not in remote_wes[0]
+
+
+def test_post_run_workflow_engine_as_file_refused(
+    foca_client: Client,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """A workflow engine sent as a file part is refused, too."""
+    fields = _multipart(RUN_REQUEST)[: -len(f"--{BOUNDARY}--\r\n")]
+    part = (
+        f"--{BOUNDARY}\r\nContent-Disposition: form-data;"
+        ' name="workflow_engine"; filename="engine.txt"\r\n\r\n'
+        f"cwltool\r\n--{BOUNDARY}--\r\n"
+    )
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=fields + part.encode(),
+        headers={"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"},
+    )
+    assert response.status_code == 400
+    assert not remote_wes

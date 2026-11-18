@@ -30,7 +30,7 @@ What proWES does with the additions of WES 1.1.0 so far:
 | Addition | proWES |
 | --- | --- |
 | `workflow_engine` and `workflow_engine_version` of `POST /runs` | Refused (`400 Bad Request`) unless empty, until they are forwarded ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)), so that a run never loses its choice of engine |
-| Task endpoints, `task_logs_url` of run logs | Not served yet (see above); run logs have `task_logs` (deprecated in WES 1.1.0) |
+| Task endpoints, `task_logs_url` of run logs | Not served yet (see above); run logs have `task_logs` (deprecated in WES 1.1.0), as `Log` objects: the `id` and `tes_uri` of `TaskLog` are not kept yet |
 | `system_logs` of logs | Stored from the run logs of the WES instance and returned in `run_log` and `task_logs` |
 | State `PREEMPTED` | Not tracked yet ([#123](https://github.com/elixir-cloud-aai/prowes/issues/123)) |
 | `RunSummary` in `GET /runs` | Runs are listed as `RunStatus` (identifier and state), which WES 1.1.0 still allows ([#125](https://github.com/elixir-cloud-aai/prowes/issues/125)) |

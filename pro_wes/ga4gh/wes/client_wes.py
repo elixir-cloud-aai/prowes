@@ -55,6 +55,10 @@ class WesClient:
     ) -> ErrorResponse | ServiceInfo:
         """Retrieve information about the WES instance.
 
+        Validated against WES 1.1.0 (`ServiceInfo`): the service info of WES
+        1.0.x instances (e.g., `workflow_engine_versions` as strings) is
+        invalid until versions are read per instance (#122).
+
         Args:
             **kwargs: Additional keyword arguments passed along with request.
 

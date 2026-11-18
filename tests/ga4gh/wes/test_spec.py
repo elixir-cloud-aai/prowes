@@ -29,6 +29,8 @@ NOT_YET_MODELED: dict[str, set[str]] = {
     "State": {"PREEMPTED"},
     # `task_logs_url` (#124)
     "RunLog": {"task_logs_url"},
+    # fields of task logs (`TaskLog`) beyond those of `Log` (#124)
+    "TaskLog": {"id", "tes_uri"},
 }
 
 
@@ -105,3 +107,9 @@ def test_service_info_matches_spec(schemas: dict[str, Any]) -> None:
     wes_fields = schemas["ServiceInfo"]["allOf"][1]["properties"]
     # the state counts are computed (`ServiceInfo`), not configured
     assert _fields(ServiceInfoWesBase) == set(wes_fields) - {"system_state_counts"}
+
+
+def test_task_log_matches_spec(schemas: dict[str, Any]) -> None:
+    """Task logs are stored as logs, without the fields of `TaskLog` (#124)."""
+    task_fields = set(schemas["TaskLog"]["allOf"][1]["properties"])
+    assert task_fields - _fields(Log) == NOT_YET_MODELED["TaskLog"]

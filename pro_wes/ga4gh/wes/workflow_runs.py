@@ -114,6 +114,10 @@ class WorkflowRuns:
         document: DbDocument = DbDocument()
         controller_config = self.config.post_runs
 
+        # engine fields sent as files are refused, too (cf. `ENGINE_FIELDS`)
+        if any(field in request.files for field in ENGINE_FIELDS):
+            raise WorkflowEngineNotSupported
+
         # validate and attach request, without credentials in URLs
         document.run_log.request = self._validate_run_request(
             form_data=request.form,

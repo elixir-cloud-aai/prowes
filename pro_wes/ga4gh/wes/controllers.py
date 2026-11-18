@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
 from connexion import request
 from foca.utils.logging import log_traffic
@@ -136,7 +136,7 @@ def CancelRun(run_id: str, *args: Any, **kwargs: Any) -> dict[str, str]:
 
 
 @log_traffic
-def ListTasks(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+def ListTasks(run_id: str, *args: Any, **kwargs: Any) -> NoReturn:
     """Return the tasks of a workflow run (WES 1.1.0).
 
     Controller for `GET /runs/{run_id}/tasks`; not served yet (#124).
@@ -153,7 +153,7 @@ def ListTasks(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
 
 
 @log_traffic
-def GetTask(run_id: str, task_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+def GetTask(run_id: str, task_id: str, *args: Any, **kwargs: Any) -> NoReturn:
     """Return a task of a workflow run (WES 1.1.0).
 
     Controller for `GET /runs/{run_id}/tasks/{task_id}`; not served yet

@@ -200,8 +200,10 @@ proWES serves WES 1.1.0 instead of 1.0.1 (see [API](api.md#wes-110)):
   specification didn't have them).
 - Run and task logs keep the `system_logs` of the WES instance (runs
   tracked from now on).
-- Clients generated from the earlier specification keep working: the
-  endpoints and fields of WES 1.0.1 are unchanged.
+- Clients that read the service info must accept the object form of
+  `workflow_engine_versions` (and the version `1.1.0`). Otherwise, the
+  endpoints and fields of WES 1.0.1 are unchanged: clients of the runs
+  endpoints keep working.
 
 ### Timeouts
 

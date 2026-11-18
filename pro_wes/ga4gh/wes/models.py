@@ -76,6 +76,10 @@ class Attachment(BaseModel):
 class RunRequest(BaseModel):
     """Model for WES API `RunRequest` schema.
 
+    `workflow_engine` and `workflow_engine_version` of WES 1.1.0 are not
+    modeled: requests that set them are refused before the model is built
+    (`pro_wes.ga4gh.wes.workflow_runs.ENGINE_FIELDS`, #66).
+
     Args:
         workflow_params: Workflow parameters. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`

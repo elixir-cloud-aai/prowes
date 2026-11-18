@@ -1,4 +1,4 @@
-"""Readers of the app configuration.
+"""Readers of the service info of the app configuration.
 
 Kept apart from the models (`pro_wes.ga4gh.wes.models`) and the service info
 (`pro_wes.ga4gh.wes.service_info`), so that both can use them without

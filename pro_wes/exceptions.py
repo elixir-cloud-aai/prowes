@@ -65,7 +65,11 @@ class WorkflowEngineNotSupported(BadRequest):
 
 
 class TasksNotServed(InternalServerError):
-    """The task endpoints of WES 1.1.0 are not served yet (#124)."""
+    """The task endpoints of WES 1.1.0 are not served yet (#124).
+
+    `501 Not Implemented` (`exceptions`); FOCA has no error class for it, so
+    it derives from the closest server-side one.
+    """
 
 
 class InvalidAttachmentName(BadRequest):
