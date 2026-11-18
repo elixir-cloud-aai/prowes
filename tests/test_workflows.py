@@ -204,7 +204,11 @@ def _steps(job_id: str) -> dict[str, dict[str, Any]]:
     Returns:
         The steps, by name, in order.
     """
-    return {step["name"]: step for step in _jobs()[job_id]["steps"]}
+    steps = _jobs()[job_id]["steps"]
+    names = [step["name"] for step in steps]
+    # Unique, so that no step hides behind another of the same name
+    assert len(names) == len(set(names)), job_id
+    return {step["name"]: step for step in steps}
 
 
 def test_push_by_digest_only() -> None:

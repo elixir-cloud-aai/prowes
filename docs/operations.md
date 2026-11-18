@@ -86,8 +86,8 @@ signature, and then the tags `dev` and `sha-<commit>` (the full commit
 hash). Only a commit that is still the head of `dev` when `publish` runs is
 signed, attested and tagged: the digests of commits that a newer push
 overtook stay on Docker Hub untagged and unsigned, so not every commit has a
-`sha-<commit>` tag. CI never tags `latest`: release images (`X.Y.Z` and `latest`) will be
-published by a release workflow
+`sha-<commit>` tag. CI never tags `latest`: release images (`X.Y.Z` and
+`latest`) will be published by a release workflow
 ([#116](https://github.com/elixir-cloud-aai/prowes/issues/116)). Images
 published before (`latest` and tags by date, `YYYYMMDD`) are neither
 scanned, signed nor attested.
