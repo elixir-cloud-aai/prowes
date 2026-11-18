@@ -73,7 +73,7 @@ def task__track_run_progress(
             to `SYSTEM_ERROR`.
         celery.exceptions.SoftTimeLimitExceeded: Tracking took longer than
             `custom.post_runs.timeout_job`; the run state is set to
-            `SYSTEM_ERROR`.
+            `SYSTEM_ERROR`, unless the run has finished already.
     """
     custom_config: CustomConfig = get_custom_config(CustomConfig)
     controller_config = custom_config.post_runs
@@ -143,8 +143,10 @@ def task__track_run_progress(
                 raise EngineProblem("Received too many error responses.")
             attempt = 1
             if response.state != run_state:
+                # stored first, so that a state counts as tracked only once
+                # it is stored (cf. the time limit below)
+                db_client.update_run_state(state=response.state.value)
                 run_state = response.state
-                db_client.update_run_state(state=run_state.value)
 
         # fetch final run log and upsert database document
         _update_run_log(
