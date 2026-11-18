@@ -69,7 +69,8 @@ def task__track_run_progress(
         pro_wes.exceptions.EngineProblem: The remote service sent too many
             error responses.
         pro_wes.exceptions.WesEndpointProblem: The run document has no
-            identifier of the run at the remote service.
+            identifier of the run at the remote service; the run state is set
+            to `SYSTEM_ERROR`.
         celery.exceptions.SoftTimeLimitExceeded: Tracking took longer than
             `custom.post_runs.timeout_job`; the run state is set to
             `SYSTEM_ERROR`.
@@ -115,6 +116,7 @@ def task__track_run_progress(
 
             # ensure WES endpoint is available
             if document.wes_endpoint is None or document.wes_endpoint.run_id is None:
+                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
                 raise WesEndpointProblem
             try:
                 response = wes_client.get_run_status(

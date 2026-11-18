@@ -268,6 +268,66 @@ def test_set_headers() -> None:
     }
 
 
+def test_set_headers_without_token() -> None:
+    """Without a token, no `Authorization` header is sent (#166).
+
+    Before, the literal header `Authorization: Bearer None` was sent, which
+    WES instances that check tokens reject as an invalid token.
+    """
+    session = FakeSession()
+    client = _client(session, token=None)
+    client.set_headers()
+    assert session.headers == {"Accept": "application/json"}
+
+
+def test_set_headers_token_unset() -> None:
+    """A token that was unset is no longer sent (#166)."""
+    session = FakeSession()
+    client = _client(session)
+    client.set_headers()
+    client.set_token(None)
+    client.set_headers()
+    assert session.headers == {"Accept": "application/json"}
+
+
+def test_set_headers_do_not_stick() -> None:
+    """Headers not given for a request aren't kept from earlier ones (#166)."""
+    session = FakeSession()
+    client = _client(session)
+    client.set_headers(content_type="text/csv")
+    client.set_headers()
+    assert session.headers == {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {TOKEN}",
+    }
+
+
+def test_set_headers_real_session() -> None:
+    """Headers of a `requests` session are dropped when not given (#166).
+
+    The other default headers of the session (e.g., `User-Agent`) are kept.
+    """
+    client = WesClient(host=HOST, token=TOKEN)
+    client.set_headers(content_type="text/csv")
+    client.set_token(None)
+    client.set_headers()
+    assert client.session.headers["Accept"] == "application/json"
+    assert "Content-Type" not in client.session.headers
+    assert "Authorization" not in client.session.headers
+    assert "User-Agent" in client.session.headers
+
+
+@VALIDATED
+def test_request_without_token(
+    call: Call, method: str, url: str, body: dict[str, Any], model: type[Any]
+) -> None:
+    """Requests of a client without a token carry no `Authorization` (#166)."""
+    session = FakeSession(body=body)
+    call(_client(session, token=None))
+    assert len(session.calls) == 1
+    assert "Authorization" not in session.headers
+
+
 @VALIDATED
 def test_valid_response(
     call: Call, method: str, url: str, body: dict[str, Any], model: type[Any]
