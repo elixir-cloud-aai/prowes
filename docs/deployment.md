@@ -243,7 +243,7 @@ The app is exposed for `hostName` via one of:
   `prowes.ingress.className` (the cluster's default if empty), with
   `prowes.ingress.annotations` for the ingress controller (e.g., the size
   limit of request bodies, which carry the workflow attachments, and rate
-  limits; see below). With
+  limits, see [Body size and rate limits](#body-size-and-rate-limits)). With
   `prowes.ingress.https.enabled`, it requests a certificate from
   cert-manager (ClusterIssuer `prowes.ingress.https.issuer`) and serves
   HTTPS; otherwise, terminate TLS in front of the cluster;
@@ -272,8 +272,9 @@ a `413` page of its own:
   `prowes.ingress.annotations` (other ingress controllers ignore it; set
   theirs in the same value). The chart fails to render if the annotation
   is below the app's limit: when raising `config.server.max_content_length`,
-  raise the annotation too (`"0"` disables the limit of ingress-nginx;
-  `null` removes the annotation, e.g., for another controller).
+  raise the annotation too (sizes with at most 9 digits and no leading
+  zeros, e.g., `20m`; `"0"` disables the limit of ingress-nginx; `null`
+  removes the annotation, e.g., for another controller).
 - **OpenShift Route**: the router has no size limit of request bodies.
 - **HTTPRoute**: the Gateway API has no standard for it; set the limit of
   the Gateway implementation (e.g., via `prowes.httpRoute.filters`).
@@ -282,8 +283,10 @@ proWES has no rate limits of its own, and the chart sets none: in
 production, limit the rate of requests per client at the proxy, with
 limits that suit the clients of the deployment (e.g., workflow engines that
 poll the state of many runs). Behind a load balancer, the proxy must see
-the clients' addresses (e.g., via `use-forwarded-headers` of ingress-nginx
-or the PROXY protocol).
+the clients' addresses, e.g., via the PROXY protocol (`use-proxy-protocol`
+of ingress-nginx) or `use-forwarded-headers`; with the latter, also set
+`proxy-real-ip-cidr` to the load balancer's addresses, or clients can send
+any `X-Forwarded-For` address and get a rate limit of their own for each.
 
 - **Ingress** (ingress-nginx; excess requests get `503`):
 

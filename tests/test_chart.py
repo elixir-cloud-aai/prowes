@@ -746,13 +746,17 @@ def test_ingress_body_size() -> None:
         _body_size("10485760"),
         _body_size("10240k"),
         _body_size("1G"),
+        _body_size("999999999g"),
         [*LIMIT_20_MIB, *_body_size("20M")],
+        ["--set", "config.server.max_content_length=1073741824", *_body_size("1g")],
         ["--set", "config.server.max_content_length=1048576", *_body_size("1m")],
         # Without the annotation, the chart can't know the controller's limit
         [*LIMIT_20_MIB, *_body_size(None)],
+        [*LIMIT_20_MIB, "--set-json", "prowes.ingress.annotations=null"],
         # The check applies to the Ingress only
         [*LIMIT_20_MIB, *NO_INGRESS],
         [*LIMIT_20_MIB, *NO_INGRESS, *OPENSHIFT],
+        [*_body_size("10 MB"), *NO_INGRESS],
     ],
 )
 def test_ingress_body_size_allowed(args: list[str]) -> None:
@@ -780,6 +784,14 @@ def test_ingress_body_size_allowed(args: list[str]) -> None:
         ),
         (_body_size("10 MB"), "must be a size of ingress-nginx"),
         (_body_size("1.5m"), "must be a size of ingress-nginx"),
+        (_body_size("1000000000"), "must be a size of ingress-nginx"),
+        # nginx reads 010m as 10m, Sprig as octal: refused, not misread
+        (_body_size("010m"), "must be a size of ingress-nginx"),
+        (_body_size("09m"), "must be a size of ingress-nginx"),
+        (
+            ["--set", "config.server.max_content_length=1073741825", *_body_size("1g")],
+            "set it to 1025m or more",
+        ),
         (_body_size(""), "must be a size of ingress-nginx"),
     ],
 )

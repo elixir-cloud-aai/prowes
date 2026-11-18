@@ -1,3 +1,9 @@
+{{- /*
+The check of ingress-nginx's size limit of request bodies needs the app's
+limit (`foca-common.maxContentLength`), which needs the settings: so it runs
+here, for the Ingress only, not in `prowes.validate` (which the settings
+include)
+*/}}
 {{- $context := dict "root" . "settings" (include "prowes.settings" . | fromYaml) }}
 {{- include "prowes.checkProxyBodySize" $context }}
 {{- include "foca-common.ingress" $context }}

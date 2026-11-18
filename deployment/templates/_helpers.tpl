@@ -297,7 +297,9 @@ default, see `prowes.ingress.annotations`), is below the app's limit
 (`config.server.max_content_length`, see `foca-common.maxContentLength`):
 ingress-nginx would reject the bodies in between with its own `413` page
 instead of the app's problem details. Sizes are those of nginx: bytes, or
-with the suffix `k`, `m` or `g` (either case); `0` disables the limit.
+with the suffix `k`, `m` or `g` (either case), here with at most 9 digits
+and no leading zeros (so that they are parsed as decimals and do not
+overflow); `0` disables the limit.
 Checked only if the Ingress is enabled and has the annotation: other
 ingress controllers ignore it, and without it, the chart can't know the
 controller's limit. Call with the context dict (as the library's
@@ -309,8 +311,8 @@ templates); renders nothing.
 {{- $name := "nginx.ingress.kubernetes.io/proxy-body-size" -}}
 {{- if and $ingress.enabled (hasKey $annotations $name) (not (kindIs "invalid" (index $annotations $name))) -}}
 {{- $size := toString (index $annotations $name) -}}
-{{- if not (regexMatch "^[0-9]{1,15}[kKmMgG]?$" $size) -}}
-{{- fail (printf "prowes.ingress.annotations: %s must be a size of ingress-nginx (bytes, or with the suffix k, m or g, e.g., 10m; \"0\" for no limit), not %q" $name $size) -}}
+{{- if not (regexMatch "^(0|[1-9][0-9]{0,8})[kKmMgG]?$" $size) -}}
+{{- fail (printf "prowes.ingress.annotations: %s must be a size of ingress-nginx (at most 9 digits without leading zeros, bytes or with the suffix k, m or g, e.g., 10m; \"0\" for no limit), not %q" $name $size) -}}
 {{- end -}}
 {{- $number := regexFind "^[0-9]+" $size -}}
 {{- $factor := get (dict "" 1 "k" 1024 "m" 1048576 "g" 1073741824) (lower (trimPrefix $number $size)) -}}

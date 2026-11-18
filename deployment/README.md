@@ -22,13 +22,8 @@ helm install prowes deployment -n prowes \
 proWES serves the WES API without authentication for now: limit access to
 it in front of the app.
 
-The Ingress lets ingress-nginx allow request bodies of the app's size limit
-(`nginx.ingress.kubernetes.io/proxy-body-size: 10m` in
-`prowes.ingress.annotations`; the chart fails to render if it is below
-`config.server.max_content_length`). Rate limits are off by default: set
-them with the annotations of the ingress controller
-(`prowes.ingress.annotations`) or the OpenShift router
-(`prowes.route.annotations`), see [Body size and rate
+For the size limit of request bodies at the Ingress (10 MiB by default) and
+rate limits (off by default), see [Body size and rate
 limits](https://prowes.readthedocs.io/en/latest/deployment/#body-size-and-rate-limits).
 
 The [deployment guide](https://prowes.readthedocs.io/en/latest/deployment/)
