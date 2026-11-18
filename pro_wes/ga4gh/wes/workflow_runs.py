@@ -270,7 +270,10 @@ class WorkflowRuns:
         if page_token != "":
             filter_dict["_id"] = {"$lt": ObjectId(page_token)}
 
-        # get resources
+        # get resources, and one more if a page size is set, to tell
+        # whether older runs are left (`limit(0)`: no limit; MongoDB reads
+        # a negative limit as its absolute value, in a single batch)
+        limit = abs(page_size)
         resources = list(
             self.db_client.find(
                 filter=filter_dict,
@@ -280,19 +283,14 @@ class WorkflowRuns:
                 },
             )
             .sort("_id", -1)
-            .limit(page_size)
+            .limit(limit + 1 if limit else 0)
         )
 
         # set next page token: only if older runs are left
         next_page_token = ""
-        if resources:
-            last_id = resources[-1]["_id"]
-            older = self.db_client.find_one(
-                filter={**filter_dict, "_id": {"$lt": last_id}},
-                projection={"_id": True},
-            )
-            if older is not None:
-                next_page_token = str(last_id)
+        if limit and len(resources) > limit:
+            resources = resources[:limit]
+            next_page_token = str(resources[-1]["_id"])
 
         # format response
         for run in resources:
