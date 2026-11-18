@@ -48,7 +48,8 @@ class WesServiceEntry(ServiceEntry):
             slash (empty if it is at `url` itself).
     """
 
-    # Narrower than the fields of FOCA's entry (TES instances, credentials)
+    # Narrower than the fields of FOCA's entry (TES instances, credentials);
+    # the type is that of the API type of `pro_wes.ga4gh.wes.backends.WES_API`
     type: Literal["ga4gh-wes"]  # type: ignore[assignment]
     auth: Literal["none"] = "none"
     api_path: str = DEFAULT_API_PATH

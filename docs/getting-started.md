@@ -48,6 +48,10 @@ services:
       - ./wes.yaml:/overlay/wes.yaml:ro
 ```
 
+Docker Compose reads `docker-compose.override.yaml` automatically (unless
+files are given with `-f`). The Celery worker needs no overlay: it tracks
+each run at the WES instance stored with it.
+
 The image reports version `0.0.0.dev0` unless you set
 `SETUPTOOLS_SCM_PRETEND_VERSION` on the host (e.g.,
 `SETUPTOOLS_SCM_PRETEND_VERSION=0.20.0 docker compose up -d --build --wait`).

@@ -49,7 +49,10 @@ def _no_registry_caches() -> Iterator[None]:
 
 @pytest.fixture
 def registry_documents(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Fake the service registry: it lists one verified WES and one TES.
+    """Fake the service registry: it lists two verified WES and one TES.
+
+    One of the WES instances is proWES itself (cf. `_registry_overlay()`),
+    which is left out.
 
     Args:
         monkeypatch: Monkeypatch fixture of the test.
@@ -60,6 +63,11 @@ def registry_documents(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     wes_type = {"group": "org.ga4gh", "artifact": "wes", "version": "1.1.0"}
     tes_type = {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"}
     services = [
+        {
+            "id": "self",
+            "url": "https://prowes.example.org/ga4gh/wes/v1",
+            "type": wes_type,
+        },
         {"id": "wes", "url": f"{DISCOVERED_URL}/ga4gh/wes/v1", "type": wes_type},
         {"id": "tes", "url": "https://tes.example.org", "type": tes_type},
     ]
@@ -104,7 +112,10 @@ def _registry_overlay(first: bool = True) -> str:
     ]
     if not first:
         entries.reverse()
-    return "custom:\n  wes:\n    backends:\n" + "".join(entries)
+    return (
+        "server:\n  public_url: https://prowes.example.org\n"
+        "custom:\n  wes:\n    backends:\n" + "".join(entries)
+    )
 
 
 def test_wes_api_type_registered() -> None:
@@ -148,41 +159,62 @@ def test_config_api_path_invalid(api_path: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "backends",
+    ("backends", "message"),
     [
         # credentials come with authentication (#120)
-        [{"type": "ga4gh-wes", "url": "https://wes.example.org", "auth": "basic"}],
-        [
-            {
-                "type": "ga4gh-wes",
-                "url": "https://wes.example.org",
-                "auth": "client_credentials",
-            }
-        ],
-        [
-            {
-                "type": "ga4gh-service-registry",
-                "url": REGISTRY_URL,
-                "auth": "client_credentials",
-            }
-        ],
+        (
+            [{"type": "ga4gh-wes", "url": "https://wes.example.org", "auth": "basic"}],
+            "auth\n  Input should be 'none'",
+        ),
+        (
+            [
+                {
+                    "type": "ga4gh-wes",
+                    "url": "https://wes.example.org",
+                    "auth": "client_credentials",
+                }
+            ],
+            "auth\n  Input should be 'none'",
+        ),
+        (
+            [
+                {
+                    "type": "ga4gh-service-registry",
+                    "url": REGISTRY_URL,
+                    "auth": "client_credentials",
+                }
+            ],
+            "auth\n  Input should be 'none'",
+        ),
         # TES instances
-        [{"type": "ga4gh-tes", "url": "https://tes.example.org"}],
+        (
+            [{"type": "ga4gh-tes", "url": "https://tes.example.org"}],
+            "does not match any of the expected tags",
+        ),
         # user info, other schemes
-        [{"type": "ga4gh-wes", "url": "https://user:pw@wes.example.org"}],
-        [{"type": "ga4gh-wes", "url": "http://wes.example.org"}],
+        (
+            [{"type": "ga4gh-wes", "url": "https://user:pw@wes.example.org"}],
+            "user info",
+        ),
+        ([{"type": "ga4gh-wes", "url": "http://wes.example.org"}], "scheme"),
         # the same identifier twice
-        [
-            {"type": "ga4gh-wes", "url": "https://wes.example.org"},
-            {"type": "ga4gh-wes", "url": "https://WES.example.org/"},
-        ],
+        (
+            [
+                {"type": "ga4gh-wes", "url": "https://wes.example.org"},
+                {"type": "ga4gh-wes", "url": "https://WES.example.org/"},
+            ],
+            "same id",
+        ),
         # unknown keys
-        [{"type": "ga4gh-wes", "url": "https://wes.example.org", "host": "x"}],
+        (
+            [{"type": "ga4gh-wes", "url": "https://wes.example.org", "host": "x"}],
+            "Extra inputs are not permitted",
+        ),
     ],
 )
-def test_config_invalid(backends: list[dict[str, Any]]) -> None:
-    """Invalid entries are refused."""
-    with pytest.raises(ValidationError):
+def test_config_invalid(backends: list[dict[str, Any]], message: str) -> None:
+    """Invalid entries are refused, for the reason of each case."""
+    with pytest.raises(ValidationError, match=message):
         Wes.model_validate({"backends": backends})
 
 
@@ -209,18 +241,42 @@ def test_config_http_allowed() -> None:
 
 
 def test_init_app_refuses_own_url(add_overlay: Callable[[str], None]) -> None:
-    """proWES refuses to start if a configured WES instance is proWES itself."""
+    """The app refuses to start if a configured WES instance is proWES itself."""
     add_overlay(
         "server:\n"
-        f"  public_url: {BACKEND_URL}/ga4gh/wes/v1\n"
+        f"  public_url: {BACKEND_URL}\n"
         "custom:\n  wes:\n    backends:\n"
-        f"      - type: ga4gh-wes\n        url: {BACKEND_URL}/ga4gh/wes/v1/x\n"
+        f"      - type: ga4gh-wes\n        url: {BACKEND_URL}/\n"
     )
-    with pytest.raises(ValueError, match="public URL of proWES"):
+    with pytest.raises(ValueError, match="at or below the public URL"):
         init_app()
 
 
-@pytest.mark.usefixtures("registry_documents")
+def test_init_app_refuses_own_api_path(add_overlay: Callable[[str], None]) -> None:
+    """The app refuses to start if a WES API (URL and API path) is its own."""
+    add_overlay(
+        "server:\n"
+        f"  public_url: {BACKEND_URL}/prowes\n"
+        "custom:\n  wes:\n    backends:\n"
+        f"      - type: ga4gh-wes\n        url: {BACKEND_URL}\n"
+        "        api_path: /prowes/ga4gh/wes/v1\n"
+    )
+    with pytest.raises(ValueError, match="public URL"):
+        init_app()
+
+
+def test_init_app_refuses_registry_without_public_url(
+    add_overlay: Callable[[str], None],
+) -> None:
+    """Registry entries need the public URL of proWES, to leave it out."""
+    add_overlay(
+        "custom:\n  wes:\n    backends:\n"
+        f"      - type: ga4gh-service-registry\n        url: {REGISTRY_URL}\n"
+    )
+    with pytest.raises(ValueError, match="need the public URL"):
+        init_app()
+
+
 def test_init_app_reads_no_registry(
     add_overlay: Callable[[str], None], registry_documents: list[str]
 ) -> None:
@@ -228,6 +284,16 @@ def test_init_app_reads_no_registry(
     add_overlay(_registry_overlay())
     init_app()
     assert registry_documents == []
+
+
+def test_init_app_allows_parent_of_own_url(
+    add_overlay: Callable[[str], None],
+) -> None:
+    """WES instances above the public URL of proWES (e.g., its host) are used."""
+    add_overlay(f"server:\n  public_url: {BACKEND_URL}/prowes\n")
+    app = init_app()
+    with app.app.app_context():
+        assert select_backend() == (BACKEND_URL, BASE_PATH)
 
 
 def test_select_backend_first(add_overlay: Callable[[str], None]) -> None:
@@ -277,6 +343,7 @@ def test_select_backend_registry_empty(
 ) -> None:
     """A registry that can't be read yields no WES instance."""
     add_overlay(
+        "server:\n  public_url: https://prowes.example.org\n"
         "custom:\n  wes:\n    backends:\n"
         f"      - type: ga4gh-service-registry\n        url: {REGISTRY_URL}\n"
     )

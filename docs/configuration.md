@@ -78,17 +78,19 @@ Settings of a WES instance:
 
 URLs are normalized (e.g., lowercase host, without default port and trailing
 slashes). A URL listed twice is used once, at its first place. WES
-instances at or below the public URL of proWES (`server.public_url`, if set)
-are never used, so that proWES never forwards runs to itself: proWES refuses
-to start if a configured one is. Unknown keys and invalid entries (e.g.,
+instances at or below the public URL of proWES (`server.public_url`: its root
+URL, without the API path, e.g., `https://prowes.example.org`) are never
+used, so that proWES never forwards runs to itself: proWES refuses to start
+if a configured one is, or if its WES API (`url` and `api_path`) is. Backend
+lists with registry entries need `server.public_url` (the app doesn't start
+without it), as a registry may list proWES itself. Unknown keys and invalid entries (e.g.,
 `type: ga4gh-tes`, `auth: basic`) stop the app on startup.
 
 Requests to WES instances verify TLS certificates (with the public
 certificate authorities, or those of the environment variable
 `REQUESTS_CA_BUNDLE`), with the timeouts of `custom.post_runs.timeout_post`
-and `custom.defaults.timeout`. proWES sends no credentials of its own to WES
-instances yet, so they must accept runs without them (or with the token of
-the client, which proWES passes on while authentication is off).
+and `custom.defaults.timeout`. proWES sends no credentials to WES instances yet
+(neither its own nor the client's), so they must accept runs without them.
 
 ### Discovery in a service registry
 

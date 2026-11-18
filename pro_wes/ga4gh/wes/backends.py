@@ -12,6 +12,11 @@ caches are FOCA's.
 
 Without plugins (#121), runs go to the first backend of the list
 (:py:func:`select_backend`).
+
+The API type is registered when this module is imported, which the app
+(`pro_wes.app`) and the controllers do before any backend list is used; it
+must match the entry type of :py:class:`pro_wes.config_models.WesServiceEntry`
+(`ga4gh-wes`) and `DEFAULT_API_PATH`.
 """
 
 from collections.abc import Sequence
@@ -62,6 +67,9 @@ class WesBackendList(BackendList):
             entries: Entries, in order, validated.
             public_url: Public URL of proWES (e.g., `server.public_url`).
         """
+        # FOCA 0.22 validates the entries in `__init__` against its TES-only
+        # models, and its other methods read `self.entries` only; re-check
+        # this before allowing FOCA 0.23 (`pyproject.toml`)
         super().__init__([], api=WES_API, public_url=public_url)
         self.entries = list(entries)
 
@@ -82,31 +90,40 @@ def get_backend_list() -> WesBackendList:
 
 
 def check_backends() -> None:
-    """Check the configured WES instances, on startup.
+    """Check the backend list, on startup.
 
     Must be called in an app context. Reads no registry.
 
     Raises:
-        ValueError: A configured WES instance is at or below the public URL
-            of proWES (`server.public_url`), so that runs would be forwarded
+        ValueError: The list has registry entries, but proWES has no public
+            URL (`server.public_url`), so a registry that lists proWES itself
+            couldn't be told apart (as FOCA's gateways require it); or a
+            configured WES instance, or its WES API (`url` and `api_path`),
+            is at or below the public URL, so that runs would be forwarded
             to proWES itself.
     """
     backend_list = get_backend_list()
-    configured = [
-        entry for entry in backend_list.entries if isinstance(entry, WesServiceEntry)
-    ]
-    kept = {
-        backend.url
-        for backend in WesBackendList(
-            configured, public_url=backend_list.public_url
-        ).expand()
-    }
-    for entry in configured:
-        if entry.url not in kept:
+    public_url = backend_list.public_url
+    if public_url is None:
+        if backend_list.has_registries():
             raise ValueError(
-                f"WES instance {entry.id!r} is at or below the public URL of"
+                "Backend lists with registry entries need the public URL of"
                 " proWES (`server.public_url`)"
             )
+        return
+    for entry in backend_list.entries:
+        if not isinstance(entry, WesServiceEntry):
+            continue
+        for url in (entry.url, f"{entry.url}{entry.api_path}"):
+            # `expand()` leaves out backends at or below the public URL
+            probe = WesServiceEntry(
+                type="ga4gh-wes", url=url, url_schemes=entry.url_schemes
+            )
+            if not WesBackendList([probe], public_url=public_url).expand():
+                raise ValueError(
+                    f"WES instance {entry.id!r} is at or below the public URL"
+                    " of proWES (`server.public_url`)"
+                )
 
 
 def api_path(backend: Backend, backend_list: WesBackendList) -> str:

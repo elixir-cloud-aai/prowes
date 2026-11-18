@@ -161,8 +161,10 @@ The app reads the list on startup and refuses to start with invalid entries
 instances behind a private certificate authority need it in the image's
 trust store or in a file mounted into the pods, with `REQUESTS_CA_BUNDLE`
 pointing to it (`prowes.extraEnv`); TLS verification can't be switched off.
-Set `config.server.public_url` (e.g., `https://<hostName>/ga4gh/wes/v1`), so
-that proWES never forwards runs to itself, e.g., when a registry lists it.
+Set `config.server.public_url` to the root URL of proWES, without the API
+path (e.g., `https://<hostName>`, plus the path prefix of a reverse proxy, if
+any), so that proWES never forwards runs to itself, e.g., when a registry
+lists it; with registry entries, the app doesn't start without it.
 
 ## Image
 

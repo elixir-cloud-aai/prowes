@@ -171,7 +171,9 @@ class WorkflowRuns:
         wes_client: WesClient = WesClient(
             host=document_stored.wes_endpoint.host,
             base_path=document_stored.wes_endpoint.base_path,
-            token=kwargs.get("jwt"),
+            # no credentials for WES instances (`auth: none`) until #120;
+            # the client's token is never passed on
+            token=None,
         )
 
         # instantiate database connector
@@ -229,7 +231,7 @@ class WorkflowRuns:
         task__track_run_progress.apply_async(
             None,
             {
-                "jwt": kwargs.get("jwt"),
+                "jwt": None,
                 "remote_host": updated_document_stored.wes_endpoint.host,
                 "remote_base_path": updated_document_stored.wes_endpoint.base_path,
                 "remote_run_id": updated_document_stored.wes_endpoint.run_id,
@@ -447,7 +449,9 @@ class WorkflowRuns:
         wes_client: WesClient = WesClient(
             host=document["wes_endpoint"]["host"],
             base_path=document["wes_endpoint"]["base_path"],
-            token=kwargs.get("jwt"),
+            # no credentials for WES instances (`auth: none`) until #120;
+            # the client's token is never passed on
+            token=None,
         )
         wes_client.cancel_run(
             run_id=document["wes_endpoint"]["run_id"],
