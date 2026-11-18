@@ -190,3 +190,15 @@ custom:
     url_credentials: reject
   list_runs:
     default_page_size: 5
+  # WES instances that runs are forwarded to, in order: WES instances
+  # (`type: ga4gh-wes`, with `url`, optionally `api_path`, `id`, `labels`,
+  # `location`, `url_schemes`) and service registries whose verified WES
+  # instances are used (`type: ga4gh-service-registry`); new runs go to the
+  # first. None by default: `POST /runs` is refused (`503 Service
+  # Unavailable`) until a deployment configures them, e.g.:
+  #   backends:
+  #     - type: ga4gh-wes
+  #       url: https://wes.example.org
+  # Cf. "WES instances" in `docs/configuration.md`
+  wes:
+    backends: []

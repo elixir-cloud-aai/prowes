@@ -168,6 +168,32 @@ def test_track_run_until_finished(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("run")
+def test_track_run_ignores_client_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tasks queued with a client token (earlier versions) don't pass it on."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    tokens: list[str | None] = []
+    original = WesClient.set_token
+
+    def _set_token(self: WesClient, token: str | None = None) -> None:
+        """Record the token of a client.
+
+        Args:
+            self: WES client.
+            token: Token of the client.
+        """
+        tokens.append(token)
+        original(self, token)
+
+    monkeypatch.setattr(WesClient, "set_token", _set_token)
+    task__track_run_progress.push_request(id=TASK_ID)
+    try:
+        task__track_run_progress.run(**{**TASK_KWARGS, "jwt": "client-token"})
+    finally:
+        task__track_run_progress.pop_request()
+    assert tokens == [None]
+
+
+@pytest.mark.usefixtures("run")
 def test_track_run_invalid_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """Invalid fields of remote run logs are left out; tracking goes on."""
     _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])

@@ -301,6 +301,15 @@ def test_run_request_too_large(
     assert_declared_error(served_spec, "post", "/runs", response, 413)
 
 
+def test_no_backend_available(
+    client_with: Callable[[str], Client], served_spec: dict[str, Any]
+) -> None:
+    """Runs without a WES instance to forward them to get `503`, as declared."""
+    client = client_with("custom:\n  wes:\n    backends: []\n")
+    response = _post_run(client, RUN_REQUEST)
+    assert_declared_error(served_spec, "post", "/runs", response, 503)
+
+
 def test_unexpected_error(
     foca_client: Client,
     served_spec: dict[str, Any],

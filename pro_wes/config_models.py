@@ -1,16 +1,147 @@
 """Custom app config models."""
 
 from pathlib import Path
-from typing import Any, Literal
+import re
+from typing import Annotated, Any, Literal, Self
 
+from foca.plugins.backends import RegistryEntry, ServiceEntry
 from foca.utils.misc import generate_id
 from pydantic import (
     BaseModel,
+    ConfigDict,
+    Field,
     NonNegativeInt,
     PositiveInt,
     field_validator,
     model_validator,
 )
+
+DEFAULT_API_PATH = "/ga4gh/wes/v1"
+"""Path of the WES API, relative to the URL of a backend, as the WES
+specification has it; that of the API of proWES too."""
+
+# Absolute paths of unreserved characters (RFC 3986, section 2.3)
+_API_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)+")
+
+
+class WesServiceEntry(ServiceEntry):
+    """WES instance of `custom.wes.backends` (`type: ga4gh-wes`).
+
+    The backend entry of FOCA (:py:class:`foca.plugins.backends.ServiceEntry`),
+    whose types are those of TES instances only (FOCA 0.22), for WES
+    instances, with the API path. proWES doesn't authenticate at WES
+    instances yet (#120): `auth` must be `none`.
+
+    Args:
+        type: Type of the entry (`ga4gh-wes`).
+        auth: Credentials for the WES instance: none (`none`).
+        api_path: Path of the WES API, relative to `url`, for WES instances
+            that serve it elsewhere than the WES specification says; `/` if
+            it is at `url` itself.
+        **data: Other fields of :py:class:`foca.plugins.backends.ServiceEntry`
+            (`url`, `url_schemes`, `id`, `labels`, `location`).
+
+    Attributes:
+        type: Type of the entry.
+        auth: Credentials for the WES instance.
+        api_path: Path of the WES API, relative to `url`, without trailing
+            slash (empty if it is at `url` itself).
+    """
+
+    # Narrower than the fields of FOCA's entry (TES instances, credentials);
+    # the type is that of the API type of `pro_wes.ga4gh.wes.backends.WES_API`
+    type: Literal["ga4gh-wes"]  # type: ignore[assignment]
+    auth: Literal["none"] = "none"
+    api_path: str = DEFAULT_API_PATH
+
+    @field_validator("api_path")
+    @classmethod
+    def check_api_path(cls, value: str) -> str:
+        """Check the API path, and remove trailing slashes.
+
+        Args:
+            value: API path, as given.
+
+        Returns:
+            The API path.
+
+        Raises:
+            ValueError: The path is not absolute, has characters other than
+                unreserved ones (e.g., a query), or segments `.` or `..`.
+        """
+        if not value.startswith("/"):
+            raise ValueError("API path must be absolute")
+        path = value.removesuffix("/")
+        if path and (
+            not _API_PATH.fullmatch(path) or {".", ".."} & set(path.split("/"))
+        ):
+            raise ValueError(
+                "API path must have unreserved characters only, and no segments"
+                " `.` or `..`"
+            )
+        return path
+
+
+class WesRegistryEntry(RegistryEntry):
+    """Service registry of `custom.wes.backends` (`type: ga4gh-service-registry`).
+
+    The registry entry of FOCA (:py:class:`foca.plugins.backends.RegistryEntry`),
+    whose verified WES instances are used, at the API path of the WES
+    specification. proWES doesn't authenticate at WES instances yet (#120):
+    `auth` must be `none`.
+
+    Args:
+        auth: Credentials for the discovered WES instances: none (`none`).
+        **data: Other fields of
+            :py:class:`foca.plugins.backends.RegistryEntry`.
+
+    Attributes:
+        auth: Credentials for the discovered WES instances.
+    """
+
+    auth: Literal["none"] = "none"
+
+
+WesBackendEntry = Annotated[
+    WesServiceEntry | WesRegistryEntry, Field(discriminator="type")
+]
+"""Entry of `custom.wes.backends`."""
+
+
+class Wes(BaseModel):
+    """WES backend configuration.
+
+    Args:
+        backends: WES instances that runs may be forwarded to, in order:
+            configured ones (`type: ga4gh-wes`) and service registries whose
+            verified WES instances are used (`type: ga4gh-service-registry`;
+            cf. :py:mod:`foca.plugins.backends`). None by default: runs are
+            refused until a deployment configures them.
+
+    Attributes:
+        backends: WES instances that runs may be forwarded to, in order.
+    """
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    backends: list[WesBackendEntry] = []
+
+    @model_validator(mode="after")
+    def unique_ids(self) -> Self:
+        """Check that the identifiers of the entries are unique.
+
+        Returns:
+            The configuration.
+
+        Raises:
+            ValueError: Two entries have the same identifier.
+        """
+        seen: set[str] = set()
+        for entry in self.backends:
+            if entry.id in seen:
+                raise ValueError(f"Backend entries with the same id: {entry.id}")
+            seen.add(entry.id)
+        return self
 
 
 class Defaults(BaseModel):
@@ -123,16 +254,19 @@ class CustomConfig(BaseModel):
         defaults: Global configuration parameters.
         post_runs: Configuration parameters for operation `POST /runs`.
         list_runs: Configuration parameters for operation `GET /runs`.
+        wes: WES backends that runs are forwarded to.
 
     Attributes:
         defaults: Global configuration parameters.
         post_runs: Configuration parameters for operation `POST /runs`.
         list_runs: Configuration parameters for operation `GET /runs`.
+        wes: WES backends that runs are forwarded to.
     """
 
     defaults: Defaults = Defaults()
     post_runs: PostRuns = PostRuns()
     list_runs: ListRuns = ListRuns()
+    wes: Wes = Wes()
 
     @model_validator(mode="before")
     @classmethod

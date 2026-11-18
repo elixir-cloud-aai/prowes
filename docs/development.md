@@ -133,10 +133,10 @@ has forwarded the run to the remote WES, so that the run isn't tracked.
 The WES API is then served at `http://localhost:8080/ga4gh/wes/v1/`, with a
 Swagger UI at `http://localhost:8080/ga4gh/wes/v1/ui/`. For Flask's debugger
 and reloader, set `server.debug: True` in the overlay, only with the loopback
-host, as the debugger allows executing arbitrary code. Until WES backends are
-configurable ([#118](https://github.com/elixir-cloud-aai/prowes/issues/118)),
-runs are forwarded to a hard-coded WES; to try runs without a real WES, use
-the [smoke test](#smoke-test) instead.
+host, as the debugger allows executing arbitrary code. Runs are forwarded to
+the WES instances of `custom.wes.backends` (see [WES
+instances](configuration.md#wes-instances)), none by default; to try runs
+without a real WES, use the [smoke test](#smoke-test) instead.
 
 ## Static analysis rules
 
@@ -242,12 +242,12 @@ COMPOSE_FILE=docker-compose.yaml:tests/smoke/compose.yaml \
   COMPOSE_PROJECT_NAME=prowes-smoke docker compose down --volumes
 ```
 
-Until WES backends are configurable
-([#118](https://github.com/elixir-cloud-aai/prowes/issues/118)), proWES
-sends all runs to a hard-coded WES; the fake WES takes its host name in the
-Compose network, with a certificate of its own certificate authority, which
-proWES trusts instead of the public ones (`REQUESTS_CA_BUNDLE`), so that no
-run reaches the real WES.
+The fake WES is the one WES instance of the smoke test's config overlay
+(`custom.wes.backends` in `tests/smoke/config.yaml`), at its service name in
+the Compose network (`https://fake-wes`), with a certificate of its own
+certificate authority, which proWES trusts instead of the public ones
+(`REQUESTS_CA_BUNDLE`), so that runs are forwarded with TLS verification on
+and no run leaves the Compose network.
 
 ## Dependencies
 

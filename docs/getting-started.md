@@ -24,6 +24,34 @@ volume ls`); no data directories need to be created. The comments in
 [`docker-compose.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/docker-compose.yaml)
 describe the settings.
 
+The base config lists no WES instance, so proWES refuses runs (`503 Service
+Unavailable`) until you configure one (see [WES
+instances](configuration.md#wes-instances)): put the list into a config
+overlay, e.g., `wes.yaml` next to `docker-compose.yaml`,
+
+```yaml
+custom:
+  wes:
+    backends:
+      - type: ga4gh-wes
+        url: https://wes.example.org
+```
+
+and mount it into the app with a `docker-compose.override.yaml`:
+
+```yaml
+services:
+  prowes:
+    environment:
+      FOCA_CONFIG_OVERLAY: /overlay/wes.yaml
+    volumes:
+      - ./wes.yaml:/overlay/wes.yaml:ro
+```
+
+Docker Compose reads `docker-compose.override.yaml` automatically (unless
+files are given with `-f`). The Celery worker needs no overlay: it tracks
+each run at the WES instance stored with it.
+
 The image reports version `0.0.0.dev0` unless you set
 `SETUPTOOLS_SCM_PRETEND_VERSION` on the host (e.g.,
 `SETUPTOOLS_SCM_PRETEND_VERSION=0.20.0 docker compose up -d --build --wait`).

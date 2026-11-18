@@ -21,7 +21,7 @@ fills in OpenAPI defaults, e.g., `style` of parameters):
 | `x-openapi-router-controller` of `GET /service-info` | The service info is served by FOCA |
 | Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
-| `400` of the endpoints of a run (`/runs/{run_id}...`); `413` of `POST /runs`; `409` of `POST /runs/{run_id}/cancel`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
+| `400` of the endpoints of a run (`/runs/{run_id}...`); `413` and `503` of `POST /runs`; `409` of `POST /runs/{run_id}/cancel`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
 
 Statuses that any request can get, whatever its operation, are not declared
 per operation: `404` for unknown paths, `405 Method Not Allowed`, and `413
@@ -71,9 +71,9 @@ requests](configuration.md#run-requests)), stores the run in its database,
 writes its workflow attachments to the storage of the runs
 (`custom.post_runs.storage_path`, see
 [Configuration](configuration.md#settings)) and forwards the request to a
-WES instance. Currently, that is a single, built-in WES instance; WES
-instances become configurable with
-[#118](https://github.com/elixir-cloud-aai/prowes/issues/118).
+WES instance: the first of `custom.wes.backends` (see [WES
+instances](configuration.md#wes-instances)). Without any, it refuses the
+run with `503 Service Unavailable`, before anything is stored.
 
 `POST /runs` returns the run's own identifier, by which `GET
 /runs/{run_id}` finds it; the identifier at the WES instance is kept in the
@@ -169,6 +169,7 @@ stored nor forwarded):
 | --- | --- |
 | `400 Bad Request` | The form is invalid (e.g., a missing field, a workflow engine or its version is chosen (`workflow_engine`, `workflow_engine_version`; not supported yet), `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
 | `413 Content Too Large` | The request body is larger than `server.max_content_length` (see [Request size limit](configuration.md#request-size-limit)), the run has more workflow attachments than `custom.post_runs.max_attachments`, or an attachment is larger than `custom.post_runs.max_attachment_size` |
+| `503 Service Unavailable` | No WES instance is available: none is configured (`custom.wes.backends`), or its registries list none (yet) (see [WES instances](configuration.md#wes-instances)) |
 
 The `detail` of each names the cause; credentials of URLs are never echoed.
 `POST /runs/{run_id}/cancel` refuses runs that aren't cancelable with `409

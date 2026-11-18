@@ -126,8 +126,9 @@ ALLOWED_DEVIATIONS: dict[str, Callable[[Location, Any], bool]] = {
         loc[:3] == ("components", "schemas", "ProblemDetails")
     ),
     "problem details of error responses": _is_error_schema,
-    "413 of POST /runs": lambda loc, _: (
-        loc == ("paths", "/runs", "post", "responses", 413)
+    "413 and 503 of POST /runs": lambda loc, _: (
+        loc
+        in {("paths", "/runs", "post", "responses", status) for status in (413, 503)}
     ),
     "409 of POST /runs/{run_id}/cancel": lambda loc, _: (
         loc == ("paths", "/runs/{run_id}/cancel", "post", "responses", 409)

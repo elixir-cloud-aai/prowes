@@ -8,13 +8,11 @@
 # `prowes:smoke`, so that the test leaves the image of other local
 # deployments (`prowes:local`) alone
 #
-# proWES sends all runs to a hard-coded WES (`run_workflow()` in
-# `pro_wes/ga4gh/wes/workflow_runs.py`, until #118 makes backends
-# configurable): the fake WES takes that host name on the Compose network
-# (network alias below; also `HOSTS` in `fake_wes.py`), with a certificate
-# of its own certificate authority, which proWES trusts instead of the
-# public ones (`REQUESTS_CA_BUNDLE`), so that no run leaves the Compose
-# network
+# proWES sends runs to the WES instance of the config overlay
+# (`custom.wes.backends`): the fake WES, at its service name `fake-wes` (also
+# `HOSTS` in `fake_wes.py`), with a certificate of its own certificate
+# authority, which proWES trusts instead of the public ones
+# (`REQUESTS_CA_BUNDLE`), so that no run leaves the Compose network
 
 # Settings of the app and the Celery worker
 x-smoke: &smoke
@@ -71,10 +69,6 @@ services:
     healthcheck:
       interval: 5s
       start_period: 5s
-    networks:
-      default:
-        aliases:
-          - wes-na.cloud.e-infra.cz
 
 volumes:
   smoke-certs-data:
