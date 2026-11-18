@@ -438,8 +438,10 @@ def test_attachment_not_writable(
         [("dir/a.txt", b"1"), ("dir_a.txt", b"2")],
         # a name longer than file systems allow
         [("a" * 252 + ".txt", b"1")],
+        # an empty name
+        [("", b"1")],
     ],
-    ids=["duplicate", "same-safe-name", "too-long"],
+    ids=["duplicate", "same-safe-name", "too-long", "empty"],
 )
 def test_attachment_names_refused(
     files: list[tuple[str, bytes]],
@@ -586,8 +588,10 @@ def test_credentials_not_logged(
         {"tags": '{"count": 1}'},
         {"workflow_engine_parameters": '{"nested": {"a": "b"}}'},
         {"workflow_params": "[" * 100000},
+        # duplicate keys, of which decoding would keep the last value only
+        {"workflow_params": '{"a": "https://u:s3cr3t@h/", "a": "x"}'},
     ],
-    ids=["tags", "workflow_engine_parameters", "deeply-nested"],
+    ids=["tags", "workflow_engine_parameters", "deeply-nested", "duplicate-keys"],
 )
 def test_invalid_fields_refused(
     fields: dict[str, str],
@@ -657,6 +661,50 @@ def test_run_log_response_validated(
         "run_log": {"cmd": ["cwltool"], "exit_code": 0, "stdout": "done"},
         "task_logs": [{"cmd": [], "name": "t"}],
     }
+
+
+def test_stored_credentials_not_returned(
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Credentials of runs stored by earlier versions are removed from run logs."""
+    response = _post_run(foca_client, RUN_REQUEST)
+    run_id = response.json()["run_id"]
+    mongodb[RUN_DB][RUN_COLLECTION].update_one(
+        {"run_log.run_id": run_id},
+        {
+            "$set": {
+                "run_log.request.workflow_url": "https://u:s3cr3t@example.org/wf",
+                "run_log.request.workflow_params": '{"in": "s3://k:s3cr3t@b/o"}',
+            }
+        },
+    )
+    response = foca_client.get(f"{BASE_PATH}/runs/{run_id}")
+    assert response.status_code == 200
+    assert response.json()["request"]["workflow_url"] == "https://example.org/wf"
+    assert response.json()["request"]["workflow_params"] == {"in": "s3://b/o"}
+    assert "s3cr3t" not in response.text
+
+
+def test_stored_malformed_url(
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Run logs whose stored run request has malformed URLs get `500`."""
+    response = _post_run(foca_client, RUN_REQUEST)
+    run_id = response.json()["run_id"]
+    mongodb[RUN_DB][RUN_COLLECTION].update_one(
+        {"run_log.run_id": run_id},
+        {"$set": {"run_log.request.workflow_url": "https://[u@example.org/"}},
+    )
+    response = foca_client.get(f"{BASE_PATH}/runs/{run_id}")
+    assert response.status_code == 500
 
 
 def test_invalid_stored_run_log(

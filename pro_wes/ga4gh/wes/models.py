@@ -23,6 +23,24 @@ STORED_KEY = "stored"
 STORED_CONTEXT = {STORED_KEY: True}
 
 
+def _without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Make an object of decoded JSON, refusing duplicate keys.
+
+    Args:
+        pairs: Keys and values of the object, in order.
+
+    Returns:
+        The object.
+
+    Raises:
+        JSONDecodeError: A key occurs more than once.
+    """
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise JSONDecodeError("duplicate keys", "", 0)
+    return result
+
+
 class MetaEnum(EnumMeta):
     """Metaclass for enumerators."""
 
@@ -169,7 +187,8 @@ class RunRequest(BaseModel):
         Raises:
             ValueError: The value is required but it is either missing or does
                 not represent any actual content.
-            ValueError: The value could not be JSON deserialized.
+            ValueError: The value could not be JSON deserialized, or has an
+                object with duplicate keys (not checked for stored runs).
             ValueError: The value could be JSON decoded, but the deserialized
                 value does not represent an object/dictionary.
             ValueError: The tags or workflow engine parameters have values
@@ -179,8 +198,14 @@ class RunRequest(BaseModel):
             if info.field_name == "workflow_params":
                 raise ValueError("field required")
             return "{}"
+        stored = bool(info.context and info.context.get(STORED_KEY))
         try:
-            decoded = loads(value)
+            # duplicate keys refused for new requests, as decoding keeps only
+            # the last value, so that the others (e.g., with credentials in
+            # URLs) would be forwarded unchecked
+            decoded = loads(
+                value, object_pairs_hook=dict if stored else _without_duplicates
+            )
         except (JSONDecodeError, RecursionError) as exc:
             # also JSON too deeply nested to decode
             raise ValueError("could not be JSON deserialized") from exc
@@ -190,7 +215,7 @@ class RunRequest(BaseModel):
         # checked for stored runs, which earlier versions accepted without
         if (
             info.field_name != "workflow_params"
-            and not (info.context and info.context.get(STORED_KEY))
+            and not stored
             and not all(isinstance(item, str) for item in decoded.values())
         ):
             raise ValueError("values must be strings")

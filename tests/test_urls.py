@@ -93,6 +93,8 @@ def test_has_credentials_malformed() -> None:
             "https://example.org:8443/p?q=1#f",
         ),
         ("https://a@b:c@example.org/", "https://example.org/"),
+        # tabs and newlines elsewhere are kept
+        ("a\tb --url=https://u:p@h/\n", "a\tb --url=https://h/\n"),
         ("https://@example.org/", "https://example.org/"),
         ("https://example.org/", "https://example.org/"),
         ("https:/user:pass@example.org/x", "https:/example.org/x"),

@@ -43,7 +43,7 @@ def _has_authority_credentials(url: str) -> bool:
     """Check whether the authority of a URL has credentials.
 
     Args:
-        url: URL, without tabs and newlines.
+        url: URL.
 
     Returns:
         Whether the authority has a password, or a user name for schemes
@@ -90,7 +90,8 @@ def strip_auth(url: str) -> str:
     `scheme://user:password@host:port/path?query#fragment` becomes
     `scheme://host:port/path?query#fragment`; credentials that `USERINFO`
     finds elsewhere in the string are removed, too, in a single pass. Tabs
-    and newlines are removed (cf. `has_credentials`).
+    and newlines are removed only if they hide credentials (cf.
+    `has_credentials`), so that other text is kept as is.
 
     Args:
         url: URL, or any string, with credentials.
@@ -98,7 +99,22 @@ def strip_auth(url: str) -> str:
     Returns:
         URL without credentials.
     """
-    url = url.translate(_IGNORED)
+    stripped = _strip(url)
+    if has_credentials(stripped):
+        stripped = _strip(url.translate(_IGNORED))
+    return stripped
+
+
+def _strip(url: str) -> str:
+    """Remove the credentials from a URL as it is, in a single pass.
+
+    Args:
+        url: URL, or any string.
+
+    Returns:
+        URL without the credentials that are found without removing tabs and
+        newlines.
+    """
     if _has_authority_credentials(url):
         elements = list(urlsplit(url))
         elements[1] = elements[1][elements[1].rfind("@") + 1 :]

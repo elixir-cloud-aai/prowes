@@ -97,7 +97,9 @@ attachment with a longer one, or one without file name are rejected with
 `400 Bad Request`. Files are created anew, never overwriting existing ones.
 
 The values of `tags` and `workflow_engine_parameters` must be strings, as
-in the WES specification (`400 Bad Request` otherwise).
+in the WES specification, and no object in the JSON fields may have a key
+twice, as decoding would keep only its last value (`400 Bad Request`
+otherwise).
 
 ### Rate limits
 

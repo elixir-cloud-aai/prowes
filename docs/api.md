@@ -72,7 +72,7 @@ stored nor forwarded):
 
 | Status | Cause |
 | --- | --- |
-| `400 Bad Request` | The form is invalid (e.g., a missing field, `workflow_params` that is no JSON object, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
+| `400 Bad Request` | The form is invalid (e.g., a missing field, `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
 | `413 Content Too Large` | The request body is larger than `server.max_content_length` (see [Request size limit](configuration.md#request-size-limit)), the run has more workflow attachments than `custom.post_runs.max_attachments`, or an attachment is larger than `custom.post_runs.max_attachment_size` |
 
 The `detail` of each names the cause; credentials of URLs are never echoed.

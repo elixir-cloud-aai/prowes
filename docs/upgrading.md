@@ -64,7 +64,8 @@ strings), as the WES specification defines them, and leaves out fields
 without value (before: `null`). Responses are now validated against the
 specification (`validate_responses: True`); runs stored by earlier versions
 with `tags` or `workflow_engine_parameters` whose values aren't strings get
-`500` responses.
+`500` responses. Credentials in the URLs of runs stored by earlier versions
+are removed from the run logs returned (not from the database).
 
 ### Errors
 

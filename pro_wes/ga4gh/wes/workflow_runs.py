@@ -534,7 +534,7 @@ class WorkflowRuns:
         uploads: list[Upload] = []
         names: set[str] = set()
         for file in files:
-            if file.filename is None:
+            if not file.filename:
                 raise InvalidAttachmentName("Workflow attachment has no filename.")
             name = str(self._secure_filename(name=Path(file.filename)))
             if len(name.encode()) > MAX_FILENAME_BYTES:
@@ -608,7 +608,8 @@ class WorkflowRuns:
         value are left out, and the JSON fields of the run request are
         returned as objects, as in the WES specification (the form of `POST
         /runs` has them as strings), so that the response conforms to the
-        specification.
+        specification. Credentials in the URLs of the run request are removed,
+        for runs stored before they were checked.
 
         Args:
             run_id: Workflow run identifier.
@@ -619,7 +620,7 @@ class WorkflowRuns:
 
         Raises:
             pro_wes.exceptions.InternalServerError: The stored run log doesn't
-                conform to its model.
+                conform to its model, or its run request has malformed URLs.
         """
         try:
             model = RunLog.model_validate(run_log, context=STORED_CONTEXT)
@@ -628,10 +629,24 @@ class WorkflowRuns:
             raise InternalServerError from exc
         response: dict[str, Any] = model.model_dump(mode="json", exclude_none=True)
         request_data = response.get("request")
-        if request_data is not None:
+        if request_data is None:
+            return response
+        # without credentials, also for runs stored by earlier versions, which
+        # didn't check them
+        try:
+            stripped = sanitize_url(
+                request_data["workflow_url"], "workflow_url", "strip"
+            )
+            if stripped is not None:
+                request_data["workflow_url"] = stripped
             for field in JSON_FIELDS:
                 if field in request_data:
-                    request_data[field] = loads(request_data[field])
+                    decoded = loads(request_data[field])
+                    sanitize_json(decoded, field, "strip")
+                    request_data[field] = decoded
+        except BadRequest as exc:
+            logger.error("Run request of run '%s' has malformed URLs.", run_id)
+            raise InternalServerError from exc
         return response
 
     @staticmethod

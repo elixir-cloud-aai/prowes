@@ -138,7 +138,8 @@ status="$(curl --silent --max-time 30 --output "${body}" \
   --form "workflow_attachment=@${large};filename=large.bin" "${api}/runs" \
   || true)"
 rm -f "${large}"
-if [ "${status}" != 413 ] || ! jq -e '.status == 413' "${body}" > /dev/null; then
+# (the size limit of bodies, not that of each attachment)
+if [ "${status}" != 413 ] || ! jq -e '.status == 413 and (.detail | test("request body"))' "${body}" > /dev/null; then
   echo "::error::POST /runs with 11 MiB: status ${status}, expected 413"
   cat "${body}"
   exit 1
