@@ -38,11 +38,11 @@ FORM_DATA = {
 SERVICE_INFO: dict[str, Any] = {
     "id": "org.example.wes",
     "name": "WES",
-    "type": {"group": "org.ga4gh", "artifact": "wes", "version": "1.0.1"},
+    "type": {"group": "org.ga4gh", "artifact": "wes", "version": "1.1.0"},
     "organization": {"name": "Example", "url": "https://example.org"},
     "version": "1.0.0",
     "workflow_type_versions": {"CWL": {"workflow_type_version": ["v1.0"]}},
-    "workflow_engine_versions": {"cwltool": "3.1"},
+    "workflow_engine_versions": {"cwltool": {"workflow_engine_version": ["3.1"]}},
     "auth_instructions_url": "https://example.org/auth",
     "tags": {},
     "system_state_counts": {"RUNNING": 1},
@@ -360,3 +360,10 @@ def test_get_run_status_state() -> None:
     response = _client(FakeSession(body=body)).get_run_status(run_id=RUN_ID)
     assert isinstance(response, RunStatus)
     assert response.state == State.COMPLETE
+
+
+def test_service_info_wes_1_0() -> None:
+    """Service info of WES 1.0.x (engine versions as strings) is invalid (#122)."""
+    body = {**SERVICE_INFO, "workflow_engine_versions": {"cwltool": "3.1"}}
+    with pytest.raises(ValueError, match="invalid response"):
+        _client(FakeSession(body=body)).get_service_info()

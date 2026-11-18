@@ -5,11 +5,12 @@
 """
 
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
 from connexion import request
 from foca.utils.logging import log_traffic
 
+from pro_wes.exceptions import TasksNotServed
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def RunWorkflow(*args: Any, **kwargs: Any) -> dict[str, str]:
 
     Returns:
         Response object according to WES API schema `RunId`. Cf.
-            https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L579-584
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
     """
     workflow_run = WorkflowRuns()
     response = workflow_run.run_workflow(
@@ -49,7 +50,7 @@ def ListRuns(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
     Returns:
         Response object according to WES API schema `RunListResponse`. Cf.
-            https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L495-L510
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
     """
     workflow_run = WorkflowRuns()
     response = workflow_run.list_runs(**kwargs)
@@ -69,7 +70,7 @@ def GetRunLog(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
 
     Returns:
         Response object according to WES API schema `RunLog`. Cf.
-            https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L511-L533
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
         pro_wes.exceptions.Forbidden: The requester is not allowed to
@@ -95,7 +96,7 @@ def GetRunStatus(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
 
     Returns:
         Response object according to WES API schema `RunStatus`. Cf.
-            https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L585-L594
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
         pro_wes.exceptions.Forbidden: The requester is not allowed to
@@ -121,7 +122,7 @@ def CancelRun(run_id: str, *args: Any, **kwargs: Any) -> dict[str, str]:
 
     Returns:
         Response object according to WES API schema `RunId`. Cf.
-            https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L579-L584
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
         pro_wes.exceptions.Forbidden: The requester is not allowed to
@@ -132,3 +133,39 @@ def CancelRun(run_id: str, *args: Any, **kwargs: Any) -> dict[str, str]:
     workflow_run = WorkflowRuns()
     response = workflow_run.cancel_run(run_id=run_id, **kwargs)
     return response
+
+
+@log_traffic
+def ListTasks(run_id: str, *args: Any, **kwargs: Any) -> NoReturn:
+    """Return the tasks of a workflow run (WES 1.1.0).
+
+    Controller for `GET /runs/{run_id}/tasks`; not served yet (#124).
+
+    Args:
+        run_id: Workflow run identifier.
+        *args: Positional arguments passed along with request.
+        **kwargs: Additional keyword arguments passed along with request.
+
+    Raises:
+        pro_wes.exceptions.TasksNotServed: Always (`501 Not Implemented`).
+    """
+    raise TasksNotServed
+
+
+@log_traffic
+def GetTask(run_id: str, task_id: str, *args: Any, **kwargs: Any) -> NoReturn:
+    """Return a task of a workflow run (WES 1.1.0).
+
+    Controller for `GET /runs/{run_id}/tasks/{task_id}`; not served yet
+    (#124).
+
+    Args:
+        run_id: Workflow run identifier.
+        task_id: Task identifier.
+        *args: Positional arguments passed along with request.
+        **kwargs: Additional keyword arguments passed along with request.
+
+    Raises:
+        pro_wes.exceptions.TasksNotServed: Always (`501 Not Implemented`).
+    """
+    raise TasksNotServed

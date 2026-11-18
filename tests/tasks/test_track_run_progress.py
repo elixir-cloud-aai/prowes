@@ -187,6 +187,24 @@ def test_track_run_invalid_log(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("run")
+def test_track_run_system_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """System logs of WES 1.1.0 run and task logs are stored."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    monkeypatch.setattr(
+        WesClient,
+        "get_run",
+        lambda *_args, **_kwargs: {
+            "run_log": {"exit_code": 0, "system_logs": ["disk ok"]},
+            "task_logs": [{"name": "step", "system_logs": ["node 1"]}],
+        },
+    )
+    assert _track() == TASK_ID
+    document = _stored()
+    assert document["run_log"]["run_log"]["system_logs"] == ["disk ok"]
+    assert document["run_log"]["task_logs"][0]["system_logs"] == ["node 1"]
+
+
+@pytest.mark.usefixtures("run")
 def test_track_run_error_response_as_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run logs without stored fields (e.g., error responses) change nothing."""
     _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])

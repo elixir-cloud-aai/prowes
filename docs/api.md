@@ -2,12 +2,15 @@
 
 proWES serves the [GA4GH WES
 API](https://github.com/ga4gh/workflow-execution-service-schemas), version
-1.0.1, at the base path `/ga4gh/wes/v1`. The specification is served at
+[1.1.0](https://github.com/ga4gh/workflow-execution-service-schemas/releases/tag/1.1.0),
+at the base path `/ga4gh/wes/v1`. The specification is served at
 `/ga4gh/wes/v1/openapi.json` and a Swagger UI at `/ga4gh/wes/v1/ui/`. The
 specifications are in
 [`pro_wes/api/`](https://github.com/elixir-cloud-aai/prowes/tree/dev/pro_wes/api):
-the WES specification as published, and `additions.openapi.yaml`, which
-completes it (e.g., with the schemas of the GA4GH service info).
+the WES specification as published (one deviation: it references the
+schema of the GA4GH service info in `additions.openapi.yaml` instead of
+fetching it from GitHub on startup), and `additions.openapi.yaml`, which
+completes it (the schemas of the GA4GH service info).
 
 | Endpoint | Description |
 | --- | --- |
@@ -17,6 +20,26 @@ completes it (e.g., with the schemas of the GA4GH service info).
 | `GET /runs/{run_id}` | The run log of a run |
 | `GET /runs/{run_id}/status` | The state of a run |
 | `POST /runs/{run_id}/cancel` | Cancel a run |
+| `GET /runs/{run_id}/tasks` | The tasks of a run (WES 1.1.0): not served yet, `501 Not Implemented` ([#124](https://github.com/elixir-cloud-aai/prowes/issues/124)) |
+| `GET /runs/{run_id}/tasks/{task_id}` | A task of a run (WES 1.1.0): not served yet, `501 Not Implemented` ([#124](https://github.com/elixir-cloud-aai/prowes/issues/124)) |
+
+### WES 1.1.0
+
+What proWES does with the additions of WES 1.1.0 so far:
+
+| Addition | proWES |
+| --- | --- |
+| `workflow_engine` and `workflow_engine_version` of `POST /runs` | Refused (`400 Bad Request`) unless empty, until they are forwarded ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)), so that a run never loses its choice of engine |
+| Task endpoints, `task_logs_url` of run logs | Not served yet (see above); run logs have `task_logs` (deprecated in WES 1.1.0), as `Log` objects: the `id` and `tes_uri` of `TaskLog` are not kept yet |
+| `system_logs` of logs | Stored from the run logs of the WES instance and returned in `run_log` and `task_logs` |
+| State `PREEMPTED` | Not tracked yet ([#123](https://github.com/elixir-cloud-aai/prowes/issues/123)) |
+| `RunSummary` in `GET /runs` | Runs are listed as `RunStatus` (identifier and state), which WES 1.1.0 still allows ([#125](https://github.com/elixir-cloud-aai/prowes/issues/125)) |
+| `workflow_engine_versions` of the service info | Versions of each engine as objects (`{"cwltool": {"workflow_engine_version": ["3.1"]}}`), see [Service info](configuration.md#service-info) |
+
+The WES instances that runs are forwarded to may serve WES 1.0.1 or 1.1.0;
+proWES sends them only fields of both versions. Routing by the WES version
+of each instance follows with
+[#122](https://github.com/elixir-cloud-aai/prowes/issues/122).
 
 ## Runs
 
@@ -72,7 +95,7 @@ stored nor forwarded):
 
 | Status | Cause |
 | --- | --- |
-| `400 Bad Request` | The form is invalid (e.g., a missing field, `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
+| `400 Bad Request` | The form is invalid (e.g., a missing field, a workflow engine or its version is chosen (`workflow_engine`, `workflow_engine_version`; not supported yet), `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
 | `413 Content Too Large` | The request body is larger than `server.max_content_length` (see [Request size limit](configuration.md#request-size-limit)), the run has more workflow attachments than `custom.post_runs.max_attachments`, or an attachment is larger than `custom.post_runs.max_attachment_size` |
 
 The `detail` of each names the cause; credentials of URLs are never echoed.

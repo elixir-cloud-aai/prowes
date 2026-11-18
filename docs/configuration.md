@@ -150,3 +150,22 @@ checked on startup. `version` defaults to the version of the installed
 package (`service_info.package`); `system_state_counts` is computed for each
 request and can't be set. Set `id`, `name`, `organization` and the URLs to
 describe your deployment: the defaults are placeholders.
+
+The WES fields follow WES 1.1.0: `workflow_engine_versions` maps each engine
+to an object with its versions (WES 1.0.1: a string), and `type.version` and
+`supported_wes_versions` say `1.1.0`:
+
+```yaml
+service_info:
+  service:
+    type:
+      group: "org.ga4gh"
+      artifact: "wes"
+      version: "1.1.0"
+    supported_wes_versions:
+      - 1.1.0
+    workflow_engine_versions:
+      cwltool:
+        workflow_engine_version:
+          - "3.1"
+```

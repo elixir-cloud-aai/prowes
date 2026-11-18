@@ -55,12 +55,16 @@ class WesClient:
     ) -> ErrorResponse | ServiceInfo:
         """Retrieve information about the WES instance.
 
+        Validated against WES 1.1.0 (`ServiceInfo`): the service info of WES
+        1.0.x instances (e.g., `workflow_engine_versions` as strings) is
+        invalid until versions are read per instance (#122).
+
         Args:
             **kwargs: Additional keyword arguments passed along with request.
 
         Returns:
             Response object according to WES API schema `ServiceInfo`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L373-L441
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         """
         self.set_headers()
         url = f"{self.url}/service-info"
@@ -88,7 +92,7 @@ class WesClient:
 
         Args:
             form_data: Form data according to WES API schema `RunRequest`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L534-L578
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
                 The following form fields are required:
                 * `workflow_params`
                 * `workflow_type`
@@ -106,7 +110,7 @@ class WesClient:
 
         Returns:
             WES API schema `RunId`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L495-L510
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
             ValueError: The form data does not conform to the expected schema.
@@ -153,7 +157,7 @@ class WesClient:
 
         Returns:
             WES API schema `RunListResponse`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L495-L510
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
             ValueError: The response does not conform to any of the expected
@@ -194,7 +198,7 @@ class WesClient:
         Returns:
             Response object, as sent; according to WES API schema `RunLog` if
                 the service conforms to it. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L511-L533
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
             pro_wes.exceptions.EngineUnavailable: The service is unavailable,
@@ -225,7 +229,7 @@ class WesClient:
 
         Returns:
             WES API schema `RunStatus`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L585-L594
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
             ValueError: The response does not conform to any of the expected
@@ -262,7 +266,7 @@ class WesClient:
 
         Returns:
             WES API schema `RunId`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L585-L594
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
             ValueError: The response does not conform to any of the expected

@@ -4,15 +4,16 @@ The service info is served by FOCA (`foca.api.service_info`) from config
 section `service_info`: the fields of the GA4GH service info and the WES
 fields that are configured (e.g., `workflow_type_versions`) from
 `service_info.service`, the system state counts from :py:func:`runtime_fields`,
-which FOCA calls for each request.
+which FOCA calls for each request. The configured workflow types and
+versions are read by :py:func:`pro_wes.utils.config.workflow_type_versions`.
 """
 
 import logging
 from typing import Any
 
-from foca import get_collection, get_config
+from foca import get_collection
 
-from pro_wes.ga4gh.wes.states import States
+from pro_wes.ga4gh.wes.models import State
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,10 @@ def state_counts() -> dict[str, int]:
     Must be called in an app context.
 
     Returns:
-        Number of runs in each state that proWES knows; runs in other states
-        are left out (with a warning).
+        Number of runs in each state that proWES knows (`State`); runs in
+        other states are left out (with a warning).
     """
-    counts = dict.fromkeys(States.ALL, 0)
+    counts = {state.value: 0 for state in State}
     cursor = get_collection(RUN_DB, RUN_COLLECTION).find(
         filter={},
         projection={"run_log.state": True, "_id": False},
@@ -51,23 +52,3 @@ def state_counts() -> dict[str, int]:
         else:
             logger.warning("Run with unknown state not counted: %s", state)
     return counts
-
-
-def workflow_type_versions() -> dict[str, Any]:
-    """Get the workflow types and versions of the service info.
-
-    Must be called in an app context.
-
-    Returns:
-        Workflow types and their versions, as configured
-        (`service_info.service.workflow_type_versions`); empty if not set.
-
-    Raises:
-        RuntimeError: No service info is configured (the app doesn't start
-            without one, as FOCA serves `GET /service-info` from it).
-    """
-    conf = get_config().service_info
-    if conf is None:
-        raise RuntimeError("No service info configured (section `service_info`)")
-    versions: dict[str, Any] = conf.service.get("workflow_type_versions") or {}
-    return versions
