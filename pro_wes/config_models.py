@@ -12,11 +12,11 @@ class Defaults(BaseModel):
 
     Args:
         timeout: Timeout for outgoing requests. May be overridden by more
-        specific parameters for each endpoint.
+            specific parameters for each endpoint.
 
     Attributes:
         timeout: Timeout for outgoing requests. May be overridden by more
-        specific parameters for each endpoint.
+            specific parameters for each endpoint.
     """
 
     timeout: int | None = 3
@@ -131,6 +131,6 @@ class CustomConfig(BaseModel):
         if isinstance(data, dict) and "service_info" in data:
             raise ValueError(
                 "`custom.service_info` moved to `service_info.service` "
-                "(served by FOCA); cf. the upgrade notes in the README"
+                '(served by FOCA); cf. "Upgrading" in the documentation'
             )
         return data
