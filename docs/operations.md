@@ -67,7 +67,59 @@ that `uv.lock` locks), pinned by digest:
 - **Version**: the build argument `SETUPTOOLS_SCM_PRETEND_VERSION` sets the
   version of the package, which the service info reports unless
   `service_info.service.version` is set; without it, `0.0.0.dev0`.
-- **Labels**: OCI annotations (`org.opencontainers.image.*`).
+- **Labels**: OCI annotations (`org.opencontainers.image.*`); CI adds the
+  version, the commit and the creation date.
+
+## Verifying images
+
+CI (job `push` of
+[`.github/workflows/ci.yml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/.github/workflows/ci.yml))
+builds an image of each commit on `dev` and pushes it to Docker Hub
+(`elixircloud/prowes`) by digest, with an SBOM and the build provenance
+attached as attestations. The image is scanned for known vulnerabilities
+with [Trivy](https://trivy.dev/) (job `scan`; the images of pull requests
+are built and scanned too, but not pushed), and only once the scan and all
+other checks have passed (job `publish`) does it get a [GitHub artifact
+attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
+of its provenance and a keyless [Sigstore](https://www.sigstore.dev/)
+signature, and then the tags `dev` and `sha-<commit>` (the full commit
+hash). CI never tags `latest`: release images (`X.Y.Z` and `latest`) will be
+published by a release workflow
+([#116](https://github.com/elixir-cloud-aai/prowes/issues/116)). Images
+published before (`latest` and tags by date, `YYYYMMDD`) are neither
+scanned, signed nor attested.
+
+To check that an image was built by CI for this repository's branch `dev`,
+run (with the [GitHub CLI](https://cli.github.com/) or
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 3 or
+later, which reads the signatures in the Sigstore bundle format):
+
+```bash
+gh attestation verify oci://docker.io/elixircloud/prowes:dev \
+    --repo elixir-cloud-aai/prowes \
+    --signer-workflow elixir-cloud-aai/prowes/.github/workflows/ci.yml \
+    --source-ref refs/heads/dev
+cosign verify docker.io/elixircloud/prowes:dev \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity https://github.com/elixir-cloud-aai/prowes/.github/workflows/ci.yml@refs/heads/dev
+```
+
+Replace the tag `dev` with `sha-<commit>` to check the image of a given
+commit. `--source-ref` and the ref in `--certificate-identity` check that
+the workflow ran for branch `dev`, not for another branch. To show an
+image's SBOM or provenance, run:
+
+```bash
+docker buildx imagetools inspect docker.io/elixircloud/prowes:dev \
+    --format '{{ json .SBOM }}'
+docker buildx imagetools inspect docker.io/elixircloud/prowes:dev \
+    --format '{{ json .Provenance }}'
+```
+
+The scans fail on critical and high vulnerabilities that have a fix, whose
+findings are listed in the repository's code scanning alerts. Accepted
+findings are listed, each with a reason and an expiry date, in
+[`.trivyignore.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/.trivyignore.yaml).
 
 ## Secrets
 

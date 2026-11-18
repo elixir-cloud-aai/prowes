@@ -55,8 +55,9 @@ FROM base
 
 ##### METADATA #####
 ## OCI annotations; images built from the FOCA image inherit its own, so all
-## static ones are set here (the version, revision and creation date follow
-## with the image workflows, #115 and #116)
+## static ones are set here. CI's `docker/metadata-action` sets the version,
+## revision and creation date and overrides title, description, URLs and
+## licenses with the repository's metadata
 LABEL org.opencontainers.image.title="proWES"
 LABEL org.opencontainers.image.description="Proxy for GA4GH Workflow Execution Service (WES) instances by ELIXIR On-Cloud"
 LABEL org.opencontainers.image.url="https://github.com/elixir-cloud-aai/prowes"

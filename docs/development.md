@@ -117,10 +117,21 @@ how to run them locally:
 | `docs` | Docs | `uv run --extra docs mkdocs build --strict` (see [Documentation](#documentation)) |
 | `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
 | `smoke` | Smoke test | `tests/smoke/check.sh` (see [Smoke test](#smoke-test)) |
-| `push` | Push image | Pushes to `dev` in this repository only |
+| `push` | Push image | Pushes to `dev` only (see below): builds the image and pushes it by digest |
+| `scan` | Scan image | Pull requests: `docker build -t prowes:scan .`, then [Trivy](https://trivy.dev/) on `prowes:scan` with `.trivyignore.yaml`; pushes: the pushed digest |
+| `publish` | Publish image | Pushes to `dev` only: attests, signs and tags the scanned digest (`dev`, `sha-<commit>`) |
 | `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
 
 `CI passed` is the only required check. Add every new job to its `needs`.
+
+`push` and `publish` run on pushes to `dev` of this repository only, in the
+environment `dev-images` (Docker Hub secrets, branch `dev` only); they are
+skipped on pull requests and in forks, which the gate allows. A fork can dry
+run them by setting the repository variable `DOCKERHUB_ORG` to its own
+Docker Hub organization (and the secrets `DOCKERHUB_LOGIN` and
+`DOCKERHUB_TOKEN`, in an environment `dev-images`): the image is then
+published there instead of to `elixircloud`. See [Verifying
+images](operations.md#verifying-images) for what the image jobs publish.
 
 ## Smoke test
 
