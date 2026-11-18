@@ -31,6 +31,28 @@ a Python expression such as `string.ascii_uppercase + string.digits`). Start
 from
 [`pro_wes/config.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/pro_wes/config.yaml).
 
+### WES instances
+
+Breaking: proWES no longer sends runs to a built-in WES instance
+(`https://wes-na.cloud.e-infra.cz`): set the WES instances of the
+deployment in `custom.wes.backends` (see [WES
+instances](configuration.md#wes-instances); Helm chart:
+`config.custom.wes.backends`, see [WES
+instances](deployment.md#wes-instances)). Without any, `POST /runs` is
+refused with `503 Service Unavailable`. To keep the previous behaviour, list
+the former WES instance:
+
+```yaml
+custom:
+  wes:
+    backends:
+      - type: ga4gh-wes
+        url: https://wes-na.cloud.e-infra.cz
+```
+
+Runs stored before the upgrade are tracked and canceled at the WES instance
+stored with them, as before.
+
 ### Run identifiers
 
 `POST /runs` returns the run's own identifier, by which `GET

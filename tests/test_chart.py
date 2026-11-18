@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 import yaml
 
+from pro_wes.config_models import CustomConfig
 from tests.helm import (
     APP,
     BROKER,
@@ -261,6 +262,21 @@ def test_config_overlay() -> None:
             "/etc/prowes/overlay.yaml"
         )
         assert _mounts(container)["/etc/prowes"] == "config"
+
+
+def test_config_wes_backends() -> None:
+    """The WES instances of `config` reach the overlay, as the app reads them."""
+    backends = [
+        {"type": "ga4gh-wes", "url": "https://wes.example.org"},
+        {"type": "ga4gh-service-registry", "url": "https://registry.example.org"},
+    ]
+    docs = _render("--set-json", f"config.custom.wes.backends={json.dumps(backends)}")
+    overlay = _overlay(docs)
+    assert overlay["custom"] == {"wes": {"backends": backends}}
+    custom = CustomConfig.model_validate(overlay["custom"])
+    assert [entry.url for entry in custom.wes.backends] == [
+        backend["url"] for backend in backends
+    ]
 
 
 def test_mongodb_database() -> None:

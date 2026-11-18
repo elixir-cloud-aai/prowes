@@ -139,6 +139,31 @@ argument `SETUPTOOLS_SCM_PRETEND_VERSION` report `0.0.0.dev0` (see
 [Image](operations.md#image)): set `config.service_info.service.version`
 for them.
 
+### WES instances
+
+The base config lists no WES instance, so a deployment refuses all runs
+(`503 Service Unavailable`) until it sets its own in
+`config.custom.wes.backends` (a list, which replaces that of the base
+config): WES instances and service registries, as described in [WES
+instances](configuration.md#wes-instances), e.g.:
+
+```yaml
+config:
+  custom:
+    wes:
+      backends:
+        - type: ga4gh-wes
+          url: https://wes.example.org
+```
+
+The app reads the list on startup and refuses to start with invalid entries
+(the pod then fails its startup, with the reason in its logs). WES
+instances behind a private certificate authority need it in the image's
+trust store or in a file mounted into the pods, with `REQUESTS_CA_BUNDLE`
+pointing to it (`prowes.extraEnv`); TLS verification can't be switched off.
+Set `config.server.public_url` (e.g., `https://<hostName>/ga4gh/wes/v1`), so
+that proWES never forwards runs to itself, e.g., when a registry lists it.
+
 ## Image
 
 The app and the worker run the image `prowes.image` (default:

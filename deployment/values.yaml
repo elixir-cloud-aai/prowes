@@ -23,8 +23,16 @@ hostName: ""
 # (including lists) are replaced. Stored in a ConfigMap, so must not contain
 # secrets (see docs/deployment.md, Configuration). Set the service info of
 # the deployment: the base config describes an example deployment, which
-# accepts CWL v1.0 runs only
+# accepts CWL v1.0 runs only. Set the WES instances that runs are forwarded
+# to: the base config has none, so runs are refused until then
 config: {}
+#   # WES instances and service registries, in order; new runs go to the
+#   # first (see docs/configuration.md, WES instances)
+#   custom:
+#     wes:
+#       backends:
+#         - type: ga4gh-wes
+#           url: https://wes.example.org
 #   # Service info (GA4GH `Service` schema with the WES fields); mappings are
 #   # merged with the defaults, so set all fields of the deployment. Without
 #   # `version`, the app reports the version of its package

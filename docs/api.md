@@ -49,9 +49,9 @@ requests](configuration.md#run-requests)), stores the run in its database,
 writes its workflow attachments to the storage of the runs
 (`custom.post_runs.storage_path`, see
 [Configuration](configuration.md#settings)) and forwards the request to a
-WES instance. Currently, that is a single, built-in WES instance; WES
-instances become configurable with
-[#118](https://github.com/elixir-cloud-aai/prowes/issues/118).
+WES instance: the first of `custom.wes.backends` (see [WES
+instances](configuration.md#wes-instances)). Without any, it refuses the
+run with `503 Service Unavailable`, before anything is stored.
 
 `POST /runs` returns the run's own identifier, by which `GET
 /runs/{run_id}` finds it; the identifier at the WES instance is kept in the

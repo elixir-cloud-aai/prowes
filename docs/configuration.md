@@ -20,12 +20,108 @@ The settings that deployments usually change:
 | --- | --- | --- |
 | `db.host`, `db.port` | `mongodb`, `27017` | MongoDB; overridden by the environment variables `MONGO_HOST` and `MONGO_PORT`, with credentials from `MONGO_USERNAME` and `MONGO_PASSWORD`, the database name from `MONGO_DBNAME` (default: `runStore`), or the whole connection string from `MONGO_URI` |
 | `jobs.host`, `jobs.port` | `${RABBIT_HOST:-rabbitmq}`, `${RABBIT_PORT:-5672}` | RabbitMQ broker of the Celery worker; the environment variable `CELERY_BROKER_URL` takes precedence (e.g., for brokers with credentials) |
+| `custom.wes.backends` | none | WES instances that runs are forwarded to, see [WES instances](#wes-instances); without any, `POST /runs` is refused |
 | `service_info.service` | example values | Service info (`GET /service-info`), see [Service info](#service-info) |
 | `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
 | `server.max_content_length` | `10485760` (10 MiB) | Maximum size of request bodies, see [Request size limit](#request-size-limit) |
 | `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type (see [Errors](api.md#errors)) |
 | `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`), limits of workflow attachments (`max_attachments`, `max_attachment_size`) and credentials in URLs (`url_credentials`), see [Run requests](#run-requests) |
 | `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds |
+
+## WES instances
+
+Runs are forwarded to the WES instances of the backend list,
+`custom.wes.backends`, a typed backend list of FOCA (see FOCA's [backend
+lists](https://foca.readthedocs.io/en/latest/plugins/#backend-lists); as
+`custom.tes.backends` of proTES). Each entry is either a WES instance
+(`type: ga4gh-wes`), with its base URL (`url`, without the API path
+`/ga4gh/wes/v1`), or a service registry, whose verified WES instances are
+used in its place (`type: ga4gh-service-registry`, see [Discovery in a
+service registry](#discovery-in-a-service-registry)). The base config lists
+none, and proWES refuses `POST /runs` with `503 Service Unavailable`
+(nothing is stored) until a deployment sets its own list, e.g.:
+
+```yaml
+custom:
+  wes:
+    backends:
+      - type: ga4gh-wes
+        url: https://wes.example.org
+        # Labels and location, e.g., for routing by plugins
+        labels: {region: eu-north}
+        location: {latitude: 60.17, longitude: 24.94}
+      # A WES instance that serves the WES API at another path
+      - type: ga4gh-wes
+        url: https://wes.example.com
+        api_path: /api/wes/v1
+```
+
+New runs go to the first WES instance of the list: the first configured one,
+or the first verified WES instance of a registry entry that comes first.
+Until FOCA's gateway plugins choose and order the WES instances
+([#121](https://github.com/elixir-cloud-aai/prowes/issues/121)), later
+entries are used only if the ones before them yield none (e.g., a registry
+that lists none, or can't be read yet). proWES stores the WES instance with
+each run, and tracks and cancels the run there, also after the list
+changed.
+
+Settings of a WES instance:
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `url` | (required) | Base URL, without the API path and without user info |
+| `api_path` | `/ga4gh/wes/v1` | Path of the WES API, relative to `url`; `/` if it is at `url` itself |
+| `id` | the normalized URL | Identifier; entries with the same identifier are rejected |
+| `url_schemes` | `[https]` | Allowed schemes of `url`; add `http` for local tests only |
+| `labels`, `location` | none | Labels and location, for plugins ([#121](https://github.com/elixir-cloud-aai/prowes/issues/121)) |
+| `auth` | `none` | Credentials for the WES instance: only `none` for now; credentials per WES instance come with authentication ([#120](https://github.com/elixir-cloud-aai/prowes/issues/120)) |
+
+URLs are normalized (e.g., lowercase host, without default port and trailing
+slashes). A URL listed twice is used once, at its first place. WES
+instances at or below the public URL of proWES (`server.public_url`, if set)
+are never used, so that proWES never forwards runs to itself: proWES refuses
+to start if a configured one is. Unknown keys and invalid entries (e.g.,
+`type: ga4gh-tes`, `auth: basic`) stop the app on startup.
+
+Requests to WES instances verify TLS certificates (with the public
+certificate authorities, or those of the environment variable
+`REQUESTS_CA_BUNDLE`), with the timeouts of `custom.post_runs.timeout_post`
+and `custom.defaults.timeout`. proWES sends no credentials of its own to WES
+instances yet, so they must accept runs without them (or with the token of
+the client, which proWES passes on while authentication is off).
+
+### Discovery in a service registry
+
+A registry entry (`type: ga4gh-service-registry`) uses the WES instances
+that a GA4GH service registry, e.g., the ELIXIR [Cloud
+Registry](https://github.com/elixir-cloud-aai/cloud-registry), lists as
+verified, at the API path of the WES specification:
+
+```yaml
+custom:
+  wes:
+    backends:
+      - type: ga4gh-service-registry
+        url: https://registry.example.org/ga4gh/registry/v1
+        # WES versions, as prefixes (default: 1.0 and 1.1)
+        versions: ["1.1"]
+        # Environments of the services (default: any)
+        environments: [prod]
+```
+
+proWES reads the registry's `GET /verifications` and `GET /services` with
+FOCA's guarded HTTP client (without access token, `https` only, at public
+addresses only, without following redirects, within the entry's `timeout`)
+and uses the services of type `org.ga4gh:wes` whose URL and type are
+verified, of an accepted version and environment, at hosts with public
+addresses (unless `allow_private_addresses`). Each process reads the
+registry for the first run, then every `refresh_interval` seconds (default
+300); while the registry can't be read, it keeps the last good list for
+`max_stale` seconds (default 3600), and before the first good read and after
+`max_stale`, the entry yields no WES instance. Set `id` for registries at
+internal URLs (they also need `registry_allow_private_addresses`). The
+settings are those of FOCA's registry entries; `auth` must be `none`, as for
+WES instances.
 
 ## Environment variables and overlays
 
