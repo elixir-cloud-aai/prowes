@@ -23,7 +23,8 @@ Failed requests raise :py:class:`pro_wes.exceptions.EngineUnavailable`:
 :py:class:`pro_wes.exceptions.EngineRequestNotSent` if the WES instance
 certainly didn't get the request, and
 :py:class:`pro_wes.exceptions.EngineOutcomeUnknown` if it may have got (and
-processed) it, e.g., after a read timeout.
+processed) it, e.g., after a read timeout, or after a redirect or a
+response that is no JSON.
 """
 
 from collections.abc import Callable
@@ -104,7 +105,10 @@ class _GuardedHttp(GuardedClient):
         session = super().session
         if self.ca_bundle is not None:
             # FOCA's guarded adapter, mounted for both schemes (`verify` only
-            # matters for `https`)
+            # matters for `https`); FOCA 0.22 has no option for other
+            # certificate authorities and passes `verify=True` to `send()`
+            # (`test_tls_with_ca_bundle` fails should that change); wrapped
+            # once per session (FOCA creates a new one after `close()`)
             for adapter in session.adapters.values():
                 if not getattr(adapter, "_prowes_ca_bundle", False):
                     adapter.send = _with_ca_bundle(  # type: ignore[method-assign]
@@ -158,10 +162,14 @@ def _access(host: str) -> tuple[bool, bool]:
         configured WES instances, `http` if their entry allows it
         (`url_schemes`), and private addresses always; for discovered ones,
         `https` only, and private addresses if their registry entry allows
-        them; for others (e.g., no longer listed), neither.
+        them; for others (e.g., no longer listed), neither. Discovered
+        backends are looked up in the registry snapshot of the process
+        (read if it is due), without reading the registries again for hosts
+        that it lacks: hosts come from new runs' backend selection, so a
+        miss means that the host is no longer listed.
     """
     backend_list = get_backend_list()
-    backend = backend_list.find(host)
+    backend = backend_list.find(host, refresh=False)
     if backend is None:
         return False, False
     entry = backend_list.entry_for(backend)
@@ -484,11 +492,12 @@ class WesClient:
                 read).
             pro_wes.exceptions.EngineOutcomeUnknown: The WES instance may
                 have got the request (e.g., the response timed out, or is
-                larger than `custom.wes.max_response_size`).
-            pro_wes.exceptions.EngineUnavailable: The response is a redirect,
-                or its body is no JSON.
+                larger than `custom.wes.max_response_size`, a redirect, or
+                no JSON).
         """
         url = f"{self.url}{path}"
+        # FOCA's `request()` takes no timeout: set the client's per request
+        # (clients aren't shared between threads)
         self.http.timeout = self.timeout if timeout is None else timeout
         try:
             response: HttpResponse = self.http.request(
@@ -511,12 +520,17 @@ class WesClient:
             raise EngineRequestNotSent(
                 f"{method} {url} not sent: {type(exc).__name__}"
             ) from exc
+        # the WES instance (or a proxy in front of it) got the request and may
+        # have processed it, but sent no usable answer
         if 300 <= response.status < 400:
-            raise EngineUnavailable(
+            raise EngineOutcomeUnknown(
                 f"{method} {url} redirected (status {response.status}); redirects"
-                " are not followed"
+                " are not followed",
+                reason="redirect",
             )
         try:
             return response.json()
         except ValueError as exc:
-            raise EngineUnavailable("external workflow engine sent no JSON") from exc
+            raise EngineOutcomeUnknown(
+                "external workflow engine sent no JSON", reason="invalid_json"
+            ) from exc

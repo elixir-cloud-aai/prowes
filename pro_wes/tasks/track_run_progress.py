@@ -176,7 +176,7 @@ def _update_run_log(
     db_client: DbDocumentConnector,
     wes_client: WesClient,
     run_id: str,
-    timeout: float | None,
+    timeout: float,
 ) -> DbDocument:
     """Fetch the run log from the remote WES and store it in the run document.
 

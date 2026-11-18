@@ -142,9 +142,11 @@ def test_id_charset_invalid(charset: str) -> None:
         PostRuns(id_charset=charset)
 
 
-@pytest.mark.parametrize("timeout", [None, 0, -1, "never"])
+@pytest.mark.parametrize(
+    "timeout", [None, 0, -1, "never", float("inf"), float("nan"), 1e10, 86401]
+)
 def test_timeouts_required(timeout: Any) -> None:
-    """Timeouts of requests to WES instances must be positive numbers (#174).
+    """Timeouts of requests to WES instances: positive, finite, at most a day.
 
     Before, `null` disabled them; FOCA's guarded client needs a deadline.
 

@@ -469,17 +469,23 @@ def test_response_too_large_logged(caplog: pytest.LogCaptureFixture) -> None:
 @ALL_OPERATIONS
 @pytest.mark.parametrize("status", [301, 302, 307, 308])
 def test_redirect_fails(call: Call, status: int) -> None:
-    """Redirects fail the request (`EngineUnavailable`) instead of being followed."""
-    with pytest.raises(EngineUnavailable, match="redirect"):
+    """Redirects fail the request instead of being followed.
+
+    The WES instance got the request, so it may have processed it (e.g., a
+    `303` after creating a run).
+    """
+    with pytest.raises(EngineOutcomeUnknown, match="redirect") as info:
         call(_client(FakeHttp(body={"run_id": RUN_ID}, status=status)))
+    assert info.value.reason == "redirect"
 
 
 @pytest.mark.usefixtures("foca_app")
 @ALL_OPERATIONS
 def test_no_json(call: Call) -> None:
-    """Responses that are no JSON raise `EngineUnavailable`."""
-    with pytest.raises(EngineUnavailable, match="no JSON"):
+    """Responses that are no JSON: the WES instance may have processed them."""
+    with pytest.raises(EngineOutcomeUnknown, match="no JSON") as info:
         call(_client(FakeHttp(body=b"<html>")))
+    assert info.value.reason == "invalid_json"
 
 
 def _form(data: bytes, content_type: str) -> dict[str, tuple[str | None, bytes]]:
@@ -699,7 +705,16 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if not self.server.drip:
+            self.wfile.write(body)
+            return
+        try:
+            for byte in body:
+                self.wfile.write(bytes([byte]))
+                self.wfile.flush()
+                time.sleep(self.server.drip)
+        except OSError:
+            pass  # the client gave up
 
     do_GET = _answer
     do_POST = _answer
@@ -710,11 +725,14 @@ class _Server(ThreadingHTTPServer):
 
     Attributes:
         answer: Status, headers, body and delay (in seconds) of every response.
+        drip: Seconds between the bytes of each body, if they are sent one
+            by one (`0`: all at once).
         paths: Paths of the requests received, in order.
     """
 
     daemon_threads = True
     answer: tuple[int, dict[str, str], bytes, float]
+    drip: float = 0.0
     paths: list[str]
 
 
@@ -817,6 +835,59 @@ def test_local_timeout(add_overlay: Callable[[str], None], server: _Server) -> N
             client.post_run(form_data=FORM_DATA, timeout=0.5)
     assert time.monotonic() - start < 1.5
     assert info.value.reason == "read_timeout"
+
+
+def test_local_timeout_as_a_whole(
+    add_overlay: Callable[[str], None], server: _Server
+) -> None:
+    """Servers that keep sending, slowly, are cut off at the timeout, too.
+
+    Each wait for data is shorter than the timeout; before, the timeout
+    limited each wait only.
+    """
+    server.answer = (200, {}, b'{"run_id": "RUN001", "state": "RUNNING"}', 0.0)
+    server.drip = 0.1  # about 4 seconds for the whole body
+    app = _local_app(add_overlay, _url(server))
+    with app.app.app_context():
+        client = WesClient(host=_url(server))
+        start = time.monotonic()
+        with pytest.raises(EngineOutcomeUnknown) as info:
+            client.get_run_status(run_id=RUN_ID, timeout=1)
+    assert time.monotonic() - start < 2.5
+    assert info.value.reason == "read_timeout"
+
+
+def test_local_proxy_ignored(
+    add_overlay: Callable[[str], None],
+    monkeypatch: pytest.MonkeyPatch,
+    server: _Server,
+) -> None:
+    """Proxy settings of the environment are ignored."""
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:1")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    server.answer = (200, {}, b'{"run_id": "RUN001"}', 0.0)
+    app = _local_app(add_overlay, _url(server))
+    with app.app.app_context():
+        response = WesClient(host=_url(server)).cancel_run(run_id=RUN_ID)
+    assert response == RunId(run_id=RUN_ID)
+    assert server.paths == [f"/ga4gh/wes/v1/runs/{RUN_ID}/cancel"]
+
+
+def test_local_http_not_allowed(
+    add_overlay: Callable[[str], None], server: _Server
+) -> None:
+    """The `http` URL of a WES instance configured with `https` only is refused."""
+    url = _url(server, scheme="https")
+    add_overlay(
+        f"custom:\n  wes:\n    backends:\n      - type: ga4gh-wes\n        url: {url}\n"
+    )
+    app = init_app()
+    with app.app.app_context(), pytest.raises(EngineRequestNotSent) as info:
+        WesClient(host=_url(server)).get_run(run_id=RUN_ID)
+    assert info.value.reason == "invalid_url"
+    assert server.paths == []
 
 
 def test_local_not_sent(add_overlay: Callable[[str], None]) -> None:
@@ -962,3 +1033,26 @@ def test_tls_ca_bundle_missing(
     app = init_app()
     with app.app.app_context(), pytest.raises(EngineRequestNotSent):
         WesClient(host=url).get_service_info()
+
+
+def test_tls_ca_bundle_reused(
+    add_overlay: Callable[[str], None],
+    monkeypatch: pytest.MonkeyPatch,
+    fake_wes_tls: tuple[str, Path],
+) -> None:
+    """The CA bundle is applied once per session, also after `close()`."""
+    url, ca_bundle = fake_wes_tls
+    monkeypatch.setenv(CA_BUNDLE_ENV, str(ca_bundle))
+    add_overlay(
+        f"custom:\n  wes:\n    backends:\n      - type: ga4gh-wes\n        url: {url}\n"
+    )
+    app = init_app()
+    with app.app.app_context():
+        client = WesClient(host=url)
+        session = client.http.session
+        send = session.get_adapter(url).send
+        assert client.http.session.get_adapter(url).send is send
+        assert isinstance(client.get_runs(), RunListResponse)
+        client.http.close()
+        assert client.http.session is not session
+        assert isinstance(client.get_runs(), RunListResponse)

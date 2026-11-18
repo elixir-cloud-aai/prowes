@@ -294,8 +294,9 @@ the remote WES are limited: forwarding runs by
 `custom.post_runs.timeout_post` (now 30 seconds; before: none), also for
 reading run logs, canceling runs by `custom.defaults.timeout`. Both now
 limit each request as a whole (before: each wait for data), and both are
-required positive numbers: configurations that set them to `null` (to
-disable them) fail validation on startup; set a number of seconds instead.
+required positive numbers of at most 86400 seconds: configurations that set
+them to `null` (to disable them) fail validation on startup; set a number of
+seconds instead.
 `custom.post_runs.timeout_job` (the time limit of tracking a run) may still
 be `null`.
 

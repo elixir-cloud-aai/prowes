@@ -103,14 +103,18 @@ Requests to WES instances go through FOCA's guarded HTTP client:
 - Configured WES instances may have private addresses (e.g., in the same
   cluster); discovered ones need public addresses, unless their registry
   entry has `allow_private_addresses`. Runs whose WES instance the backend
-  list no longer yields (e.g., after it was removed) are tracked and
-  canceled over `https` at public addresses only.
+  list no longer yields (e.g., after it was removed, or while its registry
+  yields none, after `max_stale`) are tracked and canceled over `https` at
+  public addresses only; the worker decides this when it starts tracking a
+  run.
 - They don't follow redirects (a redirect fails the request, as if the WES
   instance were unavailable): set the URL that the WES API is served at.
 - Each request ends within its timeout as a whole (resolving, connecting,
   sending and reading; connecting within at most 10 seconds):
   `custom.post_runs.timeout_post` for forwarding runs and reading run logs,
-  `custom.defaults.timeout` for status requests and cancellation.
+  `custom.defaults.timeout` for status requests and cancellation (each a
+  positive number of seconds, at most 86400). See [Failed requests to WES
+  instances](operations.md#failed-requests-to-wes-instances).
 - Responses larger than `custom.wes.max_response_size` (16 MiB) fail the
   request, with an error in the logs.
 - Proxy settings (`HTTPS_PROXY` and the like) and `.netrc` files of the

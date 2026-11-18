@@ -12,7 +12,6 @@ from pydantic import (
     ConfigDict,
     Field,
     NonNegativeInt,
-    PositiveFloat,
     PositiveInt,
     field_validator,
     model_validator,
@@ -21,6 +20,13 @@ from pydantic import (
 DEFAULT_API_PATH = "/ga4gh/wes/v1"
 """Path of the WES API, relative to the URL of a backend, as the WES
 specification has it; that of the API of proWES too."""
+
+MAX_TIMEOUT = 86400
+"""Maximum timeout of requests to WES instances, in seconds (a day); larger
+values (and infinity) overflow the deadlines of FOCA's guarded client."""
+
+Timeout = Annotated[float, Field(gt=0, le=MAX_TIMEOUT, allow_inf_nan=False)]
+"""Timeout of requests to WES instances, in seconds: positive and finite."""
 
 # Absolute paths of unreserved characters (RFC 3986, section 2.3)
 _API_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)+")
@@ -164,7 +170,7 @@ class Defaults(BaseModel):
         timeout: Timeout of requests to WES instances, in seconds.
     """
 
-    timeout: PositiveFloat = 3
+    timeout: Timeout = 3
 
 
 class PostRuns(BaseModel):
@@ -212,7 +218,7 @@ class PostRuns(BaseModel):
     db_insert_attempts: int = 10
     id_charset: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     id_length: int = 6
-    timeout_post: PositiveFloat = 30
+    timeout_post: Timeout = 30
     timeout_job: int | None = None
     polling_wait: float = 3
     polling_attempts: int = 100
