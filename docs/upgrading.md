@@ -83,8 +83,8 @@ pro_wes.celery_worker worker`, both from `/app` (before: `gunicorn -c
 gunicorn.py wsgi:app` and `celery -A celery_worker worker` from
 `/app/pro_wes`), as in
 [`docker-compose.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/docker-compose.yaml)
-and the Helm chart (2.0.2 or later; deployments that set their own `command`
-or `args` need the same change). The app is created once per Gunicorn worker
+and the Helm chart (deployments that set their own `command` or `args` need
+the same change). The app is created once per Gunicorn worker
 (no longer also by the Gunicorn master), and the Celery worker replaces its
 MongoDB client after forking (no more `MongoClient opened before fork`
 warnings). Gunicorn now runs one worker with 4 threads by default
@@ -96,16 +96,15 @@ The image is built on FOCA's image and runs as the non-root user `1000`
 (group `0`; before: root); the app is installed from a wheel into
 `site-packages` (before: editable, from `/app/pro_wes`, whose `api` directory
 was world-writable). Only `/data` is writable: volumes mounted there must be
-writable for the user (the Helm chart, 2.0.4 or later, sets `fsGroup: 1000`
-on Kubernetes; OpenShift assigns user and group itself). Runs stored before
-by root may not be writable for the user.
+writable for the user (the Helm chart sets `fsGroup: 1000` on Kubernetes;
+OpenShift assigns user and group itself; see [Storage of the
+runs](deployment.md#storage-of-the-runs)). Runs stored before by root may not
+be writable for the user.
 
-**Upgrade the chart to 2.0.4 before pods pull the new image** (e.g., charts
-with `elixircloud/prowes:latest` and `imagePullPolicy: Always`, on their
-next restart), or make the volume writable for user `1000` first; 2.0.4's
-init containers hand `/data` itself (not its contents) to the user where they
-can, also on volumes whose ownership Kubernetes doesn't manage (e.g., NFS;
-with `root_squash`, they only log a warning). The app now refuses to start if
+**Replace releases of the legacy chart before their pods pull the new
+image** (e.g., with `elixircloud/prowes:latest` and `imagePullPolicy:
+Always`, on their next restart; see [Helm chart](#helm-chart-breaking)), or
+make the volume writable for user `1000` first. The app now refuses to start if
 it can't write to `custom.post_runs.storage_path` (before: only `POST /runs`
 failed). Run directories that root created before stay root's; to make them
 writable too, run `chown -R 1000:1000 /data` as root on the volume (e.g.,
@@ -160,16 +159,28 @@ the database:
   normalized). Runs with states that proWES doesn't know are left out of
   `system_state_counts`. Startup no longer fetches the GA4GH service info
   schema from GitHub.
-- The Helm chart (2.0.3 or later) no longer creates the collection
-  `service_info`. The chart can't pass a configuration overlay yet
-  (`FOCA_CONFIG_OVERLAY`), so deployments with the chart serve the
-  service info of `pro_wes/config.yaml` in the image until it can
-  ([#38](https://github.com/elixir-cloud-aai/prowes/issues/38)).
+- The Helm chart no longer creates the collection `service_info`; set the
+  service info of the deployment in `config.service_info` of the chart's
+  values, which the chart passes to the app as a configuration overlay
+  (see [Service info](deployment.md#service-info) in Deployment).
 - Runs that proWES accepted keep being tracked if their workflow type or
   version is later removed from `workflow_type_versions` (new runs are
   still checked). Workers of earlier versions still check stored runs
   against the service info in the database: stop them before the app of
   this version accepts runs (no rolling update across this upgrade).
+
+### Helm chart (breaking)
+
+The Helm chart was rebuilt on FOCA's library chart `foca-common`, like the
+charts of proTES and cloud-registry, and runs on vanilla Kubernetes and
+OpenShift alike: the values changed (rendering fails on those of the legacy
+chart, naming their replacements), and resource names are derived from the
+release name. Releases of the legacy chart can't be upgraded in place:
+uninstall them and install the chart anew, as described in [From the legacy
+chart](deployment.md#from-the-legacy-chart). The chart passes `config` to the
+app and the worker as a configuration overlay, takes all credentials from
+Secrets of your own, and deploys the image tag `dev` by default (set
+`prowes.tag` for a fixed version).
 
 ### Timeouts
 

@@ -1,0 +1,1 @@
+{{- include "prowes.withPodExtras" (dict "root" . "storage" false "manifest" (include "foca-common.workerDeployment" (dict "root" . "settings" (include "prowes.settings" . | fromYaml)))) }}

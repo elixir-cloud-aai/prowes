@@ -1,0 +1,16 @@
+{{- /*
+PersistentVolumeClaim with the storage of the runs (`prowes.storage`), if
+enabled without an existing claim; mounted at `/data` by the app's pods
+(`prowes.withPodExtras`).
+*/ -}}
+{{- $context := dict "root" . "settings" (include "prowes.settings" . | fromYaml) -}}
+{{- include "foca-common.checkSettings" $context -}}
+{{- include "foca-common.persistentVolumeClaim" (dict
+  "root" .
+  "component" "app"
+  "persistence" .Values.prowes.storage
+  "name" (include "prowes.storageFullname" .)
+  "enabledByDefault" true
+  "key" "prowes.storage"
+  "resourcePolicyByDefault" ""
+) }}
