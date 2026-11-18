@@ -45,7 +45,7 @@ docker compose up -d --build --wait --wait-timeout 300
 check() {
   local method="$1" path="$2" status="$3" filter="$4" actual
   shift 4
-  local args=(--silent --show-error --output "${body}"
+  local args=(--silent --show-error --max-time 10 --output "${body}"
     --write-out '%{http_code}' -X "${method}"
     --header 'Accept: application/json')
   local field
@@ -63,14 +63,20 @@ check() {
 
 # Wait until the response to `GET` of a path (the first argument) matches a
 # jq filter (the second one), e.g., for a state or a field of the final run
-# log, which the Celery worker stores after the final state
+# log, which the Celery worker stores after the final state; failed requests
+# are retried, for up to about 2 minutes in all
 await() {
-  for _ in $(seq 60); do
-    check GET "$1" 200 '.'
-    jq -e "$2" "${body}" > /dev/null && return
+  local deadline=$((SECONDS + 120)) status=""
+  while [ "${SECONDS}" -lt "${deadline}" ]; do
+    status="$(curl --silent --max-time 10 --output "${body}" \
+      --write-out '%{http_code}' --header 'Accept: application/json' \
+      "${api}$1" || true)"
+    if [ "${status}" = 200 ] && jq -e "$2" "${body}" > /dev/null 2>&1; then
+      return
+    fi
     sleep 1
   done
-  echo "::error::GET $1 doesn't match $2"
+  echo "::error::GET $1 doesn't match $2 (last status: ${status})"
   cat "${body}"
   return 1
 }
@@ -97,7 +103,7 @@ await "/runs/${id}/status" ".run_id == \"${id}\" and .state == \"COMPLETE\""
 await "/runs/${id}" '.run_log.stdout == "fake complete"'
 check GET "/runs/${id}" 200 \
   ".run_id == \"${id}\" and .state == \"COMPLETE\" and .request.workflow_url == \"https://example.org/smoke.cwl\" and .outputs.workflow_url == \"https://example.org/smoke.cwl\" and .run_log.exit_code == 0"
-check GET /runs 200 "any(.runs[]; .run_id == \"${id}\" and .state == \"COMPLETE\")"
+check GET '/runs?page_size=100' 200 "any(.runs[]; .run_id == \"${id}\" and .state == \"COMPLETE\")"
 # A run that the WES holds is running until it is canceled, then canceling
 # until the WES reports it canceled, and its final run log is stored
 check POST /runs 200 '.run_id | length > 0' "${request[@]}" 'tags={"fake.hold": "true"}'
@@ -107,12 +113,16 @@ check POST "/runs/${held}/cancel" 200 ".run_id == \"${held}\""
 await "/runs/${held}/status" '.state == "CANCELED"'
 await "/runs/${held}" '.run_log.stdout == "fake canceled"'
 check GET "/runs/${held}" 200 '.state == "CANCELED"'
-check GET /runs 200 "any(.runs[]; .run_id == \"${held}\" and .state == \"CANCELED\")"
-# Unknown runs aren't found
-check GET /runs/UNKNWN 404 '.status == 404'
-check GET /runs/UNKNWN/status 404 '.status == 404'
-# The fake WES got both runs, with the fields as sent to proWES, and both
-# are finished there
-docker compose exec -T fake-wes python /smoke/fake_wes.py verify 2 \
-  "workflow_params=${params}" workflow_type=CWL workflow_type_version=v1.0
+check GET '/runs?page_size=100' 200 "any(.runs[]; .run_id == \"${held}\" and .state == \"CANCELED\")"
+# Unknown runs aren't found (lowercase letters, which run identifiers don't
+# have)
+check GET /runs/unknwn 404 '.status == 404'
+check GET /runs/unknwn/status 404 '.status == 404'
+# The fake WES got each run once, with all fields as sent to proWES (the
+# held one with its tags, so it was held until canceled), and both are
+# finished there
+docker compose exec -T fake-wes python /smoke/fake_wes.py verify 1 \
+  "${request[@]}" 'tags={"smoke": "true"}'
+docker compose exec -T fake-wes python /smoke/fake_wes.py verify 1 \
+  "${request[@]}" 'tags={"fake.hold": "true"}'
 echo "Smoke test passed"

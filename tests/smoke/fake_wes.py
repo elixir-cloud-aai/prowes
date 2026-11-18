@@ -43,6 +43,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs
 import urllib.request
+import uuid
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -248,7 +249,9 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     self._error(HTTPStatus.BAD_REQUEST, "tags are not JSON")
                     return
-                run_id = f"FAKE{len(RUNS) + 1}"
+                # Unique also across restarts, as tasks of the Celery worker
+                # may still track runs of an earlier instance
+                run_id = f"FAKE{uuid.uuid4().hex[:12].upper()}"
                 RUNS[run_id] = {
                     "request": form,
                     "created": now,
@@ -273,8 +276,10 @@ class Handler(BaseHTTPRequestHandler):
 def create_certificates(directory: Path) -> None:
     """Create a certificate authority and a server certificate of `HOSTS`.
 
-    Existing certificates are kept, as `docker compose up` runs this again
-    for a deployment whose fake WES keeps running with them. The files are
+    Existing certificates are kept while they are valid for another day, as
+    `docker compose up` runs this again for a deployment whose fake WES
+    keeps running with them (a fake WES that runs for close to a year
+    needs to be restarted to load the new ones). The files are
     readable by all, as the fake WES runs as another user than the one
     creating them; the keys are fictitious and only valid within the smoke
     test.
@@ -284,9 +289,16 @@ def create_certificates(directory: Path) -> None:
             `server-key.pem` to.
     """
     file_names = ("ca.pem", "server.pem", "server-key.pem")
-    if all((directory / name).is_file() for name in file_names):
-        return
     now = datetime.datetime.now(datetime.UTC)
+    if all((directory / name).is_file() for name in file_names):
+        expiry = min(
+            x509.load_pem_x509_certificate(
+                (directory / name).read_bytes()
+            ).not_valid_after_utc
+            for name in ("ca.pem", "server.pem")
+        )
+        if expiry > now + datetime.timedelta(days=1):
+            return
     validity = datetime.timedelta(days=365)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Fake WES CA")])
@@ -403,13 +415,13 @@ def verify(expected: dict[str, str], count: int) -> None:
         SystemExit: The check fails.
     """
     base = f"http://localhost:{HTTP_PORT}{BASE_PATH}/runs"
-    with urllib.request.urlopen(base) as response:
+    with urllib.request.urlopen(base, timeout=10) as response:
         runs = json.load(response)["runs"]
     matching = []
     for run in runs:
         url = f"{base}/{run['run_id']}"
         # The URL of the fake WES itself, with the run identifier it issued
-        with urllib.request.urlopen(url) as response:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310
             log = json.load(response)
         request = log["request"]
         if all(request.get(key) == value for key, value in expected.items()):
