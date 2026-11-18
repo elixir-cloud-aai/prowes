@@ -63,9 +63,10 @@ def test_readthedocs_reshims_after_installing_uv() -> None:
 
 def test_readthedocs_installs_the_locked_docs_extra() -> None:
     """Read the Docs installs the `docs` extra from the lock, as CI does."""
-    install = _jobs()["install"]
-    assert len(install) == 1
-    assert re.search(r"\buv sync --frozen\b.*--extra docs\b", install[0])
+    assert _jobs()["install"] == [
+        'UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" '
+        "uv sync --frozen --extra docs"
+    ]
 
 
 def test_readthedocs_python_is_the_python_of_ci() -> None:
