@@ -1,4 +1,8 @@
-"""Tests of the task tracking workflow runs without a remote run identifier."""
+"""Tests of the task tracking workflow runs without a remote run identifier.
+
+Kept apart from `test_track_run_progress.py`, which is rewritten for WES
+1.1.0 (#70), to avoid conflicts; to be merged into it afterwards.
+"""
 
 from typing import Any
 
@@ -25,14 +29,41 @@ def test_track_run_without_remote_run_id(
     monkeypatch: pytest.MonkeyPatch,
     wes_endpoint: dict[str, Any] | None,
 ) -> None:
-    """Runs whose document has no remote run identifier are not polled."""
-    statuses: list[str] = []
-    monkeypatch.setattr(WesClient, "get_run", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(
-        WesClient,
-        "get_run_status",
-        lambda _self, run_id, **_kwargs: statuses.append(run_id),
-    )
+    """Runs whose document has no remote run identifier are not polled.
+
+    The run log is fetched once, before polling starts; no status is
+    requested.
+    """
+    calls: list[str] = []
+
+    def _record(name: str) -> Any:
+        """Get a fake client method that records its calls.
+
+        Args:
+            name: Name of the method.
+
+        Returns:
+            Fake method, returning an empty response.
+        """
+
+        def _method(self: WesClient, run_id: str, **kwargs: Any) -> dict[str, Any]:
+            """Record the call.
+
+            Args:
+                self: WES client.
+                run_id: Run identifier.
+                **kwargs: Further arguments; ignored.
+
+            Returns:
+                Empty response.
+            """
+            calls.append(f"{name} {run_id}")
+            return {}
+
+        return _method
+
+    monkeypatch.setattr(WesClient, "get_run", _record("get_run"))
+    monkeypatch.setattr(WesClient, "get_run_status", _record("get_run_status"))
     with foca_app.app.app_context():
         get_collection(RUN_DB, RUN_COLLECTION).insert_one(
             {
@@ -52,4 +83,4 @@ def test_track_run_without_remote_run_id(
                 )
         finally:
             task__track_run_progress.pop_request()
-    assert statuses == []
+    assert calls == [f"get_run {REMOTE_RUN_ID}"]

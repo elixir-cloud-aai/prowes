@@ -213,6 +213,11 @@ VALIDATED = pytest.mark.parametrize(
     [operation[1:] for operation in OPERATIONS],
     ids=[operation[0] for operation in OPERATIONS],
 )
+VALIDATED_CALLS = pytest.mark.parametrize(
+    "call",
+    [operation[1] for operation in OPERATIONS],
+    ids=[operation[0] for operation in OPERATIONS],
+)
 ALL_OPERATIONS = pytest.mark.parametrize(
     "call",
     [operation[1] for operation in OPERATIONS]
@@ -278,10 +283,8 @@ def test_valid_response(
     assert session.headers["Authorization"] == f"Bearer {TOKEN}"
 
 
-@VALIDATED
-def test_error_response(
-    call: Call, method: str, url: str, body: dict[str, Any], model: type[Any]
-) -> None:
+@VALIDATED_CALLS
+def test_error_response(call: Call) -> None:
     """Error responses are returned as such."""
     # invalid for the operation, valid as an error response
     error = {**INVALID, **ERROR}
@@ -290,10 +293,8 @@ def test_error_response(
     assert response.status_code == 404
 
 
-@VALIDATED
-def test_invalid_response(
-    call: Call, method: str, url: str, body: dict[str, Any], model: type[Any]
-) -> None:
+@VALIDATED_CALLS
+def test_invalid_response(call: Call) -> None:
     """Responses that are neither valid nor errors raise `ValueError`."""
     with pytest.raises(ValueError, match="invalid response"):
         call(_client(FakeSession(body=INVALID)))

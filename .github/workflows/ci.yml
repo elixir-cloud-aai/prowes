@@ -190,16 +190,19 @@ jobs:
           # The library chart as checked when it was pinned: OCI tags can
           # be pushed again
           (cd deployment && sha256sum -c charts.sha256)
-      # Fails below the threshold of `pyproject.toml` (`fail_under`)
+      # Fails below the threshold of `pyproject.toml` (`fail_under`); the
+      # XML report is written first, so that a run below it is still
+      # submitted (cf. `if:` of the next step)
       - name: Calculate unit test coverage
         run: |
           coverage run -m pytest
-          coverage report
           coverage xml
+          coverage report
       # Upload errors fail the workflow only on pushes to the upstream
       # repository, because pull requests from forks and Dependabot get no
       # access to the Codecov token, and forks have none
       - name: Submit report to Codecov
+        if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
