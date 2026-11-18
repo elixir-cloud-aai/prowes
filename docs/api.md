@@ -17,7 +17,7 @@ fills in OpenAPI defaults, e.g., `style` of parameters):
 
 | Deviation | Why |
 | --- | --- |
-| `openapi`, `info` (but `version`) and `servers` | Those of proWES |
+| `openapi`, `info` (except `info.version`) and `servers` | Those of proWES |
 | `x-openapi-router-controller` of `GET /service-info` | The service info is served by FOCA |
 | Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |

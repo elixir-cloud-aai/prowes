@@ -175,35 +175,53 @@ def test_problem_details_schema(served_spec: dict[str, Any]) -> None:
     assert schema["properties"]["errors"]["maxItems"] == MAX_FIELD_ERRORS
 
 
+def _assert_unknown_parameter(response: Any) -> None:
+    """Check that a response names the unknown parameter `unknown` only.
+
+    Args:
+        response: Error response.
+
+    Raises:
+        AssertionError: The invalid fields aren't the parameter `unknown`.
+    """
+    errors = response.json()["errors"]
+    assert [error["parameter"] for error in errors] == ["unknown"]
+
+
 @pytest.mark.parametrize(
-    ("method", "path", "url"),
+    ("method", "path"),
     [
-        ("get", "/service-info", "/service-info"),
-        ("get", "/runs", "/runs"),
-        ("post", "/runs", "/runs"),
-        ("get", "/runs/{run_id}", "/runs/RUN001"),
-        ("get", "/runs/{run_id}/status", "/runs/RUN001/status"),
-        ("get", "/runs/{run_id}/tasks", "/runs/RUN001/tasks"),
-        ("get", "/runs/{run_id}/tasks/{task_id}", "/runs/RUN001/tasks/TASK001"),
-        ("post", "/runs/{run_id}/cancel", "/runs/RUN001/cancel"),
+        ("get", "/service-info"),
+        ("get", "/runs"),
+        ("get", "/runs/{run_id}"),
+        ("get", "/runs/{run_id}/status"),
+        ("get", "/runs/{run_id}/tasks"),
+        ("get", "/runs/{run_id}/tasks/{task_id}"),
+        ("post", "/runs/{run_id}/cancel"),
     ],
 )
 def test_unknown_parameter(
-    method: str,
-    path: str,
-    url: str,
-    foca_client: Client,
-    served_spec: dict[str, Any],
+    method: str, path: str, foca_client: Client, served_spec: dict[str, Any]
 ) -> None:
-    """Unknown parameters get `400` on all operations, as declared."""
-    if method == "post" and path == "/runs":
-        response = _post_run(foca_client, RUN_REQUEST, params={"unknown": "1"})
-    else:
-        response = getattr(foca_client, method)(
-            f"{BASE_PATH}{url}", params={"unknown": "1"}
-        )
+    """Unknown parameters get `400` on all operations, as declared.
+
+    `POST /runs` is tested on its own (`test_run_request_unknown_parameter`).
+    """
+    url = path.format(run_id="RUN001", task_id="TASK001")
+    response = getattr(foca_client, method)(
+        f"{BASE_PATH}{url}", params={"unknown": "1"}
+    )
     assert_declared_error(served_spec, method, path, response, 400)
-    assert [error["parameter"] for error in response.json()["errors"]] == ["unknown"]
+    _assert_unknown_parameter(response)
+
+
+def test_run_request_unknown_parameter(
+    foca_client: Client, served_spec: dict[str, Any]
+) -> None:
+    """Run requests with unknown parameters get `400`, as declared."""
+    response = _post_run(foca_client, RUN_REQUEST, params={"unknown": "1"})
+    assert_declared_error(served_spec, "post", "/runs", response, 400)
+    _assert_unknown_parameter(response)
 
 
 @pytest.mark.parametrize(
