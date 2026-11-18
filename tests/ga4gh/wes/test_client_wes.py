@@ -268,14 +268,18 @@ def test_set_headers() -> None:
     }
 
 
-def test_set_headers_without_token() -> None:
+@pytest.mark.parametrize("token", [None, ""], ids=["no token", "empty token"])
+def test_set_headers_without_token(token: str | None) -> None:
     """Without a token, no `Authorization` header is sent (#166).
 
     Before, the literal header `Authorization: Bearer None` was sent, which
     WES instances that check tokens reject as an invalid token.
+
+    Args:
+        token: Missing or empty bearer token.
     """
     session = FakeSession()
-    client = _client(session, token=None)
+    client = _client(session, token=token)
     client.set_headers()
     assert session.headers == {"Accept": "application/json"}
 
