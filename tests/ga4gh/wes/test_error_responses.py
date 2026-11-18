@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from typing import Any
 
+from foca.errors.fields import MAX_FIELD_ERRORS
 from foca.testing import Client
 from jsonschema import Draft4Validator
 import pytest
@@ -94,18 +95,22 @@ def _multipart(fields: dict[str, str]) -> bytes:
     return b"".join(parts) + f"--{BOUNDARY}--\r\n".encode()
 
 
-def _post_run(client: Client, fields: dict[str, str]) -> Any:
+def _post_run(
+    client: Client, fields: dict[str, str], params: dict[str, str] | None = None
+) -> Any:
     """Send `POST /runs` with form fields.
 
     Args:
         client: Test client of the app.
         fields: Form fields of the run request.
+        params: Query parameters, if any.
 
     Returns:
         Response.
     """
     return client.post(
         f"{BASE_PATH}/runs",
+        params=params,
         content=_multipart(fields),
         headers={"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"},
     )
@@ -166,6 +171,39 @@ def test_problem_details_schema(served_spec: dict[str, Any]) -> None:
     assert schema["required"] == ["title", "status"]
     members = {"type", "title", "status", "detail", "code", "errors"}
     assert set(schema["properties"]) == members
+    # FOCA lists at most 100 invalid fields (`MAX_FIELD_ERRORS`)
+    assert schema["properties"]["errors"]["maxItems"] == MAX_FIELD_ERRORS
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "url"),
+    [
+        ("get", "/service-info", "/service-info"),
+        ("get", "/runs", "/runs"),
+        ("post", "/runs", "/runs"),
+        ("get", "/runs/{run_id}", "/runs/RUN001"),
+        ("get", "/runs/{run_id}/status", "/runs/RUN001/status"),
+        ("get", "/runs/{run_id}/tasks", "/runs/RUN001/tasks"),
+        ("get", "/runs/{run_id}/tasks/{task_id}", "/runs/RUN001/tasks/TASK001"),
+        ("post", "/runs/{run_id}/cancel", "/runs/RUN001/cancel"),
+    ],
+)
+def test_unknown_parameter(
+    method: str,
+    path: str,
+    url: str,
+    foca_client: Client,
+    served_spec: dict[str, Any],
+) -> None:
+    """Unknown parameters get `400` on all operations, as declared."""
+    if method == "post" and path == "/runs":
+        response = _post_run(foca_client, RUN_REQUEST, params={"unknown": "1"})
+    else:
+        response = getattr(foca_client, method)(
+            f"{BASE_PATH}{url}", params={"unknown": "1"}
+        )
+    assert_declared_error(served_spec, method, path, response, 400)
+    assert [error["parameter"] for error in response.json()["errors"]] == ["unknown"]
 
 
 @pytest.mark.parametrize(

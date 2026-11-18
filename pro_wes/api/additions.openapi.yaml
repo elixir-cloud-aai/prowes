@@ -66,6 +66,15 @@ paths:
   /runs/{run_id}:
     get:
       responses:
+        # proWES extension: requests with unknown or invalid parameters are
+        # rejected (`strict_validation`)
+        400: &invalid_parameters
+          description: >-
+            proWES extension: the request has unknown or invalid parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         401: *problem
         403: *problem
         404: *problem
@@ -73,6 +82,7 @@ paths:
   /runs/{run_id}/status:
     get:
       responses:
+        400: *invalid_parameters
         401: *problem
         403: *problem
         404: *problem
@@ -80,6 +90,7 @@ paths:
   /runs/{run_id}/tasks:
     get:
       responses:
+        400: *invalid_parameters
         401: *problem
         403: *problem
         404: *problem
@@ -95,6 +106,7 @@ paths:
   /runs/{run_id}/tasks/{task_id}:
     get:
       responses:
+        400: *invalid_parameters
         401: *problem
         403: *problem
         404: *problem
@@ -103,6 +115,7 @@ paths:
   /runs/{run_id}/cancel:
     post:
       responses:
+        400: *invalid_parameters
         401: *problem
         403: *problem
         404: *problem
@@ -146,6 +159,7 @@ components:
           description: >-
             The invalid fields of a rejected request (at most 100); only for
             requests with invalid fields.
+          maxItems: 100
           items:
             type: object
             required:

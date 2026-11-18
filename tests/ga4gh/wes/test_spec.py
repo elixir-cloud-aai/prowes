@@ -54,6 +54,12 @@ Location = tuple[Any, ...]
 
 ERROR_SCHEMA_REF = "#/components/schemas/ProblemDetails"
 TASK_PATHS = ("/runs/{run_id}/tasks", "/runs/{run_id}/tasks/{task_id}")
+RUN_PATHS = (
+    "/runs/{run_id}",
+    "/runs/{run_id}/status",
+    "/runs/{run_id}/cancel",
+    *TASK_PATHS,
+)
 
 
 def _is_error_schema(location: Location, value: Any) -> bool:
@@ -124,6 +130,12 @@ ALLOWED_DEVIATIONS: dict[str, Callable[[Location, Any], bool]] = {
         loc == ("paths", "/runs", "post", "responses", 413)
     ),
     "501 of the task endpoints": _is_task_501,
+    "400 of the endpoints of a run": lambda loc, _: (
+        len(loc) == 5
+        and loc[0] == "paths"
+        and loc[1] in RUN_PATHS
+        and loc[3:] == ("responses", 400)
+    ),
 }
 
 # Fields of the specification that proWES doesn't model yet, with the issues
