@@ -22,8 +22,9 @@ The settings that deployments usually change:
 | `jobs.host`, `jobs.port` | `${RABBIT_HOST:-rabbitmq}`, `${RABBIT_PORT:-5672}` | RabbitMQ broker of the Celery worker; the environment variable `CELERY_BROKER_URL` takes precedence (e.g., for brokers with credentials) |
 | `service_info.service` | example values | Service info (`GET /service-info`), see [Service info](#service-info) |
 | `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
+| `server.max_content_length` | `10485760` (10 MiB) | Maximum size of request bodies, see [Request size limit](#request-size-limit) |
 | `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type (see [Errors](api.md#errors)) |
-| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`) |
+| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`), limits of workflow attachments (`max_attachments`, `max_attachment_size`) and credentials in URLs (`url_credentials`), see [Run requests](#run-requests) |
 | `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds |
 
 ## Environment variables and overlays
@@ -35,6 +36,71 @@ default stops the app. Write `$$` for a literal `$`.
 Further configuration files can be merged over `pro_wes/config.yaml` with the
 environment variable `FOCA_CONFIG_OVERLAY` (paths separated by `:`), e.g., to
 set the service info of a deployment without changing the image.
+
+## Security
+
+The WES API is currently served without authentication; requests are
+limited and sanitized as described below, as in proTES.
+
+### Request size limit
+
+Request bodies, with all workflow attachments, are limited to
+`server.max_content_length` bytes (default: 10485760, i.e., 10 MiB), by
+FOCA: larger requests, also chunked ones, are rejected with `413 Content Too
+Large` before they are parsed. A reverse proxy or ingress controller in front
+of proWES must allow bodies at least as large, or it rejects them first
+(e.g., ingress-nginx allows 1 MiB by default; set its annotation
+`nginx.ingress.kubernetes.io/proxy-body-size`, see FOCA's [Helm chart
+guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app)).
+
+### Run requests
+
+`custom.post_runs` limits the run requests of `POST /runs`:
+
+- `max_attachments`: the maximum number of workflow attachments
+  (`workflow_attachment`) of a run (default 100); runs with more are
+  rejected with `413 Content Too Large`;
+- `max_attachment_size`: the maximum size of each attachment, in bytes
+  (default 1048576, i.e., 1 MiB); runs with a larger one are rejected with
+  `413 Content Too Large`. All attachments together are limited by the
+  [request size limit](#request-size-limit);
+- `url_credentials`: what happens to runs with credentials in URLs
+  (`https://user:password@host/...`), in `workflow_url` and in the string
+  values of `workflow_params`, `workflow_engine_parameters` and `tags`, at
+  any depth: they are rejected with `400 Bad Request` (`reject`, the
+  default), or the credentials are removed (`strip`). Credentials are never
+  stored, forwarded or returned in run logs, and error responses don't echo
+  them. Only URLs with an authority (`scheme://...`) have credentials: e.g.,
+  `user@example.org` and `mailto:user@example.org` are kept. Pass credentials
+  for inputs in other ways, e.g., signed URLs.
+
+Attachments are written to the working directory of the run, in the storage
+of the runs (`storage_path`), each under a safe file name: without
+directories (separators become `_`, e.g., `dir/a.txt` becomes `dir_a.txt`;
+`../` and leading dots are removed), only ASCII characters, and at most 255
+bytes long. Runs with two attachments of the same safe file name, an
+attachment with a longer one, or one without file name are rejected with
+`400 Bad Request`. Files are created anew, never overwriting existing ones.
+
+The values of `tags` and `workflow_engine_parameters` must be strings, as
+in the WES specification (`400 Bad Request` otherwise).
+
+### Rate limits
+
+proWES has no rate limits of its own (neither does FOCA). In production,
+limit the rate of requests per client at the reverse proxy or ingress
+controller in front of it, so that single clients can't overload the app,
+its database, its storage or the WES instances (see FOCA's [Helm chart
+guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app)
+for the annotations of common ingress controllers).
+
+### Responses
+
+Responses are validated against the WES specification
+(`api.specs[].connexion.validate_responses`), so that no unchecked data,
+e.g., of the remote WES, reaches clients: an invalid response becomes a
+`500 Internal server error`. Run logs (`GET /runs/{run_id}`) are built from
+the stored run, without fields that have no value.
 
 ## Server
 

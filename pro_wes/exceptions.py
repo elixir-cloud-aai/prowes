@@ -14,6 +14,7 @@ from foca.errors import (
     Forbidden,
     InternalServerError,
     NotFound,
+    PayloadTooLarge,
     RequestValidationProblem,
     Unauthorized,
 )
@@ -21,17 +22,22 @@ from pydantic import ValidationError
 from pymongo.errors import PyMongoError
 
 __all__ = [
+    "AttachmentTooLarge",
     "BadRequest",
     "EngineProblem",
     "EngineUnavailable",
     "Forbidden",
     "IdsUnavailableProblem",
     "InternalServerError",
+    "InvalidAttachmentName",
+    "MalformedUrl",
     "NoSuitableEngine",
     "NotFound",
     "RunNotFound",
     "StorageUnavailableProblem",
+    "TooManyAttachments",
     "Unauthorized",
+    "UrlCredentials",
     "WesEndpointProblem",
     "exceptions",
 ]
@@ -47,6 +53,39 @@ class EngineUnavailable(EngineProblem):
 
 class NoSuitableEngine(BadRequest):
     """No suitable workflow engine known."""
+
+
+class InvalidAttachmentName(BadRequest):
+    """A workflow attachment has no usable file name.
+
+    E.g., none, one longer than file systems allow, or one that another
+    attachment of the run has, too (after making it safe).
+    """
+
+
+class TooManyAttachments(PayloadTooLarge):
+    """A run has more workflow attachments than allowed.
+
+    Cf. `custom.post_runs.max_attachments`.
+    """
+
+
+class AttachmentTooLarge(PayloadTooLarge):
+    """A workflow attachment is larger than allowed.
+
+    Cf. `custom.post_runs.max_attachment_size`.
+    """
+
+
+class UrlCredentials(BadRequest):
+    """A URL of a run request has credentials (user name or password).
+
+    Cf. `custom.post_runs.url_credentials`.
+    """
+
+
+class MalformedUrl(BadRequest):
+    """A URL of a run request is malformed, so its credentials can't be checked."""
 
 
 class RunNotFound(NotFound):
@@ -86,6 +125,43 @@ exceptions = {
     ExtraParameterProblem: {
         "title": "Bad request",
         "detail": "The request is malformed.",
+        "status": 400,
+    },
+    PayloadTooLarge: {
+        "title": "Content Too Large",
+        "detail": "The request body exceeds the size limit.",
+        "status": 413,
+    },
+    TooManyAttachments: {
+        "title": "Content Too Large",
+        "detail": "The run has more workflow attachments than allowed.",
+        "status": 413,
+    },
+    AttachmentTooLarge: {
+        "title": "Content Too Large",
+        "detail": "A workflow attachment exceeds the size limit.",
+        "status": 413,
+    },
+    InvalidAttachmentName: {
+        "title": "Bad request",
+        "detail": (
+            "A workflow attachment has no file name, one that is too long, or"
+            " one that another attachment has (after removing directories and"
+            " unsafe characters)."
+        ),
+        "status": 400,
+    },
+    UrlCredentials: {
+        "title": "Bad request",
+        "detail": (
+            "URLs of the run request must not have credentials (user names or"
+            " passwords)."
+        ),
+        "status": 400,
+    },
+    MalformedUrl: {
+        "title": "Bad request",
+        "detail": "A URL of the run request is malformed.",
         "status": 400,
     },
     NoSuitableEngine: {

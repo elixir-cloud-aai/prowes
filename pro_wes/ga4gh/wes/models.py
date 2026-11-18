@@ -2,7 +2,6 @@
 
 from enum import Enum, EnumMeta
 from json import JSONDecodeError, loads
-from pathlib import Path
 from typing import Any
 
 from pydantic import (
@@ -43,15 +42,17 @@ class BaseEnum(Enum, metaclass=MetaEnum):
 class Attachment(BaseModel):
     """Model for workflow attachment.
 
+    Stored with the run; the contents are written to the storage of the runs
+    only (not to the database).
+
     Args:
         filename: Name of the file as indicated in the run request.
-        object: File object.
-        path: Path to the file on the app's storage system.
+        path: Path to the file on the app's storage system, inside the
+            working directory of the run, with a safe file name.
     """
 
     filename: str
-    object: bytes
-    path: Path
+    path: str
 
 
 class RunRequest(BaseModel):
@@ -150,6 +151,10 @@ class RunRequest(BaseModel):
         empty JSON string object '{}' for optional fields and cause a
         `ValueError` to be raised for required fields.
 
+        The values of `tags` and `workflow_engine_parameters` must be strings,
+        as in the WES specification (not checked for stored runs, validation
+        context `STORED_CONTEXT`).
+
         Args:
             value: Field value to be validated.
             info: Validation context, with the name of the field.
@@ -163,6 +168,8 @@ class RunRequest(BaseModel):
             ValueError: The value could not be JSON deserialized.
             ValueError: The value could be JSON decoded, but the deserialized
                 value does not represent an object/dictionary.
+            ValueError: The tags or workflow engine parameters have values
+                other than strings.
         """
         if value is None or value in {"", "null"}:
             if info.field_name == "workflow_params":
@@ -170,10 +177,19 @@ class RunRequest(BaseModel):
             return "{}"
         try:
             decoded = loads(value)
-        except JSONDecodeError as exc:
+        except (JSONDecodeError, RecursionError) as exc:
+            # also JSON too deeply nested to decode
             raise ValueError("could not be JSON deserialized") from exc
         if not isinstance(decoded, dict):
             raise ValueError("could not be interpreted as object")
+        # objects of strings, as the WES specification defines them; not
+        # checked for stored runs, which earlier versions accepted without
+        if (
+            info.field_name != "workflow_params"
+            and not (info.context and info.context.get(STORED_KEY))
+            and not all(isinstance(item, str) for item in decoded.values())
+        ):
+            raise ValueError("values must be strings")
         return value
 
     @model_validator(mode="after")
