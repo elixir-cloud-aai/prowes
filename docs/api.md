@@ -63,7 +63,9 @@ a run that doesn't exist:
 
 Errors of the WES instance when a run is forwarded become `400`, `401`,
 `403` or, for all others, `500` responses of proWES, and the run gets the
-state `SYSTEM_ERROR`.
+state `SYSTEM_ERROR`. So does a run whose workflow attachments can't be
+written to the storage of the runs (`500`, "Storage is not accessible."); it
+is not forwarded.
 
 Error responses of `POST /runs` for requests that proWES rejects (neither
 stored nor forwarded):

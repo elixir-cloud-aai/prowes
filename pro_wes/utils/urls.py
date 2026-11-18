@@ -14,65 +14,96 @@ from pro_wes.exceptions import MalformedUrl, UrlCredentials
 
 UrlCredentialsMode = Literal["reject", "strip"]
 
-# User information after a scheme and at least one slash or backslash,
-# anywhere in a string: also forms that `urlsplit()` doesn't take as an
-# authority, but lenient parsers (e.g., WHATWG URL parsers of browsers) do,
-# such as `https:/user:password@host`, `https:\\user:password@host` and
-# URLs inside strings (e.g., `--url=https://user:password@host`); strings
-# such as `mailto:user@example.org` (no slash) don't match
-USERINFO = re.compile(r"(?P<prefix>[A-Za-z][A-Za-z0-9+.\-]*:[/\\]+)[^\s/\\?#@]*@")
+# A user name and password after a scheme and at least one slash or
+# backslash, anywhere in a string: also forms that `urlsplit()` doesn't take
+# as an authority, but lenient parsers (e.g., WHATWG URL parsers of
+# browsers) do, such as `https:/user:password@host` and
+# `https:\\user:password@host`, and URLs inside strings (e.g.,
+# `--url=https://user:password@host`). Only user information with a password
+# (`:`) counts here, so that text such as `?q=a:/b@c` or `C:\me@corp` and
+# image digests (`--image=docker://ubuntu@sha256:...`) are kept. Schemes start
+# at a boundary only (lookbehind) and the password extends to the last `@`
+# of its segment (greedy), so that matching takes linear time
+USERINFO = re.compile(
+    r"(?<![A-Za-z0-9+.\-])(?P<prefix>[A-Za-z][A-Za-z0-9+.\-]*:[/\\]+)"
+    r"[^\s/\\?#:]*:[^\s/\\?#]*@"
+)
+
+# Schemes whose user names are no secrets (e.g., `ssh://git@github.com/...`,
+# `docker://ubuntu@sha256:...`): URLs of these schemes have credentials only
+# if they have a password
+USER_NAME_SCHEMES = frozenset({"docker", "git", "git+ssh", "ssh", "ssh+git"})
+
+# Characters that URL parsers remove anywhere in URLs (WHATWG: ASCII tab and
+# newline), removed before checking, so that they can't hide credentials
+_IGNORED = str.maketrans("", "", "\t\r\n")
+
+
+def _has_authority_credentials(url: str) -> bool:
+    """Check whether the authority of a URL has credentials.
+
+    Args:
+        url: URL, without tabs and newlines.
+
+    Returns:
+        Whether the authority has a password, or a user name for schemes
+        other than those of `USER_NAME_SCHEMES`.
+
+    Raises:
+        ValueError: The URL is malformed.
+    """
+    parts = urlsplit(url)
+    if parts.password is not None:
+        return True
+    return parts.username is not None and parts.scheme not in USER_NAME_SCHEMES
 
 
 def has_credentials(url: str) -> bool:
     """Check whether a URL has credentials (user information).
 
-    User information is found in the authority of a URL (after `//`), and
-    after any scheme followed by slashes or backslashes anywhere in the
-    string (cf. `USERINFO`). Strings such as `user@example.org` or
-    `mailto:user@example.org` have none.
+    Credentials are a user name or password in the authority of a URL (after
+    `//`; user names only for schemes other than those of
+    `USER_NAME_SCHEMES`), or a user name and password after any scheme
+    followed by slashes or backslashes anywhere in the string (cf.
+    `USERINFO`). Tabs and newlines are ignored, as URL parsers remove them.
+    Strings such as `user@example.org` or `mailto:user@example.org` have
+    none.
 
     Args:
         url: URL, or any string.
 
     Returns:
-        Whether the URL has a user name or password (also empty ones, as in
+        Whether the URL has credentials (also empty ones, as in
         `https://@host/path`).
 
     Raises:
         ValueError: The URL is malformed (e.g., an unclosed `[` of an IPv6
             address).
     """
-    parts = urlsplit(url)
-    if parts.username is not None or parts.password is not None:
-        return True
-    return USERINFO.search(url) is not None
+    url = url.translate(_IGNORED)
+    return _has_authority_credentials(url) or USERINFO.search(url) is not None
 
 
 def strip_auth(url: str) -> str:
-    """Remove the user information from a URL, if present.
+    """Remove the credentials from a URL, if present.
 
     `scheme://user:password@host:port/path?query#fragment` becomes
-    `scheme://host:port/path?query#fragment`; user information that
-    `USERINFO` finds elsewhere in the string is removed, too.
+    `scheme://host:port/path?query#fragment`; credentials that `USERINFO`
+    finds elsewhere in the string are removed, too, in a single pass. Tabs
+    and newlines are removed (cf. `has_credentials`).
 
     Args:
-        url: URL, or any string.
+        url: URL, or any string, with credentials.
 
     Returns:
-        URL without user information.
+        URL without credentials.
     """
-    parts = urlsplit(url)
-    if parts.username is not None or parts.password is not None:
-        elements = list(parts)
+    url = url.translate(_IGNORED)
+    if _has_authority_credentials(url):
+        elements = list(urlsplit(url))
         elements[1] = elements[1][elements[1].rfind("@") + 1 :]
         url = urlunsplit(elements)
-    # until none is left, e.g., of `https://a@b@host` (each pass removes one
-    # `@`, so this ends)
-    while True:
-        stripped = USERINFO.sub(r"\g<prefix>", url)
-        if stripped == url:
-            return url
-        url = stripped
+    return USERINFO.sub(r"\g<prefix>", url)
 
 
 def sanitize_url(url: str, field: str, mode: UrlCredentialsMode) -> str | None:
@@ -126,7 +157,8 @@ def sanitize_json(value: Any, field: str, mode: UrlCredentialsMode) -> bool:
 
     Raises:
         pro_wes.exceptions.UrlCredentials: A URL has credentials, and `mode`
-            is `reject`.
+            is `reject`; or a key without its credentials (`strip`) is the
+            same as another key of its object.
         pro_wes.exceptions.MalformedUrl: A URL is malformed.
     """
     changed = False
@@ -137,6 +169,12 @@ def sanitize_json(value: Any, field: str, mode: UrlCredentialsMode) -> bool:
             for key in list(container):
                 stripped_key = sanitize_url(key, field, mode)
                 if stripped_key is not None:
+                    if stripped_key in container:
+                        # refused rather than dropping one of the values
+                        raise UrlCredentials(
+                            f"Key with credentials in `{field}` collides with"
+                            " another key without them"
+                        )
                     container[stripped_key] = container.pop(key)
                     changed = True
             items: Any = container.items()

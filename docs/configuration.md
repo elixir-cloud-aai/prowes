@@ -71,14 +71,21 @@ proWES), with the same `413`.
   (`https://user:password@host/...`), in `workflow_url` and in the strings
   (keys and values) of `workflow_params`, `workflow_engine_parameters` and
   `tags`, at any depth: they are rejected with `400 Bad Request` (`reject`,
-  the default), or the credentials are removed (`strip`). User information
-  counts as credentials wherever a scheme with slashes or backslashes
-  precedes it in a string, also in forms that lenient URL parsers accept
-  (e.g., `https:/user:password@host`) and in URLs inside strings (e.g.,
-  `--url=https://user:password@host`). Such credentials are not stored,
-  forwarded or returned in run logs, and neither error responses nor logs
-  echo them. Strings without a scheme and slash before the `@`, e.g.,
-  `user@example.org` and `mailto:user@example.org`, are kept. Pass
+  the default), or the credentials are removed (`strip`). Credentials are
+  (1) a user name or password in the authority of a string that is a URL
+  (e.g., `https://token@host/...`), except user names of the schemes `ssh`,
+  `git`, `git+ssh`, `ssh+git` and `docker` (e.g., `ssh://git@github.com/...`,
+  `docker://ubuntu@sha256:...`), which are no secrets, and (2) a user name
+  with password after a scheme and slashes or backslashes anywhere in a
+  string, also in forms that lenient URL parsers accept (e.g.,
+  `https:/user:password@host`) and in URLs inside strings (e.g.,
+  `--url=https://user:password@host`); user names without password inside
+  strings (e.g., `--url=https://token@host`) are not found. Tabs and
+  newlines in URLs are ignored, as URL parsers remove them; keys that
+  collide once stripped are rejected. Credentials found are not
+  stored, forwarded or returned in run logs, and neither error responses
+  nor logs echo them. Strings such as `user@example.org`,
+  `mailto:user@example.org` and `git@github.com:org/repo` are kept. Pass
   credentials for inputs in other ways, e.g., signed URLs.
 
 Attachments are written to the working directory of the run, in the storage

@@ -53,7 +53,8 @@ proWES.
 
 Workflow attachments are written with their contents, under safe file names
 (before: runs with attachments failed with `500`); their contents are no
-longer stored in the database.
+longer stored in the database. A run whose attachments can't be written
+(e.g., a full volume) is stored with the state `SYSTEM_ERROR` and gets `500`.
 
 ### Run logs
 
