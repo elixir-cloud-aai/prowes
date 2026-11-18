@@ -201,7 +201,8 @@ proWES serves WES 1.1.0 instead of 1.0.1 (see [API](api.md#wes-110)):
 - Run and task logs keep the `system_logs` of the WES instance (runs
   tracked from now on).
 - Runs that the WES instance preempts get the final state `PREEMPTED`
-  (before: proWES couldn't read the state and set the run to
+  (before: proWES couldn't read the state, retried
+  `custom.post_runs.polling_attempts` times and then set the run to
   `SYSTEM_ERROR`); they aren't resubmitted (see [Run
   states](api.md#run-states)). Clients must accept the new state, which
   `system_state_counts` of the service info counts, too.

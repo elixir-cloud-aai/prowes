@@ -159,6 +159,22 @@ def test_state_preempted() -> None:
     assert not State.PREEMPTED.is_cancelable
 
 
+# Final states, as `docs/api.md` (section "Run states") lists them
+FINAL_STATES = {"COMPLETE", "EXECUTOR_ERROR", "SYSTEM_ERROR", "CANCELED", "PREEMPTED"}
+
+
+@pytest.mark.parametrize("state", list(State), ids=lambda state: state.value)
+def test_state_final(state: State) -> None:
+    """The final states are those of the docs; final states can't be canceled.
+
+    Args:
+        state: Run state.
+    """
+    assert state.is_finished == (state.value in FINAL_STATES)
+    if state.is_finished:
+        assert not state.is_cancelable
+
+
 def test_workflow_engine_version_not_null() -> None:
     """Engine versions are arrays (WES 1.1.0), not `null`; default empty."""
     with pytest.raises(ValidationError):
