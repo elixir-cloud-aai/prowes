@@ -134,9 +134,13 @@ def test_main_runs_development_server(
 def test_module_runs_main(
     app_env: None, monkeypatch: pytest.MonkeyPatch, served_apps: list[App]
 ) -> None:
-    """`python -m pro_wes.app` runs the app with Flask's development server."""
+    """`python -m pro_wes.app` runs the app with Flask's development server.
+
+    By default on the loopback interface only, as the WES API is served
+    without authentication.
+    """
     # Run as by `-m`, i.e., without the module imported by the tests
     monkeypatch.delitem(sys.modules, "pro_wes.app")
     runpy.run_module("pro_wes.app", run_name="__main__")
     assert len(served_apps) == 1
-    assert served_apps[0].port == 8080
+    assert (served_apps[0].host, served_apps[0].port) == ("127.0.0.1", 8080)

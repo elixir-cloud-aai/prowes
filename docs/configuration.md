@@ -45,7 +45,9 @@ port 8080, or the environment variable `PORT`; workers and threads from
 via `GUNICORN_CMD_ARGS`. The Celery worker is started with `celery -A
 pro_wes.celery_worker worker` (see [Operations](operations.md)). The `host`
 and `port` of the section `server` apply to Flask's development server only
-(`python -m pro_wes.app`).
+(`python -m pro_wes.app`, see [Run from
+source](development.md#run-from-source)): `127.0.0.1` and `8080`, i.e., the
+loopback interface only, as the WES API is served without authentication.
 
 ## Service info
 

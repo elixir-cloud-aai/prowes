@@ -82,13 +82,10 @@ has forwarded the run to the remote WES, so that the run isn't tracked.
     configuration (e.g., in `/etc/rabbitmq/conf.d/90-foca.conf`).
 
 2. Write a configuration overlay, e.g., `local/config.yaml` (the directory
-   `local/` is ignored by Git), that serves the app on the loopback interface
-   only and keeps the runs in the repository instead of `/data` (relative
-   paths are relative to the working directory):
+   `local/` is ignored by Git), that keeps the runs in the repository instead
+   of `/data` (relative paths are relative to the working directory):
 
     ```yaml
-    server:
-      host: 127.0.0.1
     custom:
       post_runs:
         storage_path: local/data
@@ -97,7 +94,9 @@ has forwarded the run to the remote WES, so that the run isn't tracked.
 3. Point the app and the worker to the services, with the overlay and the
    credentials of RabbitMQ (`prowes:prowes`, the defaults of
    `docker-compose.yaml`, or your `RABBITMQ_DEFAULT_USER` and
-   `RABBITMQ_DEFAULT_PASS`, if you set them on the first start), in each
+   `RABBITMQ_DEFAULT_PASS`, if you set them on the first start;
+   URL-encode other characters than letters, digits, `-`, `.`, `_` and `~`
+   in the URL), in each
    shell that runs one of them (see [Configuration](configuration.md) for
    these and further variables):
 
@@ -112,8 +111,9 @@ has forwarded the run to the remote WES, so that the run isn't tracked.
     `pyamqp://guest:guest@localhost:5672//`.
 
 4. From the repository root, start the app with Flask's development server,
-   on the host and port of the config (`server.host` and `server.port`, port
-   8080), and the Celery worker in another shell:
+   on the host and port of the config (`server.host` and `server.port`,
+   `127.0.0.1:8080`: the loopback interface only, as the WES API is served
+   without authentication), and the Celery worker in another shell:
 
     ```bash
     uv run python -m pro_wes.app
