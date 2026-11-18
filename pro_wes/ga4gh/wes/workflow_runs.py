@@ -283,7 +283,7 @@ class WorkflowRuns:
             .limit(page_size)
         )
 
-        # set next page token: only if older runs are left (#84)
+        # set next page token: only if older runs are left
         next_page_token = ""
         if resources:
             last_id = resources[-1]["_id"]
