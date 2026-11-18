@@ -35,6 +35,7 @@ from pro_wes.exceptions import (
     TooManyAttachments,
     Unauthorized,
     WesEndpointProblem,
+    WorkflowEngineNotSupported,
 )
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
@@ -60,6 +61,10 @@ MAX_FILENAME_BYTES = 255
 
 # Fields of run requests that hold JSON objects (as strings, in forms)
 JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
+
+# Fields of WES 1.1.0 run requests that choose the workflow engine; refused
+# until they are forwarded (#66), so that the choice isn't lost
+ENGINE_FIELDS = ("workflow_engine", "workflow_engine_version")
 
 
 class Upload(NamedTuple):
@@ -246,7 +251,7 @@ class WorkflowRuns:
 
         Returns:
             Response object according to WES API schema `RunListResponse`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L495-L510
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         """
         # set query params
         page_size: int = kwargs.get(
@@ -301,7 +306,7 @@ class WorkflowRuns:
 
         Returns:
             Response object according to WES API schema `RunLog`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L511-L533
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
             pro_wes.exceptions.Forbidden: The requester is not allowed to access the
@@ -348,7 +353,7 @@ class WorkflowRuns:
 
         Returns:
             Response object according to WES API schema `RunStatus`. Cf.
-                https://github.com/ga4gh/workflow-execution-service-schemas/blob/c5406f1d3740e21b93d3ac71a4c8d7b874011519/openapi/workflow_execution_service.swagger.yaml#L585-L594
+                `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
             pro_wes.exceptions.Forbidden: The requester is not allowed to access the
@@ -574,6 +579,9 @@ class WorkflowRuns:
             The run request, without credentials in URLs.
 
         Raises:
+            pro_wes.exceptions.WorkflowEngineNotSupported: The request
+                chooses a workflow engine or its version (`ENGINE_FIELDS`,
+                not empty).
             pro_wes.exceptions.UrlCredentials: A URL has credentials, and
                 `url_credentials` is `reject`.
             pro_wes.exceptions.MalformedUrl: A URL is malformed.
@@ -585,6 +593,10 @@ class WorkflowRuns:
         }
         # remove 'workflow_attachment' field
         dict_atomic.pop("workflow_attachment", None)
+        # empty engine fields choose no engine; others are refused
+        for field in ENGINE_FIELDS:
+            if dict_atomic.pop(field, "") != "":
+                raise WorkflowEngineNotSupported
         model_instance = RunRequest(**dict_atomic)
         updates: dict[str, str] = {}
         stripped = sanitize_url(

@@ -14,7 +14,7 @@ from pydantic import (
 
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
-from pro_wes.ga4gh.wes.service_info import workflow_type_versions
+from pro_wes.utils.config import workflow_type_versions
 
 # Validation context of stored documents (e.g., `DbDocument`): their run
 # requests aren't checked against the service info of the process reading
@@ -78,31 +78,31 @@ class RunRequest(BaseModel):
 
     Args:
         workflow_params: Workflow parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type: Workflow type. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type_version: Workflow type version. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         tags: Tags. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_engine_parameters: Workflow engine parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_url: Workflow URL. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Attributes:
         workflow_params: Workflow parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type: Workflow type. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type_version: Workflow type version. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         tags: Tags. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_engine_parameters: Workflow engine parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_url: Workflow URL. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
         pro_wes.exceptions.ValidationError: The class was instantianted with an
@@ -257,7 +257,7 @@ class RunRequest(BaseModel):
 class Log(BaseModel):
     """Model for task log, including the log of the workflow engine itself.
 
-    Cf. `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+    Cf. `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Attributes:
         cmd: List of executed commands.
@@ -269,6 +269,9 @@ class Log(BaseModel):
             "%Y-%m-%dT%H:%M:%SZ".
         stderr: A URL to retrieve standard error logs of the task.
         stdout: A URL to retrieve standard output logs of the task.
+        system_logs: Logs of the system that are relevant to the task or
+            run, but not tied to it (e.g., the error message of a
+            `SYSTEM_ERROR`); WES 1.1.0.
     """
 
     cmd: list[str] | None = []
@@ -278,12 +281,13 @@ class Log(BaseModel):
     start_time: str | None = None
     stderr: str | None = None
     stdout: str | None = None
+    system_logs: list[str] | None = None
 
 
 class State(BaseEnum):
     """Enumerator for supported workflow run states.
 
-    Cf. `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+    Cf. `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Attributes:
         UNKNOWN: The state of the task is unknown.
@@ -493,6 +497,17 @@ class WorkflowTypeVersion(BaseModel):
     workflow_type_version: list[str] | None = []
 
 
+class WorkflowEngineVersion(BaseModel):
+    """Available versions of a workflow engine (WES 1.1.0).
+
+    Args:
+        workflow_engine_version: List of one or more available versions of
+            the workflow engine.
+    """
+
+    workflow_engine_version: list[str] | None = []
+
+
 class DefaultWorkflowEngineParameter(BaseModel):
     """Model for default workflow engine parameters.
 
@@ -549,7 +564,7 @@ class ServiceInfoWesBase(BaseModel):
     workflow_type_versions: dict[str, WorkflowTypeVersion]
     supported_wes_versions: list[str] = []
     supported_filesystem_protocols: list[str] = []
-    workflow_engine_versions: dict[str, str]
+    workflow_engine_versions: dict[str, WorkflowEngineVersion]
     default_workflow_engine_parameters: list[DefaultWorkflowEngineParameter] = []
     auth_instructions_url: str
     tags: dict[str, str]

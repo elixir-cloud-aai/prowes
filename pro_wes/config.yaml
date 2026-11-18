@@ -62,7 +62,7 @@ db:
 api:
   specs:
     - path:
-        - api/20201124.tag_1_0_1.workflow_execution_service.openapi.yaml
+        - api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml
         - api/additions.openapi.yaml
       add_operation_fields:
         x-openapi-router-controller: pro_wes.ga4gh.wes.controllers
@@ -117,7 +117,8 @@ jobs:
 # the system state counts (`system_state_counts`), computed for each request
 # by `runtime_fields`, and the version of the package (`pro-wes`), unless
 # `service` sets `version`; set `id`, `name`, `organization` and the URLs to
-# describe the deployment. The WES fields are checked on startup
+# describe the deployment. The WES fields (of WES 1.1.0: the versions of each
+# engine in `workflow_engine_versions` as objects) are checked on startup
 # Cf. https://foca.readthedocs.io/en/latest/configuration/service-info/
 service_info:
   package: pro-wes
@@ -130,7 +131,7 @@ service_info:
     type:
       group: "org.ga4gh"
       artifact: "wes"
-      version: "1.0.1"
+      version: "1.1.0"
     description: "WES gateway service"
     organization:
       name: "Example organization"
@@ -145,11 +146,13 @@ service_info:
     supported_filesystem_protocols:
       - https
     supported_wes_versions:
-      - 1.0.1
+      - 1.1.0
     tags:
       key: "value"
     workflow_engine_versions:
-      cwl-engine: "1.2.3"
+      cwl-engine:
+        workflow_engine_version:
+          - "1.2.3"
     workflow_type_versions:
       CWL:
         workflow_type_version:

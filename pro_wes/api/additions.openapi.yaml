@@ -5,7 +5,9 @@ info:
     Gateway GA4GH Workflow Execution Service (WES) API implementation; forwards
     incoming run requests to known WES instances and harmonizes the experience
     More information on [GitHub](https://github.com/elixir-cloud-aai/proWES).
-  version: 1.0.0
+  # Version of the WES specification served (it replaces that of the
+  # specification, as this file is merged over it)
+  version: 1.1.0
   license:
     name: "Apache 2.0"
     url: "http://www.apache.org/licenses/LICENSE-2.0"

@@ -35,10 +35,12 @@ __all__ = [
     "NotFound",
     "RunNotFound",
     "StorageUnavailableProblem",
+    "TasksNotServed",
     "TooManyAttachments",
     "Unauthorized",
     "UrlCredentials",
     "WesEndpointProblem",
+    "WorkflowEngineNotSupported",
     "exceptions",
 ]
 
@@ -53,6 +55,17 @@ class EngineUnavailable(EngineProblem):
 
 class NoSuitableEngine(BadRequest):
     """No suitable workflow engine known."""
+
+
+class WorkflowEngineNotSupported(BadRequest):
+    """A run request chooses a workflow engine, which proWES can't forward yet.
+
+    `workflow_engine` and `workflow_engine_version` of WES 1.1.0 (#66).
+    """
+
+
+class TasksNotServed(InternalServerError):
+    """The task endpoints of WES 1.1.0 are not served yet (#124)."""
 
 
 class InvalidAttachmentName(BadRequest):
@@ -169,6 +182,14 @@ exceptions = {
         "detail": "No suitable workflow engine known.",
         "status": 400,
     },
+    WorkflowEngineNotSupported: {
+        "title": "Bad request",
+        "detail": (
+            "Choosing a workflow engine (workflow_engine,"
+            " workflow_engine_version) is not supported yet."
+        ),
+        "status": 400,
+    },
     ValidationError: {
         "title": "Bad request",
         "detail": "The request is malformed.",
@@ -213,6 +234,11 @@ exceptions = {
         "title": "Internal server error",
         "detail": "An unexpected error occurred.",
         "status": 500,
+    },
+    TasksNotServed: {
+        "title": "Not implemented",
+        "detail": "The tasks of runs are not served yet.",
+        "status": 501,
     },
     IdsUnavailableProblem: {
         "title": "Internal server error",

@@ -94,7 +94,7 @@ request=(
   'workflow_engine_parameters={}'
 )
 
-check GET /service-info 200 '.type.artifact == "wes"'
+check GET /service-info 200 '.type.artifact == "wes" and .type.version == "1.1.0"'
 # A run is forwarded to the WES, tracked to its end, and the final run log
 # of the WES (exit code, outputs, standard output) is stored; the request
 # is its own
@@ -119,6 +119,8 @@ check GET '/runs?page_size=100' 200 "any(.runs[]; .run_id == \"${held}\" and .st
 # have)
 check GET /runs/unknwn 404 '.status == 404'
 check GET /runs/unknwn/status 404 '.status == 404'
+# The task endpoints of WES 1.1.0 aren't served yet (#124)
+check GET "/runs/${id}/tasks" 501 '.status == 501'
 # Runs with credentials in URLs are rejected (`url_credentials: reject`),
 # without echoing them
 check POST /runs 400 '.status == 400 and (.detail | test("credentials")) and (tostring | test("s3cr3t") | not)' \

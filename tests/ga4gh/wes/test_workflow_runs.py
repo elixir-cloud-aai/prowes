@@ -214,3 +214,52 @@ def test_get_run_log_and_status(
     response = foca_client.get(f"{BASE_PATH}/runs/{run_id}/status")
     assert response.status_code == 200
     assert response.json() == {"run_id": run_id, "state": "UNKNOWN"}
+
+
+@pytest.mark.parametrize("path", ["/runs/ABC123/tasks", "/runs/ABC123/tasks/task1"])
+def test_task_endpoints_not_implemented(foca_client: Client, path: str) -> None:
+    """The task endpoints of WES 1.1.0 aren't served yet (#124): `501`."""
+    response = foca_client.get(f"{BASE_PATH}{path}")
+    assert response.status_code == 501
+    assert response.json()["status"] == 501
+    assert "tasks" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"workflow_engine": "cwltool"},
+        {"workflow_engine_version": "3.1"},
+        {"workflow_engine": "cwltool", "workflow_engine_version": "3.1"},
+    ],
+)
+def test_post_run_workflow_engine_refused(
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+    fields: dict[str, str],
+) -> None:
+    """Runs that choose a workflow engine are refused until it is forwarded.
+
+    Neither stored nor forwarded (#66), instead of losing the engine choice.
+    """
+    response = _post_run(foca_client, {**RUN_REQUEST, **fields})
+    assert response.status_code == 400
+    assert "workflow_engine" in response.json()["detail"]
+    assert mongodb[RUN_DB][RUN_COLLECTION].count_documents({}) == 0
+    assert not remote_wes
+    assert not queued
+
+
+def test_post_run_empty_workflow_engine(
+    foca_client: Client,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Empty workflow engine fields (no choice) are accepted, not forwarded."""
+    fields = {"workflow_engine": "", "workflow_engine_version": ""}
+    response = _post_run(foca_client, {**RUN_REQUEST, **fields})
+    assert response.status_code == 200
+    assert "workflow_engine" not in remote_wes[0]
+    assert "workflow_engine_version" not in remote_wes[0]
