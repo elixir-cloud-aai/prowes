@@ -1,11 +1,12 @@
 """Shared fixtures.
 
 The tests create the app from `pro_wes/config.yaml` and a test overlay that
-moves the storage of the runs into a temporary directory and polls without
-waiting. They use FOCA's pytest plugin (`foca.testing.pytest_plugin`): an
-in-memory database (mongomock) for each test, or the MongoDB at the URI of
-the environment variable `MONGODB_TEST_URI`, and no network access to other
-hosts. Remote WES services are replaced by fakes in the tests.
+moves the storage of the runs into a temporary directory, polls without
+waiting and configures one WES instance (`BACKEND_URL`). They use FOCA's
+pytest plugin (`foca.testing.pytest_plugin`): an in-memory database
+(mongomock) for each test, or the MongoDB at the URI of the environment
+variable `MONGODB_TEST_URI`, and no network access to other hosts. Remote
+WES services are replaced by fakes in the tests.
 """
 
 from collections.abc import Callable, Iterator
@@ -46,6 +47,9 @@ register_mongodb.MongoClient = _import_client  # type: ignore[misc, assignment]
 # Identifier of the service info of the test overlay
 SERVICE_INFO_ID = "org.example.prowes.test"
 
+# WES instance of the test overlay (`custom.wes.backends`), replaced by fakes
+BACKEND_URL = "https://wes.example.org"
+
 
 @pytest.fixture
 def storage_path(tmp_path: Path) -> Path:
@@ -85,6 +89,10 @@ def app_env(
         f"    storage_path: {storage_path}\n"
         "    polling_wait: 0\n"
         "    polling_attempts: 2\n"
+        "  wes:\n"
+        "    backends:\n"
+        "      - type: ga4gh-wes\n"
+        f"        url: {BACKEND_URL}\n"
         "service_info:\n"
         "  service:\n"
         f"    id: {SERVICE_INFO_ID}\n",

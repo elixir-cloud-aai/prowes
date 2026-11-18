@@ -13,6 +13,7 @@ from foca import Foca, get_custom_config
 from foca.api.service_info import get_service_info
 
 from pro_wes.config_models import CustomConfig
+from pro_wes.ga4gh.wes.backends import check_backends
 from pro_wes.ga4gh.wes.models import ServiceInfo
 
 
@@ -20,8 +21,9 @@ def init_app() -> App:
     """Initialize FOCA application.
 
     Creates the storage directory of the runs, checks that it is writable,
-    and checks that the service info (config section `service_info`) has the
-    fields of the WES specification.
+    checks that the service info (config section `service_info`) has the
+    fields of the WES specification, and that no configured WES instance
+    (`custom.wes.backends`) is proWES itself.
 
     Returns:
         FOCA application.
@@ -30,6 +32,8 @@ def init_app() -> App:
         PermissionError: The storage directory of the runs is not writable.
         pydantic.ValidationError: The service info lacks WES fields or has
             invalid ones.
+        ValueError: A configured WES instance is at or below the public URL
+            of proWES (`server.public_url`).
     """
     foca = Foca(
         config_file=Path(__file__).resolve().parent / "config.yaml",
@@ -50,6 +54,8 @@ def _setup_first_start(app: App) -> None:
         PermissionError: The storage directory of the runs is not writable.
         pydantic.ValidationError: The service info lacks WES fields or has
             invalid ones.
+        ValueError: A configured WES instance is at or below the public URL
+            of proWES (`server.public_url`).
     """
     with app.app.app_context():
         custom_config = get_custom_config(CustomConfig)
@@ -65,6 +71,8 @@ def _setup_first_start(app: App) -> None:
         # FOCA checks the fields of the GA4GH service info, but not those of
         # the WES specification (e.g., `workflow_type_versions`)
         ServiceInfo(**get_service_info())
+        # runs would be forwarded to proWES itself
+        check_backends()
 
 
 def main() -> None:

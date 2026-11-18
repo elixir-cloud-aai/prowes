@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from pro_wes.exceptions import EngineUnavailable
@@ -236,11 +237,25 @@ ALL_OPERATIONS = pytest.mark.parametrize(
             "https://wes.example.org/ga4gh/wes/v1",
         ),
         ("https://wes.example.org/", "/wes", "https://wes.example.org/wes"),
+        # the API at the host itself (`api_path: /`)
+        ("https://wes.example.org/", "", "https://wes.example.org"),
+        ("https://wes.example.org/api", "/", "https://wes.example.org/api"),
     ],
 )
 def test_url(host: str, base_path: str, url: str) -> None:
     """The URL joins host and base path with exactly one slash."""
     assert WesClient(host=host, base_path=base_path).url == url
+
+
+def test_redirects_not_followed() -> None:
+    """Redirects of WES instances fail instead of being followed."""
+    client = WesClient(host=HOST)
+    redirect = requests.Response()
+    redirect.status_code = 307
+    redirect.headers["Location"] = "http://127.0.0.1/internal"
+    redirect.request = requests.Request("POST", f"{URL}/runs").prepare()
+    with pytest.raises(requests.TooManyRedirects):
+        next(client.session.resolve_redirects(redirect, redirect.request))
 
 
 def test_set_token() -> None:

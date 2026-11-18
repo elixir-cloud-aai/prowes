@@ -16,6 +16,7 @@ from foca.errors import (
     NotFound,
     PayloadTooLarge,
     RequestValidationProblem,
+    ServiceUnavailable,
     Unauthorized,
 )
 from pydantic import ValidationError
@@ -31,6 +32,7 @@ __all__ = [
     "InternalServerError",
     "InvalidAttachmentName",
     "MalformedUrl",
+    "NoBackendAvailable",
     "NoSuitableEngine",
     "NotFound",
     "RunNotFound",
@@ -51,6 +53,14 @@ class EngineProblem(InternalServerError):
 
 class EngineUnavailable(EngineProblem):
     """The external workflow engine is not available."""
+
+
+class NoBackendAvailable(ServiceUnavailable):
+    """No WES instance is available for new runs.
+
+    None is configured (`custom.wes.backends`), or the service registries of
+    the backend list list none (yet).
+    """
 
 
 class NoSuitableEngine(BadRequest):
@@ -238,6 +248,11 @@ exceptions = {
         "title": "Internal server error",
         "detail": "An unexpected error occurred.",
         "status": 500,
+    },
+    NoBackendAvailable: {
+        "title": "Service unavailable",
+        "detail": "No WES instance is available for new runs.",
+        "status": 503,
     },
     TasksNotServed: {
         "title": "Not implemented",

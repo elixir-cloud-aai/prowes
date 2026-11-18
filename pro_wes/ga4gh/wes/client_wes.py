@@ -45,9 +45,17 @@ class WesClient:
         token: str | None = None,
     ) -> None:
         """Class constructor."""
-        self.url = f"{host.rstrip('/')}/{base_path.strip('/')}"
+        # without the separator for an empty base path (the API at `host`)
+        self.url = "/".join(
+            part for part in (host.rstrip("/"), base_path.strip("/")) if part
+        )
         self.set_token(token)
         self.session = requests.Session()
+        # Redirects are not followed (e.g., of a WES instance discovered in a
+        # registry, to an internal service): they fail as unavailable
+        # (`TooManyRedirects`), until requests go through FOCA's guarded
+        # client
+        self.session.max_redirects = 0
 
     def get_service_info(
         self,
