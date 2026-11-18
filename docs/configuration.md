@@ -58,8 +58,8 @@ guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app)).
 `custom.post_runs` limits the run requests of `POST /runs`:
 
 - `max_attachments`: the maximum number of workflow attachments
-  (`workflow_attachment`) of a run (default 100); runs with more are
-  rejected with `413 Content Too Large`;
+  (`workflow_attachment`) of a run (default 100; `0` allows none); runs
+  with more are rejected with `413 Content Too Large`;
 - `max_attachment_size`: the maximum size of each attachment, in bytes
   (default 1048576, i.e., 1 MiB); runs with a larger one are rejected with
   `413 Content Too Large`. All attachments together are limited by the

@@ -53,8 +53,9 @@ class PostRuns(BaseModel):
             until an error is raised and the job is set to state
             `SYSTEM_ERROR`. Once a valid response is obtained, the counter is
             reset to 1.
-        max_attachments: Maximum number of workflow attachments of a run;
-            runs with more are rejected with `413 Content Too Large`.
+        max_attachments: Maximum number of workflow attachments of a run
+            (`0` allows none); runs with more are rejected with `413 Content
+            Too Large`.
         max_attachment_size: Maximum size of each workflow attachment, in
             bytes; runs with larger ones are rejected with `413 Content Too
             Large`. All attachments together are limited by the size of

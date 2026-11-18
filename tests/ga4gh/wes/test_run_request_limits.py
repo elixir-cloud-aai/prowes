@@ -8,6 +8,7 @@ safe names of attachments, credentials in URLs
 
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
+from io import BytesIO
 from json import loads
 from pathlib import Path
 from typing import Any
@@ -244,7 +245,68 @@ def test_request_too_large(
     assert response.json()["title"] == "Content Too Large"
 
 
+def test_chunked_request_too_large(
+    client_with: Callable[[str], Client],
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Chunked requests (without declared size) over the limit get `413`."""
+    client = client_with("server:\n  max_content_length: 2048\n")
+    fields = {**RUN_REQUEST, "workflow_params": f'{{"input": "{"x" * 4096}"}}'}
+    # Werkzeug's client (FOCA's sends a declared size), with a stream of
+    # undeclared size, as for chunked bodies
+    flask_client = client._client  # noqa: SLF001 (no streaming in FOCA's client)
+    response = flask_client.post(
+        f"{BASE_PATH}/runs",
+        input_stream=BytesIO(_multipart(fields)),
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={BOUNDARY}",
+            "Transfer-Encoding": "chunked",
+        },
+        # no declared size (cf. PEP 3333), as servers pass chunked bodies
+        environ_overrides={"CONTENT_LENGTH": "", "wsgi.input_terminated": True},
+    )
+    assert response.status_code == 413
+    assert response.get_json()["status"] == 413
+    assert mongodb[RUN_DB][RUN_COLLECTION].count_documents({}) == 0
+    assert not any(storage.iterdir())
+    assert not remote_wes
+
+
 # Attachments
+
+
+def test_attachments_at_limits(
+    client_with: Callable[[str], Client],
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Runs with as many and as large attachments as allowed are accepted."""
+    client = client_with(
+        "custom:\n  post_runs:\n    max_attachments: 2\n    max_attachment_size: 16\n"
+    )
+    files = [("a.txt", b"x" * 16), ("b.txt", b"y" * 16)]
+    response = _post_run(client, RUN_REQUEST, files)
+    assert response.status_code == 200
+    assert len(remote_wes) == 1
+
+
+def test_no_attachments_allowed(
+    client_with: Callable[[str], Client],
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """With `max_attachments: 0`, runs without attachments only are accepted."""
+    client = client_with("custom:\n  post_runs:\n    max_attachments: 0\n")
+    assert _post_run(client, RUN_REQUEST).status_code == 200
+    response = _post_run(client, RUN_REQUEST, [("a.txt", b"1")])
+    assert response.status_code == 413
 
 
 def test_too_many_attachments(

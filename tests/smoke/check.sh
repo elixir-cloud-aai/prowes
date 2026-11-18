@@ -6,8 +6,8 @@
 # to the fake WES, waits until the Celery worker has tracked them (via
 # RabbitMQ) to their final state, and checks the other endpoints, the
 # cancellation of a run, and that run requests with credentials in URLs and
-# larger than the size limit are rejected. Run it from the repository root, with the base URL
-# of the WES API as argument (default
+# larger than the size limit are rejected. Run it from the repository root,
+# with the base URL of the WES API as argument (default
 # `http://localhost:8090/ga4gh/wes/v1`); needs curl, jq and Docker Compose.
 # On failure, it shows the logs of the services. The deployment is left
 # running (Compose project `COMPOSE_PROJECT_NAME`, default `prowes-smoke`,
