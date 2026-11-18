@@ -59,6 +59,24 @@ the client is no longer passed on, also not for runs stored before the
 upgrade. With authentication off, as in earlier versions, there was none to
 pass on; WES instances must accept requests without credentials.
 
+### Requests to WES instances (breaking)
+
+Requests to WES instances go through FOCA's guarded HTTP client (see [WES
+instances](configuration.md#wes-instances)). Check the following:
+
+- Responses larger than `custom.wes.max_response_size` (new; default 16
+  MiB) fail the request; raise it for WES instances with larger run logs.
+- Proxy settings (`HTTPS_PROXY` and the like) and `.netrc` files of the
+  environment are ignored: WES instances must be reachable directly.
+- Certificates are verified with the public certificate authorities of
+  proWES's dependencies, or with those of `REQUESTS_CA_BUNDLE` (as before);
+  `CURL_CA_BUNDLE` is no longer read.
+- Runs whose WES instance is no longer in `custom.wes.backends` (or no
+  longer listed by a registry entry) are tracked and canceled over `https`
+  at public addresses only.
+- Run requests are sent as `multipart/form-data`, as the WES API specifies
+  (before: `application/x-www-form-urlencoded`).
+
 ### Run identifiers
 
 `POST /runs` returns the run's own identifier, by which `GET
@@ -252,12 +270,17 @@ proWES serves WES 1.1.0 instead of 1.0.1 (see [API](api.md#wes-110)):
   endpoints and fields of WES 1.0.1 are unchanged: clients of the runs
   endpoints keep working.
 
-### Timeouts
+### Timeouts (breaking)
 
 Gunicorn's threaded workers don't stop requests that hang, so requests to
 the remote WES are limited: forwarding runs by
 `custom.post_runs.timeout_post` (now 30 seconds; before: none), also for
-reading run logs, canceling runs by `custom.defaults.timeout`.
+reading run logs, canceling runs by `custom.defaults.timeout`. Both now
+limit each request as a whole (before: each wait for data), and both are
+required positive numbers: configurations that set them to `null` (to
+disable them) fail validation on startup; set a number of seconds instead.
+`custom.post_runs.timeout_job` (the time limit of tracking a run) may still
+be `null`.
 
 ### Run logs
 

@@ -25,8 +25,9 @@ The settings that deployments usually change:
 | `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
 | `server.max_content_length` | `10485760` (10 MiB) | Maximum size of request bodies, see [Request size limit](#request-size-limit) |
 | `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type (see [Errors](api.md#errors)) |
-| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds), polling of the remote WES (`polling_wait`, `polling_attempts`), limits of workflow attachments (`max_attachments`, `max_attachment_size`) and credentials in URLs (`url_credentials`), see [Run requests](#run-requests) |
-| `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds |
+| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds for each request as a whole; required, a positive number), polling of the remote WES (`polling_wait`, `polling_attempts`), limits of workflow attachments (`max_attachments`, `max_attachment_size`) and credentials in URLs (`url_credentials`), see [Run requests](#run-requests) |
+| `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds, for each request as a whole; required, a positive number |
+| `custom.wes.max_response_size` | `16777216` (16 MiB) | Maximum size of each response of a WES instance, in bytes; larger responses fail the request, see [WES instances](#wes-instances) |
 
 ## WES instances
 
@@ -91,13 +92,33 @@ of the host and port of the public URL below its path count as proWES: for
 WES instances on the same host and port, set the path prefix of proWES in
 `server.public_url` (e.g., `https://example.org/prowes`).
 
-Requests to WES instances verify TLS certificates (with the public
-certificate authorities, or those of the environment variable
-`REQUESTS_CA_BUNDLE`), with the timeouts of `custom.post_runs.timeout_post`
-and `custom.defaults.timeout`, and don't follow redirects (a redirect fails
-the request, as if the WES instance were unavailable): set the URL that the
-WES API is served at. proWES sends no credentials to WES instances yet
-(neither its own nor the client's), so they must accept runs without them.
+Requests to WES instances go through FOCA's guarded HTTP client:
+
+- They use `https` only, unless the entry of a configured WES instance
+  allows `http` (`url_schemes`), and always verify TLS certificates: with
+  the public certificate authorities, or with those of the file or directory
+  that the environment variable `REQUESTS_CA_BUNDLE` names instead (e.g., a
+  private certificate authority; then only these are trusted, so add the
+  public ones to the file if other WES instances need them).
+- Configured WES instances may have private addresses (e.g., in the same
+  cluster); discovered ones need public addresses, unless their registry
+  entry has `allow_private_addresses`. Runs whose WES instance the backend
+  list no longer yields (e.g., after it was removed) are tracked and
+  canceled over `https` at public addresses only.
+- They don't follow redirects (a redirect fails the request, as if the WES
+  instance were unavailable): set the URL that the WES API is served at.
+- Each request ends within its timeout as a whole (resolving, connecting,
+  sending and reading; connecting within at most 10 seconds):
+  `custom.post_runs.timeout_post` for forwarding runs and reading run logs,
+  `custom.defaults.timeout` for status requests and cancellation.
+- Responses larger than `custom.wes.max_response_size` (16 MiB) fail the
+  request, with an error in the logs.
+- Proxy settings (`HTTPS_PROXY` and the like) and `.netrc` files of the
+  environment are ignored.
+
+Run requests are sent as `multipart/form-data`, as the WES API specifies.
+proWES sends no credentials to WES instances yet (neither its own nor the
+client's), so they must accept runs without them.
 
 ### Discovery in a service registry
 
