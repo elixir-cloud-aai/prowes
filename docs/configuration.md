@@ -49,8 +49,10 @@ Request bodies, with all workflow attachments, are limited to
 FOCA: larger requests, also chunked ones, are rejected with `413 Content Too
 Large` before they are parsed. A reverse proxy or ingress controller in front
 of proWES must allow bodies at least as large, or it rejects them first
-(e.g., ingress-nginx allows 1 MiB by default; set its annotation
-`nginx.ingress.kubernetes.io/proxy-body-size`, see FOCA's [Helm chart
+(e.g., ingress-nginx allows 1 MiB by default; the Helm chart sets its
+annotation `nginx.ingress.kubernetes.io/proxy-body-size` to 10 MiB, see
+[Body size and rate limits](deployment.md#body-size-and-rate-limits); for
+other proxies, see FOCA's [Helm chart
 guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app)).
 Each form field other than attachments (e.g., `workflow_params`) is also
 limited to 500 kB by Flask (`MAX_FORM_MEMORY_SIZE`, not configurable in
@@ -107,7 +109,9 @@ otherwise).
 proWES has no rate limits of its own (neither does FOCA). In production,
 limit the rate of requests per client at the reverse proxy or ingress
 controller in front of it, so that single clients can't overload the app,
-its database, its storage or the WES instances (see FOCA's [Helm chart
+its database, its storage or the WES instances (see [Body size and rate
+limits](deployment.md#body-size-and-rate-limits) for the values of the Helm
+chart, and FOCA's [Helm chart
 guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app)
 for the annotations of common ingress controllers).
 

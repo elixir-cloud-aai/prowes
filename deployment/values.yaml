@@ -122,10 +122,20 @@ prowes:
     className: ""
     # Annotations of the Ingress, e.g., for the ingress controller's size
     # limit of request bodies (workflow attachments), TLS redirect or rate
-    # limits; the chart sets none for particular controllers. They take
+    # limits (see docs/deployment.md, Body size and rate limits). They take
     # precedence over those set by the chart for `https`; `null` removes one
-    # of these
-    annotations: {}
+    # of these or of the defaults
+    annotations:
+      # ingress-nginx allows request bodies of 1 MiB by default: allow the
+      # app's limit (`config.server.max_content_length`, 10 MiB). The chart
+      # fails to render if this is below the app's limit (`"0"`: no limit;
+      # other ingress controllers ignore it)
+      nginx.ingress.kubernetes.io/proxy-body-size: 10m
+      # Rate limits of ingress-nginx per client IP address (off by default;
+      # excess requests get `503`), e.g.:
+      # nginx.ingress.kubernetes.io/limit-rps: "10"
+      # nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+      # nginx.ingress.kubernetes.io/limit-connections: "20"
     https:
       # Request a certificate from cert-manager (via `issuer`, a
       # ClusterIssuer) and serve HTTPS
@@ -163,8 +173,11 @@ prowes:
     # and the cluster serves Routes; false, e.g., for a Route or HTTPRoute
     # of your own
     enabled: true
-    # Annotations of the Route, e.g., for rate limits of the router
-    # (`haproxy.router.openshift.io/rate-limit-connections`)
+    # Annotations of the Route, e.g., for rate limits of the router per
+    # client IP address (off by default; the router has no size limit of
+    # request bodies), e.g.:
+    # haproxy.router.openshift.io/rate-limit-connections: "true"
+    # haproxy.router.openshift.io/rate-limit-connections.rate-http: "100"
     annotations: {}
   # NetworkPolicy allowing connections to the app only from `ingressFrom`
   # (and the kubelet's probes; see docs/deployment.md, Network policies);
