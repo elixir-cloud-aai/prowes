@@ -1,5 +1,6 @@
 # Everything that must pass on pull requests and pushes to `dev`: the pull
-# request title, lint and build, the docs, test, run the app with Docker
+# request title, lint and build, the docs, test, the Helm chart (lint, tests
+# and an installation on kind), run the app with Docker
 # Compose, and, on pushes, push the Docker image. Forks, which have none of
 # the secrets, run the same checks without the push. The gate `passed` ("CI
 # passed") is the only required check. No `paths:` filters, so that the gate
@@ -181,6 +182,14 @@ jobs:
         run: |
           uv sync --locked --extra dev --python "$(which python)"
           echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      # The chart tests (run if Helm is installed, as on GitHub's runners)
+      # need the library chart, the version locked in `Chart.lock`
+      - name: Build chart dependencies
+        run: |
+          helm dependency build deployment
+          # The library chart as checked when it was pinned: OCI tags can
+          # be pushed again
+          (cd deployment && sha256sum -c charts.sha256)
       # Coverage is reported only, without a threshold, until #81
       - name: Calculate unit test coverage
         run: |
@@ -197,6 +206,90 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
           verbose: true
+
+  # Lints the Helm chart (`deployment/`) with the values of CI
+  # (`deployment/ci/`) and runs its tests (`tests/test_chart.py`, also part
+  # of `test`), so that chart failures are reported under their own name
+  chart:
+    name: Chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      # As in `lint`
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: uv.lock
+      # The versions of `uv.lock`, as in `lint`
+      - name: Install dependencies
+        run: |
+          uv sync --locked --extra dev --python "$(which python)"
+          echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      # The Helm version of proTES's chart job
+      - name: Set up Helm
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.22.1
+      # As in `test`
+      - name: Build chart dependencies
+        run: |
+          helm dependency build deployment
+          (cd deployment && sha256sum -c charts.sha256)
+      - name: Lint chart
+        run: |
+          helm lint deployment --strict -f deployment/ci/test-values.yaml
+          helm lint deployment --strict -f deployment/ci/test-values.yaml \
+            -f deployment/ci/optional-values.yaml
+          helm lint deployment --strict -f deployment/ci/test-values.yaml \
+            --set mongodb.auth.enabled=false --set mongodb.auth.existingSecret=
+      # Fails instead of skipping the chart tests if Helm is missing
+      - name: Test chart
+        run: |
+          helm version
+          pytest -W ignore::DeprecationWarning tests/test_chart.py
+
+  # Installs the chart on a kind cluster with the image of this commit
+  # (`tests/chart/install.sh`): waits until the app, the worker, MongoDB and
+  # the broker are ready, then checks the service info of the config
+  # overlay, the storage of the runs, the worker's connection to the broker
+  # and that MongoDB's data survives a reinstallation
+  chart-install:
+    name: Chart install
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # As in `chart`
+      - name: Set up Helm
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.22.1
+      # The kind version of FOCA's `chart-install` job
+      - name: Create kind cluster
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          version: v0.33.0
+          cluster_name: chart-testing
+      - name: Install chart and check it
+        run: tests/chart/install.sh
+      - name: Show cluster state
+        if: failure() || cancelled()
+        run: |
+          kubectl get all,networkpolicies,pvc -n prowes-ci || true
+          kubectl describe pods -n prowes-ci || true
+          kubectl logs -n prowes-ci --all-containers --prefix \
+            -l app.kubernetes.io/instance --tail=200 || true
 
   # Runs the app as deployed with Docker Compose (app, Celery worker,
   # MongoDB, RabbitMQ) against a fake WES instead of a real one
@@ -256,7 +349,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
-    needs: [lint, test, smoke]
+    needs: [lint, test, chart, chart-install, smoke]
     # One push at a time, in order, so that an older commit never
     # overwrites the tags of a newer one
     concurrency:
@@ -300,7 +393,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [title, lint, docs, test, smoke, push]
+    needs: [title, lint, docs, test, chart, chart-install, smoke, push]
     permissions: {}
     steps:
       - name: Check results of all jobs
