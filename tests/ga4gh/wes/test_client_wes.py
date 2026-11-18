@@ -426,6 +426,14 @@ def test_get_run_status_state() -> None:
     assert response.state == State.COMPLETE
 
 
+def test_get_run_status_preempted() -> None:
+    """The state `PREEMPTED` of WES 1.1.0 is parsed."""
+    body = {"run_id": RUN_ID, "state": "PREEMPTED"}
+    response = _client(FakeSession(body=body)).get_run_status(run_id=RUN_ID)
+    assert isinstance(response, RunStatus)
+    assert response.state == State.PREEMPTED
+
+
 def test_service_info_wes_1_0() -> None:
     """Service info of WES 1.0.x (engine versions as strings) is invalid (#122)."""
     body = {**SERVICE_INFO, "workflow_engine_versions": {"cwltool": "3.1"}}

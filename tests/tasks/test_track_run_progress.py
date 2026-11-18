@@ -247,6 +247,25 @@ def test_track_run_remote_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("run")
+def test_track_run_preempted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preempted runs (WES 1.1.0) are final: stored as is, with their log."""
+    logs = _fake_remote(
+        monkeypatch,
+        [
+            RunStatus(run_id=REMOTE_RUN_ID, state=State.RUNNING),
+            RunStatus.model_validate({"run_id": REMOTE_RUN_ID, "state": "PREEMPTED"}),
+            # never requested: tracking ends with `PREEMPTED`
+            RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE),
+        ],
+    )
+    assert _track() == TASK_ID
+    assert logs == [REMOTE_RUN_ID, REMOTE_RUN_ID]
+    document = _stored()
+    assert document["run_log"]["state"] == "PREEMPTED"
+    assert document["run_log"]["outputs"] == {"out": 2}
+
+
+@pytest.mark.usefixtures("run")
 def test_track_run_invalid_status(monkeypatch: pytest.MonkeyPatch) -> None:
     """Invalid status responses are retried, then fail with `SYSTEM_ERROR`."""
     _fake_remote(monkeypatch, [ValueError("invalid response") for _ in range(3)])

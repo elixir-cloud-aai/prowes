@@ -32,7 +32,7 @@ What proWES does with the additions of WES 1.1.0 so far:
 | `workflow_engine` and `workflow_engine_version` of `POST /runs` | Refused (`400 Bad Request`) unless empty, until they are forwarded ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)), so that a run never loses its choice of engine |
 | Task endpoints, `task_logs_url` of run logs | Not served yet (see above); run logs have `task_logs` (deprecated in WES 1.1.0), as `Log` objects: the `id` and `tes_uri` of `TaskLog` are not kept yet |
 | `system_logs` of logs | Stored from the run logs of the WES instance and returned in `run_log` and `task_logs` |
-| State `PREEMPTED` | Not tracked yet ([#123](https://github.com/elixir-cloud-aai/prowes/issues/123)) |
+| State `PREEMPTED` | Tracked as a final state and returned as is (see [Run states](#run-states)) |
 | `RunSummary` in `GET /runs` | Runs are listed as `RunStatus` (identifier and state), which WES 1.1.0 still allows ([#125](https://github.com/elixir-cloud-aai/prowes/issues/125)) |
 | `workflow_engine_versions` of the service info | Versions of each engine as objects (`{"cwltool": {"workflow_engine_version": ["3.1"]}}`), see [Service info](configuration.md#service-info) |
 
@@ -67,6 +67,34 @@ defines `RunLog` (the form of `POST /runs` has them as JSON-encoded
 strings), and leaves out fields without value (e.g., an `exit_code` that the
 WES instance didn't report). All responses are validated against the
 specification (see [Responses](configuration.md#responses)).
+
+### Run states
+
+Runs have the states of WES 1.1.0. proWES stores the state that the WES
+instance reports, as is, and returns it in `GET /runs`, `GET
+/runs/{run_id}` and `GET /runs/{run_id}/status`; the service info counts
+the runs in each state (`system_state_counts`).
+
+| State | Final | proWES |
+| --- | --- | --- |
+| `UNKNOWN` | No | Stored as reported; tracking goes on |
+| `QUEUED` | No | Stored as reported; tracking goes on |
+| `INITIALIZING` | No | Set when the worker starts tracking a run, or stored as reported; tracking goes on |
+| `RUNNING` | No | Stored as reported; tracking goes on |
+| `PAUSED` | No | Stored as reported; tracking goes on |
+| `CANCELING` | No | Stored as reported; tracking goes on |
+| `COMPLETE` | Yes | Stored; tracking ends |
+| `EXECUTOR_ERROR` | Yes | Stored; tracking ends |
+| `SYSTEM_ERROR` | Yes | Stored; tracking ends. Also set by proWES for runs it fails to forward or track (see [Run tracking](operations.md#run-tracking)) |
+| `CANCELED` | Yes | Stored; tracking ends |
+| `PREEMPTED` | Yes | Stored; tracking ends (WES 1.1.0) |
+
+Once a run has a final state, the Celery worker stops polling it and
+stores its run log. `PREEMPTED` means that the WES instance stopped the
+run, e.g., because the resources it ran on were reclaimed. proWES treats it
+like the other final states: it doesn't resubmit the run, to the same or to
+another WES instance, and returns `PREEMPTED` to clients, which can submit
+the run again.
 
 ## Errors
 
