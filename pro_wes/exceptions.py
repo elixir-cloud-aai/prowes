@@ -10,6 +10,7 @@ from foca.errors import (
     AccessDeniedProblem,
     AuthenticationProblem,
     BadRequest,
+    Conflict,
     ExtraParameterProblem,
     Forbidden,
     InternalServerError,
@@ -35,6 +36,7 @@ __all__ = [
     "NoBackendAvailable",
     "NoSuitableEngine",
     "NotFound",
+    "RunNotCancelable",
     "RunNotFound",
     "StorageUnavailableProblem",
     "TasksNotServed",
@@ -117,6 +119,14 @@ class MalformedUrl(BadRequest):
 
 class RunNotFound(NotFound):
     """Workflow run with given identifier not found."""
+
+
+class RunNotCancelable(Conflict):
+    """Workflow run not cancelable in its current state.
+
+    E.g., a run that has finished or is being canceled (cf.
+    :py:attr:`pro_wes.ga4gh.wes.models.State.is_cancelable`).
+    """
 
 
 class IdsUnavailableProblem(PyMongoError):
@@ -238,6 +248,11 @@ exceptions = {
         "title": "Not found",
         "detail": "The requested run wasn't found.",
         "status": 404,
+    },
+    RunNotCancelable: {
+        "title": "Conflict",
+        "detail": "The run can't be canceled in its current state.",
+        "status": 409,
     },
     EngineUnavailable: {
         "title": "Internal server error",

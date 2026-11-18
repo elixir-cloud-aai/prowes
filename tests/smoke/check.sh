@@ -105,6 +105,8 @@ await "/runs/${id}" '.run_log.stdout == "fake complete"'
 check GET "/runs/${id}" 200 \
   ".run_id == \"${id}\" and .state == \"COMPLETE\" and .request.workflow_url == \"https://example.org/smoke.cwl\" and .outputs.workflow_url == \"https://example.org/smoke.cwl\" and .run_log.exit_code == 0"
 check GET '/runs?page_size=100' 200 "any(.runs[]; .run_id == \"${id}\" and .state == \"COMPLETE\")"
+# Finished runs aren't cancelable (not forwarded to the WES)
+check POST "/runs/${id}/cancel" 409 '.status == 409'
 # A run that the WES holds is running until it is canceled, then canceling
 # until the WES reports it canceled, and its final run log is stored
 check POST /runs 200 '.run_id | length > 0' "${request[@]}" 'tags={"fake.hold": "true"}'

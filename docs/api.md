@@ -21,7 +21,7 @@ fills in OpenAPI defaults, e.g., `style` of parameters):
 | `x-openapi-router-controller` of `GET /service-info` | The service info is served by FOCA |
 | Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
-| `400` of the endpoints of a run (`/runs/{run_id}...`); `413` and `503` of `POST /runs`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
+| `400` of the endpoints of a run (`/runs/{run_id}...`); `413` and `503` of `POST /runs`; `409` of `POST /runs/{run_id}/cancel`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
 
 Statuses that any request can get, whatever its operation, are not declared
 per operation: `404` for unknown paths, `405 Method Not Allowed`, and `413
@@ -41,7 +41,7 @@ those declared.
 | `GET /runs` | List runs, newest first, with `page_size` and `page_token`; `next_page_token` is empty on the last page |
 | `GET /runs/{run_id}` | The run log of a run |
 | `GET /runs/{run_id}/status` | The state of a run |
-| `POST /runs/{run_id}/cancel` | Cancel a run |
+| `POST /runs/{run_id}/cancel` | Cancel a run, if it is cancelable (see [Run states](#run-states)) |
 | `GET /runs/{run_id}/tasks` | The tasks of a run (WES 1.1.0): not served yet, `501 Not Implemented` ([#124](https://github.com/elixir-cloud-aai/prowes/issues/124)) |
 | `GET /runs/{run_id}/tasks/{task_id}` | A task of a run (WES 1.1.0): not served yet, `501 Not Implemented` ([#124](https://github.com/elixir-cloud-aai/prowes/issues/124)) |
 
@@ -81,7 +81,8 @@ database. A Celery worker then tracks the run at the WES instance: it polls
 its state and, once the run has finished, stores its outputs, its engine log
 and its task logs (see [Run tracking](operations.md#run-tracking)). `GET
 /runs/{run_id}` and `GET /runs/{run_id}/status` answer from the database;
-`POST /runs/{run_id}/cancel` forwards the cancellation to the WES instance.
+`POST /runs/{run_id}/cancel` forwards the cancellation to the WES instance
+if the run is cancelable (see [Run states](#run-states)).
 
 `GET /runs/{run_id}` returns the run request with `workflow_params`, `tags`
 and `workflow_engine_parameters` as JSON objects, as the WES specification
@@ -97,19 +98,19 @@ instance reports, as is, and returns it in `GET /runs`, `GET
 /runs/{run_id}` and `GET /runs/{run_id}/status`; the service info counts
 the runs in each state (`system_state_counts`).
 
-| State | Final | proWES |
-| --- | --- | --- |
-| `UNKNOWN` | No | Stored as reported; tracking goes on |
-| `QUEUED` | No | Stored as reported; tracking goes on |
-| `INITIALIZING` | No | Set when the worker starts tracking a run, or stored as reported; tracking goes on |
-| `RUNNING` | No | Stored as reported; tracking goes on |
-| `PAUSED` | No | Stored as reported; tracking goes on |
-| `CANCELING` | No | Stored as reported; tracking goes on |
-| `COMPLETE` | Yes | Stored; tracking ends |
-| `EXECUTOR_ERROR` | Yes | Stored; tracking ends |
-| `SYSTEM_ERROR` | Yes | Stored; tracking ends. Also set by proWES for runs it fails to forward or track (see [Run tracking](operations.md#run-tracking)) |
-| `CANCELED` | Yes | Stored; tracking ends |
-| `PREEMPTED` | Yes | Stored; tracking ends (WES 1.1.0) |
+| State | Final | Cancelable | proWES |
+| --- | --- | --- | --- |
+| `UNKNOWN` | No | Once forwarded | Set when a run is stored, until the worker starts tracking it, or stored as reported; tracking goes on |
+| `QUEUED` | No | Yes | Stored as reported; tracking goes on |
+| `INITIALIZING` | No | Yes | Set when the worker starts tracking a run, or stored as reported; tracking goes on |
+| `RUNNING` | No | Yes | Stored as reported; tracking goes on |
+| `PAUSED` | No | Yes | Stored as reported; tracking goes on |
+| `CANCELING` | No | No | Stored as reported; tracking goes on |
+| `COMPLETE` | Yes | No | Stored; tracking ends |
+| `EXECUTOR_ERROR` | Yes | No | Stored; tracking ends |
+| `SYSTEM_ERROR` | Yes | No | Stored; tracking ends. Also set by proWES for runs it fails to forward or track (see [Run tracking](operations.md#run-tracking)) |
+| `CANCELED` | Yes | No | Stored; tracking ends |
+| `PREEMPTED` | Yes | No | Stored; tracking ends (WES 1.1.0) |
 
 Once a run has a final state, the Celery worker stops polling it and
 stores its run log. `PREEMPTED` means that the WES instance stopped the
@@ -117,6 +118,24 @@ run, e.g., because the resources it ran on were reclaimed. proWES treats it
 like the other final states: it doesn't resubmit the run, to the same or to
 another WES instance, and returns `PREEMPTED` to clients, which can submit
 the run again.
+
+`POST /runs/{run_id}/cancel` forwards cancellations of cancelable runs
+only, by the state that proWES has stored at the time of the request:
+runs in the states `QUEUED`, `INITIALIZING`, `RUNNING` and `PAUSED`, and
+runs of state `UNKNOWN` once they have a run at the WES instance (e.g.,
+forwarded but not yet tracked by the worker, or reported as `UNKNOWN` by
+the WES instance). Other runs get `409 Conflict` (problem details, "The
+run can't be canceled in its current state."), and the WES instance isn't
+contacted: finished runs, runs that are being canceled already
+(`CANCELING`), and runs of state `UNKNOWN` that proWES hasn't forwarded
+yet (try again once `POST /runs` has returned). A run in a cancelable
+state without a run at the WES instance gets `500` ("No/few requirements
+provided for WES endpoint.").
+
+Runs that proWES sets to `SYSTEM_ERROR` itself because it fails to track
+them (see [Run tracking](operations.md#run-tracking)) are final for
+proWES, too, so their cancellations are refused, even if the run is still
+running at the WES instance; cancel those at the WES instance directly.
 
 ## Errors
 
@@ -153,5 +172,7 @@ stored nor forwarded):
 | `503 Service Unavailable` | No WES instance is available: none is configured (`custom.wes.backends`), or its registries list none (yet) (see [WES instances](configuration.md#wes-instances)) |
 
 The `detail` of each names the cause; credentials of URLs are never echoed.
+`POST /runs/{run_id}/cancel` refuses runs that aren't cancelable with `409
+Conflict` (see [Run states](#run-states)).
 Responses that don't conform to the specification (e.g., a
 stored run log that is invalid) become `500 Internal server error`.

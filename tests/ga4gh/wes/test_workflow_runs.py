@@ -22,6 +22,7 @@ from pro_wes.ga4gh.wes.models import (
     DbDocument,
     ErrorResponse,
     RunId,
+    State,
     WesEndpoint,
 )
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
@@ -700,6 +701,161 @@ def test_cancel_run_forwarded(
     assert response.status_code == 200
     assert response.json() == {"run_id": "CANCEL"}
     assert canceled == [REMOTE_RUN_ID]
+
+
+def _fail_cancel(_self: WesClient, run_id: str, **_kwargs: Any) -> None:
+    """Fail on any attempt to forward a cancellation.
+
+    Args:
+        _self: WES client; ignored.
+        run_id: Identifier of the remote run.
+        **_kwargs: Keyword arguments; ignored.
+
+    Raises:
+        AssertionError: Always.
+    """
+    raise AssertionError(f"cancellation of {run_id} forwarded")
+
+
+# Stored endpoint of a run that has been forwarded (a remote run)
+REMOTE_ENDPOINT: dict[str, str] = {
+    "host": "https://wes.example.org",
+    "base_path": "/ga4gh/wes/v1",
+    "run_id": REMOTE_RUN_ID,
+}
+# Stored run logs of unknown state: without, `null` or an invalid state
+UNKNOWN_RUN_LOGS: dict[str, dict[str, Any]] = {
+    "UNKNOWN": {"state": "UNKNOWN"},
+    "no state": {},
+    "null state": {"state": None},
+    "invalid state": {"state": "INVALID"},
+    "unhashable state": {"state": ["RUNNING"]},
+}
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        state
+        for state in State
+        if not state.is_cancelable and state is not State.UNKNOWN
+    ],
+)
+def test_cancel_run_not_cancelable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    state: State,
+) -> None:
+    """Finished runs and runs being canceled get `409`, without contacting the WES."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "run_log": {"run_id": "DONE01", "state": state.value},
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
+    )
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/DONE01/cancel")
+    assert response.status_code == 409
+    assert response.json() == {
+        "title": "Conflict",
+        "status": 409,
+        "detail": "The run can't be canceled in its current state.",
+    }
+
+
+@pytest.mark.parametrize(
+    "run_log", UNKNOWN_RUN_LOGS.values(), ids=UNKNOWN_RUN_LOGS.keys()
+)
+def test_cancel_run_unknown_without_remote_run(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    run_log: dict[str, Any],
+) -> None:
+    """Runs of unknown state without remote run (not forwarded yet) get `409`."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "NOSTAT", **run_log}}
+    )
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/NOSTAT/cancel")
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "run_log",
+    [
+        *({"state": state.value} for state in State if state.is_cancelable),
+        *UNKNOWN_RUN_LOGS.values(),
+    ],
+    ids=[
+        *(state.value for state in State if state.is_cancelable),
+        *(f"{name} with remote run" for name in UNKNOWN_RUN_LOGS),
+    ],
+)
+def test_cancel_run_cancelable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    run_log: dict[str, Any],
+) -> None:
+    """Cancellations of cancelable runs are forwarded.
+
+    Runs in a cancelable state, and runs of unknown state that have a remote
+    run (e.g., not tracked yet, or reported as `UNKNOWN` by the WES).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "ACTIVE", **run_log}, "wes_endpoint": REMOTE_ENDPOINT}
+    )
+    canceled: list[str] = []
+    monkeypatch.setattr(
+        WesClient,
+        "cancel_run",
+        lambda _self, run_id, **_kwargs: canceled.append(run_id),
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/ACTIVE/cancel")
+    assert response.status_code == 200
+    assert canceled == [REMOTE_RUN_ID]
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        {},
+        {"wes_endpoint": None},
+        {
+            "wes_endpoint": {
+                "host": "https://wes.example.org",
+                "base_path": "/ga4gh/wes/v1",
+            }
+        },
+        {"wes_endpoint": {**REMOTE_ENDPOINT, "run_id": None}},
+        {"wes_endpoint": {**REMOTE_ENDPOINT, "base_path": None}},
+    ],
+    ids=[
+        "no endpoint",
+        "null endpoint",
+        "no remote run",
+        "null remote run",
+        "null base path",
+    ],
+)
+def test_cancel_run_without_remote_run(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    endpoint: dict[str, Any],
+) -> None:
+    """Cancelable runs without remote run get `500`, without contacting the WES."""
+    document: dict[str, Any] = {
+        "run_log": {"run_id": "NOREMO", "state": "RUNNING"},
+        **endpoint,
+    }
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(document)
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/NOREMO/cancel")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "No/few requirements provided for WES endpoint."
 
 
 def test_cancel_run_not_found(foca_client: Client) -> None:
