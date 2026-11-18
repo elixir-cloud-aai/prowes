@@ -1,3 +1,9 @@
+# Merged over the vendored WES 1.1.0 specification
+# (`20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`): mappings
+# are merged, other values replaced. Every deviation from WES 1.1.0 that
+# this file makes is listed in `docs/api.md` and in `ALLOWED_DEVIATIONS` of
+# `tests/ga4gh/wes/test_spec.py`, which fails on any other deviation; add new
+# ones to both.
 openapi: 3.0.2
 info:
   title: "proWES"
@@ -16,22 +22,6 @@ info:
     email: "alexander.kanitz@alumni.ethz.ch"
 servers:
   - url: /ga4gh/wes/v1
-# This file is merged over the vendored WES 1.1.0 specification
-# (`20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`): mappings
-# are merged, other values replaced. The served specification deviates from
-# the published one only in the following (cf. `docs/api.md`; the contract
-# tests in `tests/ga4gh/wes/test_spec.py` allow no other deviations):
-#
-# - `openapi`, `info` (but `version`) and `servers`: those of proWES
-# - `/service-info`: served by FOCA (`x-openapi-router-controller`)
-# - `Service` and `ServiceType`: the schemas of the GA4GH service info,
-#   which the WES specification references on GitHub; the vendored file
-#   references these copies instead (its only change)
-# - error responses: problem details (`ProblemDetails`), as proWES sends
-#   them (`pro_wes/exceptions.py`), instead of `ErrorResponse` (`msg`,
-#   `status_code`), for all error statuses of all operations
-# - proWES extensions: `413` of `POST /runs` and `501` of the task
-#   endpoints, which proWES answers with, but WES doesn't declare
 paths:
   /service-info:
     get:

@@ -10,7 +10,9 @@ specifications are in
 the WES specification as published (one change: it references the schema
 of the GA4GH service info in `additions.openapi.yaml` instead of fetching it
 from GitHub on startup), and `additions.openapi.yaml`, which is merged over
-it. The served specification deviates from WES 1.1.0 only in the following:
+it. So the vendored file has that one change only, while the served
+specification (both files merged) deviates from WES 1.1.0 in the following
+only:
 
 | Deviation | Why |
 | --- | --- |
@@ -18,10 +20,10 @@ it. The served specification deviates from WES 1.1.0 only in the following:
 | `x-openapi-router-controller` of `GET /service-info` | The service info is served by FOCA |
 | Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
-| `413` of `POST /runs`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with, but WES doesn't declare |
+| `413` of `POST /runs`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with, but WES doesn't declare (clients generated from the published WES specification don't know them) |
 
 The contract tests (`tests/ga4gh/wes/test_spec.py`) fail on any other
-change of the vendored file or deviation of the served specification;
+change of the vendored file or deviation of the merged specification;
 `tests/ga4gh/wes/test_error_responses.py` checks that error responses are
 those declared.
 

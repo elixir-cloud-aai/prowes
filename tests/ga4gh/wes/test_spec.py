@@ -96,13 +96,15 @@ def _is_task_501(location: Location, value: Any) -> bool:
     )
 
 
-# Deviations of the served specification from the vendored one, by name (cf.
-# the header of `additions.openapi.yaml` and `docs/api.md`): functions of the
-# location and the served value of a deviating value that tell whether the
-# deviation is one of them
+# Deviations of the merged specification (vendored file and additions, as
+# FOCA merges them before serving) from the vendored one, by name, as listed
+# in `docs/api.md`: functions of the location and the merged value of a
+# deviating value that tell whether the deviation is one of them. That all
+# error responses are problem details is checked on the served specification
+# (`tests/ga4gh/wes/test_error_responses.py`)
 ALLOWED_DEVIATIONS: dict[str, Callable[[Location, Any], bool]] = {
     "OpenAPI version": lambda loc, _: loc == ("openapi",),
-    "info of proWES": lambda loc, _: loc[0] == "info" and loc[1] != "version",
+    "info of proWES": lambda loc, _: loc[:1] == ("info",) and loc[1:2] != ("version",),
     "servers of proWES": lambda loc, _: loc == ("servers",),
     "service info served by FOCA": lambda loc, _: (
         loc == ("paths", "/service-info", "get", "x-openapi-router-controller")
@@ -267,10 +269,11 @@ def test_vendored_spec_changes_only_service_info_ref() -> None:
     assert sha256(text.encode("utf-8")).hexdigest() == UPSTREAM_SHA256
 
 
-def test_served_spec_deviates_only_as_allowed() -> None:
+def test_merged_spec_deviates_only_as_allowed() -> None:
     """The additions deviate from WES 1.1.0 only in `ALLOWED_DEVIATIONS`.
 
-    Each allowed deviation is used, so that the list is kept up to date.
+    The specification is merged as FOCA merges it before serving. Each
+    allowed deviation is used, so that the list is kept up to date.
     """
     vendored = ConfigParser.merge_yaml(SPEC_FILE)
     served = ConfigParser.merge_yaml(SPEC_FILE, ADDITIONS_FILE)
