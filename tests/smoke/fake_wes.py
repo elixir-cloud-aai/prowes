@@ -11,14 +11,15 @@ workflow URL, and, in final states only, a standard output of its own
 sees what proWES forwarded and that it fetched the final run log.
 `GET /runs` lists all runs it received.
 
-proWES sends all runs to a hard-coded WES (`run_workflow()` in
-`pro_wes/ga4gh/wes/workflow_runs.py`, until #118), so the fake WES takes its
-place: it serves HTTPS on port 443, with a certificate for that host
-(`HOSTS`) issued by a certificate authority of its own, and Docker Compose
-resolves the host to it (`compose.yaml` of this directory). proWES trusts
-only that authority (`REQUESTS_CA_BUNDLE`), so that no run reaches the real
-WES. It also serves plain HTTP on port 8080, for the health check and the
-checks of the smoke test inside the container.
+proWES sends runs to the WES instance of the smoke test's config
+(`custom.wes.backends` in `config.yaml` of this directory): the fake WES,
+at its service name in Docker Compose. It serves HTTPS on port 443, with a
+certificate for that host (`HOSTS`) issued by a certificate authority of
+its own, which proWES trusts instead of the public ones
+(`REQUESTS_CA_BUNDLE`, `compose.yaml` of this directory), so that the
+smoke test forwards runs with TLS verification on, as deployments do. It
+also serves plain HTTP on port 8080, for the health check and the checks of
+the smoke test inside the container.
 
 Run it with `python fake_wes.py certs <dir>` to create the certificates in
 `<dir>` (`ca.pem`, `server.pem`, `server-key.pem`), then with
@@ -51,10 +52,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 BASE_PATH = "/ga4gh/wes/v1"
-# Host names of the certificate: the WES that proWES sends all runs to (#118;
-# also the network alias of the fake WES in `compose.yaml`), the service name
-# in Docker Compose and the loopback host
-HOSTS = ["wes-na.cloud.e-infra.cz", "fake-wes", "localhost"]
+# Host names of the certificate: the service name in Docker Compose (the WES
+# instance of the smoke test's config, `config.yaml`) and the loopback host
+HOSTS = ["fake-wes", "localhost"]
 HTTP_PORT = 8080
 HTTPS_PORT = 443
 RUN_SECONDS = 2.0
