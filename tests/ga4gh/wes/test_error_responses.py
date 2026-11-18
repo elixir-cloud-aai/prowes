@@ -14,9 +14,11 @@ from typing import Any
 from foca.errors.fields import MAX_FIELD_ERRORS
 from foca.testing import Client
 from jsonschema import Draft4Validator
+from pymongo import MongoClient
 import pytest
 
 from pro_wes.ga4gh.wes import controllers
+from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
 BASE_PATH = "/ga4gh/wes/v1"
 BOUNDARY = "prowes-errors-boundary"
@@ -260,6 +262,19 @@ def test_tasks_not_implemented(
     """The task endpoints get `501`, as declared."""
     response = foca_client.get(f"{BASE_PATH}{url}")
     assert_declared_error(served_spec, "get", path, response, 501)
+
+
+def test_cancel_finished_run(
+    foca_client: Client,
+    served_spec: dict[str, Any],
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Cancellations of finished runs get `409`, as declared."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "DONE01", "state": "COMPLETE"}}
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/DONE01/cancel")
+    assert_declared_error(served_spec, "post", "/runs/{run_id}/cancel", response, 409)
 
 
 def test_invalid_parameter(foca_client: Client, served_spec: dict[str, Any]) -> None:

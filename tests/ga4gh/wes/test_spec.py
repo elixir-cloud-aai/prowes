@@ -130,6 +130,9 @@ ALLOWED_DEVIATIONS: dict[str, Callable[[Location, Any], bool]] = {
         loc
         in {("paths", "/runs", "post", "responses", status) for status in (413, 503)}
     ),
+    "409 of POST /runs/{run_id}/cancel": lambda loc, _: (
+        loc == ("paths", "/runs/{run_id}/cancel", "post", "responses", 409)
+    ),
     "501 of the task endpoints": _is_task_501,
     "400 of the endpoints of a run": lambda loc, _: (
         len(loc) == 5
