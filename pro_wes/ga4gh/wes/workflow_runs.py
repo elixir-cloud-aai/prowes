@@ -398,7 +398,7 @@ class WorkflowRuns:
     ) -> dict[str, str]:
         """Cancel workflow run.
 
-        Controller for `GET /runs/{run_id}/cancel`.
+        Controller for `POST /runs/{run_id}/cancel`.
 
         Args:
             run_id: Workflow run identifier.

@@ -427,6 +427,7 @@ def test_post_run_incomplete_document(
             update={"run_log": doc.run_log.model_copy(update={"run_id": None})}
         ),
     ],
+    ids=["no endpoint", "no base path", "no remote run id", "no run id"],
 )
 def test_post_run_incomplete_update(
     foca_client: Client,
@@ -565,23 +566,31 @@ def test_get_run_log_without_request(
 
 
 @pytest.mark.parametrize(
-    ("owner", "requester", "allowed"),
-    [
-        ("alice", None, True),
-        ("alice", "alice", True),
-        ("alice", "bob", False),
-        (None, "bob", False),
-    ],
+    ("owner", "requester"), [("alice", None), (None, None), ("alice", "alice")]
 )
-def test_check_access_permission(
-    owner: str | None, requester: str | None, allowed: bool
-) -> None:
-    """Requesters other than the owner are refused; without one, all pass."""
-    if allowed:
+def test_access_allowed(owner: str | None, requester: str | None) -> None:
+    """The owner, and requests without requester, have access."""
+    WorkflowRuns._check_access_permission("RUN001", owner, requester)
+
+
+@pytest.mark.parametrize(("owner", "requester"), [("alice", "bob"), (None, "bob")])
+def test_access_forbidden(owner: str | None, requester: str | None) -> None:
+    """Requesters other than the owner are refused."""
+    with pytest.raises(Forbidden):
         WorkflowRuns._check_access_permission("RUN001", owner, requester)
-    else:
-        with pytest.raises(Forbidden):
-            WorkflowRuns._check_access_permission("RUN001", owner, requester)
+
+
+@pytest.mark.usefixtures("app_context")
+@pytest.mark.parametrize("operation", ["get_run_log", "get_run_status", "cancel_run"])
+def test_run_of_other_user_forbidden(
+    mongodb: MongoClient[dict[str, Any]], operation: str
+) -> None:
+    """Runs of other users can't be read or canceled."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"user_id": "alice", "run_log": {"run_id": "RUNA01", "state": "QUEUED"}}
+    )
+    with pytest.raises(Forbidden):
+        getattr(WorkflowRuns(), operation)(run_id="RUNA01", user_id="bob")
 
 
 def test_cancel_run_forwarded(
