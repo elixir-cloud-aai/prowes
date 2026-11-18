@@ -1,4 +1,9 @@
-"""proWES application entry point."""
+"""App factory, and entry point for development.
+
+The image serves the app with Gunicorn (`pro_wes.wsgi:app`, with proWES's
+settings, `pro_wes.gunicorn`); `python -m pro_wes.app` runs it with Flask's
+development server, on the host and port of the config (section `server`).
+"""
 
 import os
 from pathlib import Path
@@ -60,3 +65,17 @@ def _setup_first_start(app: App) -> None:
         # FOCA checks the fields of the GA4GH service info, but not those of
         # the WES specification (e.g., `workflow_type_versions`)
         ServiceInfo(**get_service_info())
+
+
+def main() -> None:
+    """Run the app with Flask's development server.
+
+    On the host and port of the config (`server.host`, `server.port`), with
+    its debug mode (`server.debug`). For development; not for production.
+    """
+    app = init_app()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
