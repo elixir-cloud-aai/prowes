@@ -225,3 +225,15 @@ the remote run log, each if it is valid (invalid ones and run logs that
 can't be read are logged as warnings); the run keeps its own identifier and
 state (before: the task failed before storing any). Other fields, e.g., of
 WES 1.1, are left out.
+
+### Tokens and failed runs
+
+Runs submitted without a token are forwarded to the remote WES without an
+`Authorization` header (before: `Authorization: Bearer None`, which WES
+instances that check tokens rejected as an invalid token), and headers of
+one request to the remote WES no longer stick to later ones (e.g., a
+`Content-Type`).
+
+Runs whose document has no identifier of the remote run are set to
+`SYSTEM_ERROR` when the Celery worker fails to track them (before: they
+stayed `INITIALIZING`).

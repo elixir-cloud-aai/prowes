@@ -38,7 +38,7 @@ those declared.
 | --- | --- |
 | `GET /service-info` | The service info, served by FOCA from the configuration (see [Service info](configuration.md#service-info)) |
 | `POST /runs` | Start a run: forwards it to a WES instance (see [Runs](#runs)) |
-| `GET /runs` | List runs, newest first, with `page_size` and `page_token` |
+| `GET /runs` | List runs, newest first, with `page_size` and `page_token`; `next_page_token` is empty on the last page |
 | `GET /runs/{run_id}` | The run log of a run |
 | `GET /runs/{run_id}/status` | The state of a run |
 | `POST /runs/{run_id}/cancel` | Cancel a run |
