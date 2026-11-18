@@ -215,7 +215,8 @@ def test_push_by_digest_only() -> None:
     """`push` pushes by digest only, untagged, and can't sign or attest."""
     assert _jobs()["push"]["permissions"] == {"contents": "read"}
     build = _steps("push")["Build and push image by digest"]["with"]
-    assert "push-by-digest=true" in build["outputs"]
+    options = set(build["outputs"].split(","))
+    assert {"type=image", "push-by-digest=true", "push=true"} <= options
     assert "tags" not in build
     assert build["sbom"] is True
     assert build["provenance"] == "mode=max"
