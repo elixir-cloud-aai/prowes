@@ -38,7 +38,10 @@ helm dependency build "${CHART}"
 # Secrets with the MongoDB credentials and the broker settings of
 # `ci/test-values.yaml`, with random passwords; the broker URL has the host
 # of the release's broker Service
-kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+# A namespace of its own, new on each run (also after a failed one), so that
+# the Secrets' random passwords match the new MongoDB and broker data
+kubectl delete namespace "${NAMESPACE}" --ignore-not-found --wait
+kubectl create namespace "${NAMESPACE}"
 kubectl create secret generic mongodb -n "${NAMESPACE}" \
   --from-literal=root-username=root \
   --from-literal=root-password="$(openssl rand -hex 16)" \

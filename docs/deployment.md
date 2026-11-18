@@ -163,7 +163,9 @@ PersistentVolumeClaim there, in the app's pods only (the worker doesn't use
 the storage): `<app>-data`, of `prowes.storage.size` (1 GiB), with
 `prowes.storage.accessModes` and `prowes.storage.storageClass` (the
 cluster's default class if empty, `-` for no dynamic provisioning), or the
-existing claim `prowes.storage.existingClaim`.
+existing claim `prowes.storage.existingClaim` (set
+`prowes.storage.accessModes` to its access modes, which the chart reads
+from the values only).
 
 - **Access modes**: with `ReadWriteOnce` (the default), the volume can be
   mounted on one node at a time, so the app's pods are replaced
@@ -178,11 +180,17 @@ existing claim `prowes.storage.existingClaim`.
   provisioners), make the volume writable for user or group `1000` first.
   OpenShift assigns user and group itself. If `/data` isn't writable, the app
   refuses to start (`PermissionError` in its log).
+- **Growth**: the app never deletes the directories of runs, and the
+  chart sets no size limit of request bodies, so the volume fills up over
+  time (then `POST /runs` fails): watch its usage, remove the directories
+  of finished runs from time to time, and limit request bodies on every
+  way the app is exposed (Ingress annotations, HTTPRoute filters, the
+  router or proxy in front of it).
 - **Retention**: Helm deletes the claim when the release is uninstalled,
   unless `prowes.storage.resourcePolicy` is `keep`.
 - **Without persistence** (`prowes.storage.enabled: false`), the runs are
-  kept in an `emptyDir` (limited to `size`) and lost when the pod is
-  replaced, e.g., for tests.
+  kept in an `emptyDir` (limited to `size`; the pod is evicted when it is
+  full) and lost when the pod is replaced, e.g., for tests.
 
 ## Celery worker and broker
 
@@ -329,7 +337,9 @@ replacements:
 
 Releases of the legacy chart can't be upgraded in place: the names of their
 volumes changed, so an upgrade would delete them with the data (the chart
-refuses such upgrades). Uninstall the legacy release and install the chart
+refuses such upgrades if the release's resources carry Helm's annotation
+`meta.helm.sh/release-name`, which Helm 3.2 and later add; check releases
+installed with older Helm versions yourself). Uninstall the legacy release and install the chart
 anew; to keep the runs, export the database first with `mongodump` (e.g.,
 from the legacy MongoDB pod) and import it into the new release's MongoDB
 with `mongorestore`, as the app user or root, into the database `runStore`.

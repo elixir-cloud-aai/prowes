@@ -91,7 +91,8 @@ prowes:
   # as the worker does not use it. A PersistentVolumeClaim (`<app name>-data`)
   # of `size`, with `accessModes` and `storageClass` (the cluster's default
   # class if empty, `-` for no dynamic provisioning), or the existing claim
-  # `existingClaim`. Without `ReadWriteMany`, the app's pods are replaced
+  # `existingClaim` (set `accessModes` to its access modes). Without
+  # `ReadWriteMany`, the app's pods are replaced
   # (`Recreate`) instead of rolled, so that the claim is never needed by two
   # pods on different nodes, and `replicas` must be 1. If disabled, the runs
   # are kept in an `emptyDir` (limited to `size`) and lost when the pod is
