@@ -7,10 +7,32 @@ at the base path `/ga4gh/wes/v1`. The specification is served at
 `/ga4gh/wes/v1/openapi.json` and a Swagger UI at `/ga4gh/wes/v1/ui/`. The
 specifications are in
 [`pro_wes/api/`](https://github.com/elixir-cloud-aai/prowes/tree/dev/pro_wes/api):
-the WES specification as published (one deviation: it references the
-schema of the GA4GH service info in `additions.openapi.yaml` instead of
-fetching it from GitHub on startup), and `additions.openapi.yaml`, which
-completes it (the schemas of the GA4GH service info).
+the WES specification as published (one change: it references the schema
+of the GA4GH service info in `additions.openapi.yaml` instead of fetching it
+from GitHub on startup), and `additions.openapi.yaml`, which is merged over
+it. So the vendored file has that one change only, while the two files
+merged deviate from WES 1.1.0 in the following only (when serving, FOCA
+adds the controllers to all operations, `x-openapi-router-controller`, and
+fills in OpenAPI defaults, e.g., `style` of parameters):
+
+| Deviation | Why |
+| --- | --- |
+| `openapi`, `info` (except `info.version`) and `servers` | Those of proWES |
+| `x-openapi-router-controller` of `GET /service-info` | The service info is served by FOCA |
+| Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
+| Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
+| `400` of the endpoints of a run (`/runs/{run_id}...`); `413` of `POST /runs`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
+
+Statuses that any request can get, whatever its operation, are not declared
+per operation: `404` for unknown paths, `405 Method Not Allowed`, and `413
+Content Too Large` for bodies larger than `server.max_content_length` (on
+operations other than `POST /runs`, which declares it). They are problem
+details too.
+
+The contract tests (`tests/ga4gh/wes/test_spec.py`) fail on any other
+change of the vendored file or deviation of the merged specification;
+`tests/ga4gh/wes/test_error_responses.py` checks that error responses are
+those declared.
 
 | Endpoint | Description |
 | --- | --- |
@@ -101,8 +123,11 @@ the run again.
 Errors are sent as problem details ([RFC
 9457](https://www.rfc-editor.org/rfc/rfc9457)), with the members `title`,
 `status` and `detail`, as `application/json` (section `exceptions` of the
-configuration, see the [API reference](reference.md#errors)). For example,
-a run that doesn't exist:
+configuration, see the [API reference](reference.md#errors)), as the
+served specification declares them (schema `ProblemDetails`), so that
+clients generated from it can read them. Requests with invalid fields also
+get `type`, `code` (`invalid-request`) and the invalid fields (`errors`).
+For example, a run that doesn't exist:
 
 ```json
 {

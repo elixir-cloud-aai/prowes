@@ -75,6 +75,12 @@ Error responses are problem details (`title`, `status` and `detail`, as
 `application/json`) instead of `message` and `code`. Clients that read
 `message` or `code` need to read `detail` and `status` instead.
 
+The served specification declares them too: schema `ProblemDetails`
+replaces `ErrorResponse` (`msg`, `status_code`) in all error responses,
+and `400` (endpoints of a run), `413` (`POST /runs`) and `501` (task
+endpoints) are declared. Clients generated from the specification of
+earlier versions need to be generated again.
+
 ### Commands
 
 The app is served with `gunicorn --config python:pro_wes.gunicorn
