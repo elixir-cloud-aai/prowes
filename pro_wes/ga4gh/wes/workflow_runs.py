@@ -37,6 +37,7 @@ from pro_wes.exceptions import (
     WesEndpointProblem,
     WorkflowEngineNotSupported,
 )
+from pro_wes.ga4gh.wes.backends import select_backend
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
     STORED_CONTEXT,
@@ -110,6 +111,10 @@ class WorkflowRuns:
 
         Returns:
             Workflow run identifier.
+
+        Raises:
+            pro_wes.exceptions.NoBackendAvailable: No WES instance is
+                available (`custom.wes.backends`); nothing is stored.
         """
         document: DbDocument = DbDocument()
         controller_config = self.config.post_runs
@@ -127,11 +132,10 @@ class WorkflowRuns:
         # check and read workflow attachments, before anything is stored
         uploads = self._read_attachments()
 
-        # get and attach suitable WES endpoint
-        document.wes_endpoint = WesEndpoint(
-            # The only backend until backends are configurable (#118)
-            host="https://wes-na.cloud.e-infra.cz",  # ast-grep-ignore: hard-coded-url
-        )
+        # choose and attach the WES instance (`custom.wes.backends`), before
+        # anything is stored
+        host, base_path = select_backend()
+        document.wes_endpoint = WesEndpoint(host=host, base_path=base_path)
 
         # get and attach workflow run owner
         document.user_id = kwargs.get("user_id")
@@ -177,10 +181,7 @@ class WorkflowRuns:
         )
 
         # forward incoming WES request and validate response
-        url = (
-            f"{document_stored.wes_endpoint.host.rstrip('/')}/"
-            f"{document_stored.wes_endpoint.base_path.strip('/')}"
-        )
+        url = wes_client.url
         logger.info(
             "Sending workflow run '%s' with task identifier '%s' to WES"
             " endpoint hosted at: %s",

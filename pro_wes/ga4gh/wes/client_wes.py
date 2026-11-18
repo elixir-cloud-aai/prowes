@@ -45,7 +45,10 @@ class WesClient:
         token: str | None = None,
     ) -> None:
         """Class constructor."""
-        self.url = f"{host.rstrip('/')}/{base_path.strip('/')}"
+        # without the separator for an empty base path (the API at `host`)
+        self.url = "/".join(
+            part for part in (host.rstrip("/"), base_path.strip("/")) if part
+        )
         self.set_token(token)
         self.session = requests.Session()
 

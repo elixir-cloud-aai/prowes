@@ -236,6 +236,9 @@ ALL_OPERATIONS = pytest.mark.parametrize(
             "https://wes.example.org/ga4gh/wes/v1",
         ),
         ("https://wes.example.org/", "/wes", "https://wes.example.org/wes"),
+        # the API at the host itself (`api_path: /`)
+        ("https://wes.example.org/", "", "https://wes.example.org"),
+        ("https://wes.example.org/api", "/", "https://wes.example.org/api"),
     ],
 )
 def test_url(host: str, base_path: str, url: str) -> None:
