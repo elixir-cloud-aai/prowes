@@ -190,7 +190,7 @@ jobs:
           # The library chart as checked when it was pinned: OCI tags can
           # be pushed again
           (cd deployment && sha256sum -c charts.sha256)
-      # Coverage is reported only, without a threshold, until #81
+      # Fails below the threshold of `pyproject.toml` (`fail_under`)
       - name: Calculate unit test coverage
         run: |
           coverage run -m pytest
