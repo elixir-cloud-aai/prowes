@@ -180,12 +180,14 @@ from the values only).
   provisioners), make the volume writable for user or group `1000` first.
   OpenShift assigns user and group itself. If `/data` isn't writable, the app
   refuses to start (`PermissionError` in its log).
-- **Growth**: the app never deletes the directories of runs, and the
-  chart sets no size limit of request bodies, so the volume fills up over
-  time (then `POST /runs` fails): watch its usage, remove the directories
-  of finished runs from time to time, and limit request bodies on every
-  way the app is exposed (Ingress annotations, HTTPRoute filters, the
-  router or proxy in front of it).
+- **Growth**: the app never deletes the directories of runs, so the
+  volume fills up over time (then `POST /runs` fails): watch its usage and
+  remove the directories of finished runs from time to time. The app
+  refuses request bodies over `config.server.max_content_length` (10 MiB
+  by default); the ingress controller, Gateway or router in front of it
+  must allow at least as much (e.g., ingress-nginx allows 1 MiB by
+  default: set its annotation `nginx.ingress.kubernetes.io/proxy-body-size`
+  in `prowes.ingress.annotations`).
 - **Retention**: Helm deletes the claim when the release is uninstalled,
   unless `prowes.storage.resourcePolicy` is `keep`.
 - **Without persistence** (`prowes.storage.enabled: false`), the runs are

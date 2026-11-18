@@ -3,9 +3,9 @@ Settings of the app for the templates of the library chart foca-common (see
 `foca-common.checkSettings` and "Helm library chart" in FOCA's docs), as
 YAML; the templates are called with a dict of the root context (`root`) and
 these settings (`settings`). They follow the base config in the image
-(`pro_wes/config.yaml`): it has no size limit of request bodies
-(`server.max_content_length`) and serves the API without authentication, so
-no audience is required, and its database is `runStore` (`db.dbs`), without
+(`pro_wes/config.yaml`): its size limit of request bodies
+(`server.max_content_length`, 10 MiB), which the library checks; it serves
+the API without authentication, so no audience is required; and its database is `runStore` (`db.dbs`), without
 access control. Every template includes the settings, so the app's checks
 (`prowes.validate`) run first, before those of the library and whichever
 template Helm renders first.
@@ -13,6 +13,7 @@ template Helm renders first.
 {{- define "prowes.settings" -}}
 {{- include "prowes.validate" . -}}
 valuesKey: prowes
+maxContentLength: 10485760
 requireAudience: false
 mongodb:
   databases: [runStore]

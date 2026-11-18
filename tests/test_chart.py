@@ -656,3 +656,17 @@ def test_external_broker() -> None:
     )
     error = _render_error(broker_secret=None)
     assert "broker.existingSecret must be set" in error
+
+
+def test_max_content_length() -> None:
+    """The chart knows the base config's size limit of request bodies.
+
+    The values schema (and the library) refuse limits that FOCA refuses,
+    e.g., zero.
+    """
+    config = yaml.safe_load((ROOT / "pro_wes" / "config.yaml").read_text())
+    assert config["server"]["max_content_length"] == 10485760
+    helpers = (CHART / "templates" / "_helpers.tpl").read_text()
+    assert "maxContentLength: 10485760" in helpers
+    error = _render_error("--set", "config.server.max_content_length=0")
+    assert "/config/server/max_content_length" in error
