@@ -407,16 +407,17 @@ class WorkflowRuns:
 
         Controller for `POST /runs/{run_id}/cancel`.
 
+        Only runs in a cancelable state (:py:attr:`State.is_cancelable`), and
+        runs of unknown state that have a remote run, are canceled at the WES
+        instance; others (e.g., finished runs) are refused without contacting
+        it.
+
         Args:
             run_id: Workflow run identifier.
             **kwargs: Additional keyword arguments passed along with request.
 
         Returns:
             Workflow run identifier.
-
-        Only runs in a cancelable state (:py:attr:`State.is_cancelable`) are
-        canceled at the WES instance; others (e.g., finished runs) are refused
-        without contacting it.
 
         Raises:
             pro_wes.exceptions.Forbidden: The requester is not allowed to access the
@@ -452,16 +453,23 @@ class WorkflowRuns:
             requester=kwargs.get("user_id"),
         )
 
-        # ensure workflow run is cancelable; runs stored without state are of
-        # unknown state (as in `RunLog`)
-        state = State(document.get("run_log", {}).get("state", State.UNKNOWN))
-        if not state.is_cancelable:
+        wes_endpoint: dict[str, str] = document.get("wes_endpoint") or {}
+        has_remote_run = {"host", "base_path", "run_id"} <= wes_endpoint.keys()
+
+        # ensure workflow run is cancelable; runs stored without (valid) state
+        # are of unknown state (as in `RunLog`), and runs of unknown state are
+        # cancelable once they have a remote run (e.g., forwarded, but not yet
+        # tracked, or reported as `UNKNOWN` by the WES instance)
+        try:
+            state = State(document["run_log"].get("state") or State.UNKNOWN)
+        except ValueError:
+            state = State.UNKNOWN
+        if not (state.is_cancelable or (state is State.UNKNOWN and has_remote_run)):
             logger.error("Run '%s' not cancelable in state '%s'.", run_id, state.value)
             raise RunNotCancelable
 
         # ensure workflow run has a remote run
-        wes_endpoint: dict[str, str] = document.get("wes_endpoint") or {}
-        if not {"host", "base_path", "run_id"} <= wes_endpoint.keys():
+        if not has_remote_run:
             logger.error("Run '%s' has no remote run to cancel.", run_id)
             raise WesEndpointProblem
 

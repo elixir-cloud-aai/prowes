@@ -100,7 +100,7 @@ the runs in each state (`system_state_counts`).
 
 | State | Final | Cancelable | proWES |
 | --- | --- | --- | --- |
-| `UNKNOWN` | No | No | Set when a run is stored, before it is forwarded, or stored as reported; tracking goes on |
+| `UNKNOWN` | No | Once forwarded | Set when a run is stored, until the worker starts tracking it, or stored as reported; tracking goes on |
 | `QUEUED` | No | Yes | Stored as reported; tracking goes on |
 | `INITIALIZING` | No | Yes | Set when the worker starts tracking a run, or stored as reported; tracking goes on |
 | `RUNNING` | No | Yes | Stored as reported; tracking goes on |
@@ -120,13 +120,22 @@ another WES instance, and returns `PREEMPTED` to clients, which can submit
 the run again.
 
 `POST /runs/{run_id}/cancel` forwards cancellations of cancelable runs
-only, by the state that proWES has stored. Runs in other states get `409
-Conflict` (problem details, "The run can't be canceled in its current
-state."), and the WES instance isn't contacted: finished runs, runs that
-are being canceled already, and runs of unknown state (e.g., while proWES
-forwards them; try again once they are queued). A cancelable run without a
-run at the WES instance gets `500` ("No/few requirements provided for WES
-endpoint.").
+only, by the state that proWES has stored at the time of the request:
+runs in the states `QUEUED`, `INITIALIZING`, `RUNNING` and `PAUSED`, and
+runs of state `UNKNOWN` once they have a run at the WES instance (e.g.,
+forwarded but not yet tracked by the worker, or reported as `UNKNOWN` by
+the WES instance). Other runs get `409 Conflict` (problem details, "The
+run can't be canceled in its current state."), and the WES instance isn't
+contacted: finished runs, runs that are being canceled already
+(`CANCELING`), and runs of state `UNKNOWN` that proWES hasn't forwarded
+yet (try again once `POST /runs` has returned). A run in a cancelable
+state without a run at the WES instance gets `500` ("No/few requirements
+provided for WES endpoint.").
+
+Runs that proWES sets to `SYSTEM_ERROR` itself because it fails to track
+them (see [Run tracking](operations.md#run-tracking)) are final for
+proWES, too, so their cancellations are refused, even if the run is still
+running at the WES instance; cancel those at the WES instance directly.
 
 ## Errors
 
@@ -162,5 +171,7 @@ stored nor forwarded):
 | `413 Content Too Large` | The request body is larger than `server.max_content_length` (see [Request size limit](configuration.md#request-size-limit)), the run has more workflow attachments than `custom.post_runs.max_attachments`, or an attachment is larger than `custom.post_runs.max_attachment_size` |
 
 The `detail` of each names the cause; credentials of URLs are never echoed.
+`POST /runs/{run_id}/cancel` refuses runs that aren't cancelable with `409
+Conflict` (see [Run states](#run-states)).
 Responses that don't conform to the specification (e.g., a
 stored run log that is invalid) become `500 Internal server error`.

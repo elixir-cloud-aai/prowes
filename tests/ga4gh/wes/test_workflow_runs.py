@@ -717,20 +717,41 @@ def _fail_cancel(_self: WesClient, run_id: str, **_kwargs: Any) -> None:
     raise AssertionError(f"cancellation of {run_id} forwarded")
 
 
-@pytest.mark.parametrize("state", [state for state in State if not state.is_cancelable])
+# Stored endpoint of a run that has been forwarded (a remote run)
+REMOTE_ENDPOINT: dict[str, str] = {
+    "host": "https://wes.example.org",
+    "base_path": "/ga4gh/wes/v1",
+    "run_id": REMOTE_RUN_ID,
+}
+# Stored run logs of unknown state: without, `null` or an invalid state
+UNKNOWN_RUN_LOGS: dict[str, dict[str, Any]] = {
+    "UNKNOWN": {"state": "UNKNOWN"},
+    "no state": {},
+    "null state": {"state": None},
+    "invalid state": {"state": "INVALID"},
+}
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        state
+        for state in State
+        if not state.is_cancelable and state is not State.UNKNOWN
+    ],
+)
 def test_cancel_run_not_cancelable(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
     mongodb: MongoClient[dict[str, Any]],
     state: State,
 ) -> None:
-    """Runs that aren't cancelable get `409`, without contacting the WES.
-
-    Finished runs, runs being canceled, and runs of unknown state (e.g.,
-    while they are forwarded, before they have a remote run).
-    """
+    """Finished runs and runs being canceled get `409`, without contacting the WES."""
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "DONE01", "state": state.value}}
+        {
+            "run_log": {"run_id": "DONE01", "state": state.value},
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
     )
     monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
     response = foca_client.post(f"{BASE_PATH}/runs/DONE01/cancel")
@@ -742,42 +763,48 @@ def test_cancel_run_not_cancelable(
     }
 
 
-def test_cancel_run_not_cancelable_states() -> None:
-    """Finished runs, runs being canceled and of unknown state aren't cancelable."""
-    not_cancelable = {state for state in State if not state.is_cancelable}
-    finished = {state for state in State if state.is_finished}
-    assert not_cancelable == finished | {State.UNKNOWN, State.CANCELING}
-
-
-def test_cancel_run_without_state(
+@pytest.mark.parametrize(
+    "run_log", UNKNOWN_RUN_LOGS.values(), ids=UNKNOWN_RUN_LOGS.keys()
+)
+def test_cancel_run_unknown_without_remote_run(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
     mongodb: MongoClient[dict[str, Any]],
+    run_log: dict[str, Any],
 ) -> None:
-    """Runs stored without state are of unknown state: not cancelable."""
-    mongodb[RUN_DB][RUN_COLLECTION].insert_one({"run_log": {"run_id": "NOSTAT"}})
+    """Runs of unknown state without remote run (not forwarded yet) get `409`."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "NOSTAT", **run_log}}
+    )
     monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
     response = foca_client.post(f"{BASE_PATH}/runs/NOSTAT/cancel")
     assert response.status_code == 409
 
 
-@pytest.mark.parametrize("state", [state for state in State if state.is_cancelable])
+@pytest.mark.parametrize(
+    "run_log",
+    [
+        *({"state": state.value} for state in State if state.is_cancelable),
+        *UNKNOWN_RUN_LOGS.values(),
+    ],
+    ids=[
+        *(state.value for state in State if state.is_cancelable),
+        *(f"{name} with remote run" for name in UNKNOWN_RUN_LOGS),
+    ],
+)
 def test_cancel_run_cancelable(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
     mongodb: MongoClient[dict[str, Any]],
-    state: State,
+    run_log: dict[str, Any],
 ) -> None:
-    """Cancellations of cancelable runs are forwarded."""
+    """Cancellations of cancelable runs are forwarded.
+
+    Runs in a cancelable state, and runs of unknown state that have a remote
+    run (e.g., not tracked yet, or reported as `UNKNOWN` by the WES).
+    """
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {
-            "run_log": {"run_id": "ACTIVE", "state": state.value},
-            "wes_endpoint": {
-                "host": "https://wes.example.org",
-                "base_path": "/ga4gh/wes/v1",
-                "run_id": REMOTE_RUN_ID,
-            },
-        }
+        {"run_log": {"run_id": "ACTIVE", **run_log}, "wes_endpoint": REMOTE_ENDPOINT}
     )
     canceled: list[str] = []
     monkeypatch.setattr(

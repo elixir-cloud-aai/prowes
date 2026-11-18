@@ -78,8 +78,9 @@ Error responses are problem details (`title`, `status` and `detail`, as
 The served specification declares them too: schema `ProblemDetails`
 replaces `ErrorResponse` (`msg`, `status_code`) in all error responses,
 and `400` (endpoints of a run), `409` (`POST /runs/{run_id}/cancel`),
-`413` (`POST /runs`) and `501` (task endpoints) are declared. Clients generated from the specification of
-earlier versions need to be generated again.
+`413` (`POST /runs`) and `501` (task endpoints) are declared. Clients
+generated from the specification of earlier versions need to be generated
+again.
 
 ### Cancellation
 
@@ -87,10 +88,14 @@ earlier versions need to be generated again.
 Conflict`, without contacting the WES instance (see [Run
 states](api.md#run-states)): finished runs (`COMPLETE`, `EXECUTOR_ERROR`,
 `SYSTEM_ERROR`, `CANCELED`, `PREEMPTED`), runs being canceled
-(`CANCELING`) and runs of unknown state (`UNKNOWN`). Before, every
-cancellation was forwarded, and the response was whatever the WES instance
-answered (or `500` for runs without a run at the WES instance). Clients
-that cancel runs must accept `409`.
+(`CANCELING`) and runs of state `UNKNOWN` that aren't forwarded yet.
+Before, every cancellation was forwarded, and the response was whatever
+the WES instance answered. Runs without a run at the WES instance (no or
+incomplete `wes_endpoint`) now get `500` with the problem details of
+`WesEndpointProblem` ("No/few requirements provided for WES endpoint.";
+before: `500` "An unexpected error occurred."). Clients that cancel runs
+must accept `409`; runs that proWES set to `SYSTEM_ERROR` while they still
+run at the WES instance need to be canceled there.
 
 ### Commands
 
