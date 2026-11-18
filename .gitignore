@@ -225,3 +225,7 @@ tags
 !.gitkeep
 celeryd.pid
 *.modified.yaml
+# Local Docker Compose overrides and files of local runs from source (see
+# `docs/development.md`)
+/docker-compose.override.yaml
+/local/

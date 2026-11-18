@@ -1,13 +1,17 @@
 """Tests of the app factory (`pro_wes.app`) and the configuration."""
 
+from collections.abc import Callable
 from pathlib import Path
+import runpy
+import sys
+from typing import Any
 
 from connexion import App
 from foca import get_config, get_custom_config
 from foca.testing import Client
 import pytest
 
-from pro_wes.app import init_app
+from pro_wes.app import init_app, main
 from pro_wes.config_models import CustomConfig
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
@@ -82,3 +86,39 @@ def test_db_names_configured(foca_app: App) -> None:
     collections = db.dbs[RUN_DB].collections
     assert collections is not None
     assert RUN_COLLECTION in collections
+
+
+def test_main_runs_development_server(
+    add_overlay: Callable[[str], None],
+    monkeypatch: pytest.MonkeyPatch,
+    storage_path: Path,
+) -> None:
+    """`main()` runs the app on the host and port of the config (`server`)."""
+    add_overlay("server:\n  host: 127.0.0.1\n  port: 8093\n")
+    runs: list[App] = []
+
+    def _run(self: App, **kwargs: Any) -> None:
+        """Record the app instead of serving it.
+
+        Args:
+            self: The app.
+            **kwargs: Arguments of `App.run()`; none expected.
+        """
+        assert kwargs == {}
+        runs.append(self)
+
+    monkeypatch.setattr(App, "run", _run)
+    main()
+    assert len(runs) == 1
+    assert (runs[0].host, runs[0].port, runs[0].debug) == ("127.0.0.1", 8093, False)
+    assert storage_path.is_dir()
+
+
+def test_module_runs_main(app_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`python -m pro_wes.app` runs the app with Flask's development server."""
+    runs: list[App] = []
+    monkeypatch.setattr(App, "run", lambda self, **kwargs: runs.append(self))
+    # Run as by `-m`, i.e., without the module imported by the tests
+    monkeypatch.delitem(sys.modules, "pro_wes.app")
+    runpy.run_module("pro_wes.app", run_name="__main__")
+    assert len(runs) == 1

@@ -47,6 +47,86 @@ The version of the package comes from Git tags (`vX.Y.Z`) via
 [setuptools-scm](https://setuptools-scm.readthedocs.io/); there is no version
 to edit in the code.
 
+## Run from source
+
+To run proWES from the source code, e.g., to debug it or to try changes
+without rebuilding the image, start the app and the Celery worker in the dev
+environment set up as above. They need MongoDB and RabbitMQ; without the
+broker, the app starts and serves the API, but creating runs fails.
+
+1. Start MongoDB and RabbitMQ, e.g., those of Docker Compose, with their
+   ports published on the host's loopback interface by a
+   `docker-compose.override.yaml` (ignored by Git), which Docker Compose
+   merges over `docker-compose.yaml`:
+
+    ```yaml
+    services:
+      mongodb:
+        ports:
+          - "127.0.0.1:27017:27017"
+      rabbitmq:
+        ports:
+          - "127.0.0.1:5672:5672"
+    ```
+
+    ```bash
+    docker compose up -d --wait mongodb rabbitmq
+    ```
+
+    Or install them locally (MongoDB 7.0, as in `docker-compose.yaml`):
+    RabbitMQ's default user `guest` can connect from the same host, so the
+    broker URL below is then `pyamqp://guest:guest@localhost:5672//`.
+
+2. Write a configuration overlay, e.g., `local/config.yaml` (the directory
+   `local/` is ignored by Git), that serves the app on the loopback interface
+   only and keeps the runs in the repository instead of `/data` (relative
+   paths are relative to the working directory):
+
+    ```yaml
+    server:
+      host: 127.0.0.1
+    custom:
+      post_runs:
+        storage_path: local/data
+    ```
+
+3. Point the app and the worker to the services, with the overlay and the
+   credentials of RabbitMQ (`prowes:prowes`, as in `docker-compose.yaml`),
+   in each shell that runs one of them:
+
+    ```bash
+    export FOCA_CONFIG_OVERLAY=local/config.yaml
+    export MONGO_HOST=localhost
+    export CELERY_BROKER_URL='pyamqp://prowes:prowes@localhost:5672//'
+    ```
+
+4. From the repository root, start the app with Flask's development server,
+   on the host and port of the config (`server.host` and `server.port`, port
+   8080), and the Celery worker in another shell:
+
+    ```bash
+    uv run python -m pro_wes.app
+    ```
+
+    ```bash
+    uv run celery -A pro_wes.celery_worker worker -E --loglevel=info
+    ```
+
+    To serve the app with Gunicorn, as the image does
+    (`pro_wes/gunicorn.py`), instead of the development server:
+
+    ```bash
+    uv run gunicorn --config python:pro_wes.gunicorn --bind 127.0.0.1:8080 pro_wes.wsgi:app
+    ```
+
+The WES API is then served at `http://localhost:8080/ga4gh/wes/v1/`, with a
+Swagger UI at `http://localhost:8080/ga4gh/wes/v1/ui/`. For Flask's debugger
+and reloader, set `server.debug: True` in the overlay, only with the loopback
+host, as the debugger allows executing arbitrary code. Until WES backends are
+configurable ([#118](https://github.com/elixir-cloud-aai/prowes/issues/118)),
+runs are forwarded to a hard-coded WES; to try runs without a real WES, use
+the [smoke test](#smoke-test) instead.
+
 ## Static analysis rules
 
 Besides ruff's security rules (`S`, from bandit), pre-commit runs
