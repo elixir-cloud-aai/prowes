@@ -98,7 +98,8 @@ has forwarded the run to the remote WES, so that the run isn't tracked.
    credentials of RabbitMQ (`prowes:prowes`, the defaults of
    `docker-compose.yaml`, or your `RABBITMQ_DEFAULT_USER` and
    `RABBITMQ_DEFAULT_PASS`, if you set them on the first start), in each
-   shell that runs one of them:
+   shell that runs one of them (see [Configuration](configuration.md) for
+   these and further variables):
 
     ```bash
     export FOCA_CONFIG_OVERLAY=local/config.yaml
