@@ -310,13 +310,22 @@ class WesClient:
     ) -> None:
         """Set session headers.
 
+        Headers that aren't given are removed from the session, so that they
+        don't stick to later requests: `Content-Type` if `content_type` is
+        `None`, and `Authorization` if the client has no or an empty token
+        (no anonymous request carries `Authorization: Bearer None`).
+
         Args:
             content_accept: Requested MIME/content type.
             content_type: Type of content sent with the request.
         """
-        headers = {}
-        headers["Accept"] = content_accept
-        if content_type is not None:
-            headers["Content-Type"] = content_type
-        headers["Authorization"] = f"Bearer {self.token}"
-        self.session.headers.update(headers)
+        headers: dict[str, str | None] = {
+            "Accept": content_accept,
+            "Content-Type": content_type,
+            "Authorization": f"Bearer {self.token}" if self.token else None,
+        }
+        for name, value in headers.items():
+            if value is None:
+                self.session.headers.pop(name, None)
+            else:
+                self.session.headers[name] = value
