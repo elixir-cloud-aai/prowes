@@ -191,9 +191,8 @@ from the values only).
   remove the directories of finished runs from time to time. The app
   refuses request bodies over `config.server.max_content_length` (10 MiB
   by default); the ingress controller, Gateway or router in front of it
-  must allow at least as much (e.g., ingress-nginx allows 1 MiB by
-  default: set its annotation `nginx.ingress.kubernetes.io/proxy-body-size`
-  in `prowes.ingress.annotations`).
+  must allow at least as much (see [Body size and rate
+  limits](#body-size-and-rate-limits)).
 - **Retention**: Helm deletes the claim when the release is uninstalled,
   unless `prowes.storage.resourcePolicy` is `keep`.
 - **Without persistence** (`prowes.storage.enabled: false`), the runs are
@@ -243,7 +242,8 @@ The app is exposed for `hostName` via one of:
 - an **Ingress** (`prowes.ingress`, the default), of the class
   `prowes.ingress.className` (the cluster's default if empty), with
   `prowes.ingress.annotations` for the ingress controller (e.g., the size
-  limit of request bodies, which carry the workflow attachments). With
+  limit of request bodies, which carry the workflow attachments, and rate
+  limits; see below). With
   `prowes.ingress.https.enabled`, it requests a certificate from
   cert-manager (ClusterIssuer `prowes.ingress.https.issuer`) and serves
   HTTPS; otherwise, terminate TLS in front of the cluster;
@@ -258,6 +258,56 @@ The app is exposed for `hostName` via one of:
 
 Without any of them, the chart doesn't expose the app outside the cluster;
 reach it with `kubectl port-forward svc/<app> 8080:8080 -n <namespace>`.
+
+### Body size and rate limits
+
+The app refuses request bodies over `config.server.max_content_length`
+(10 MiB by default; see [Request size
+limit](configuration.md#request-size-limit)) with its problem details. A
+proxy in front of it with a lower limit rejects larger bodies first, with
+a `413` page of its own:
+
+- **Ingress**: ingress-nginx allows 1 MiB by default, so the chart sets its
+  annotation `nginx.ingress.kubernetes.io/proxy-body-size: 10m` in
+  `prowes.ingress.annotations` (other ingress controllers ignore it; set
+  theirs in the same value). The chart fails to render if the annotation
+  is below the app's limit: when raising `config.server.max_content_length`,
+  raise the annotation too (`"0"` disables the limit of ingress-nginx;
+  `null` removes the annotation, e.g., for another controller).
+- **OpenShift Route**: the router has no size limit of request bodies.
+- **HTTPRoute**: the Gateway API has no standard for it; set the limit of
+  the Gateway implementation (e.g., via `prowes.httpRoute.filters`).
+
+proWES has no rate limits of its own, and the chart sets none: in
+production, limit the rate of requests per client at the proxy, with
+limits that suit the clients of the deployment (e.g., workflow engines that
+poll the state of many runs). Behind a load balancer, the proxy must see
+the clients' addresses (e.g., via `use-forwarded-headers` of ingress-nginx
+or the PROXY protocol).
+
+- **Ingress** (ingress-nginx; excess requests get `503`):
+
+    ```yaml
+    prowes:
+      ingress:
+        annotations:
+          nginx.ingress.kubernetes.io/limit-rps: "10"
+          nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+          nginx.ingress.kubernetes.io/limit-connections: "20"
+    ```
+
+- **OpenShift Route** (HAProxy router):
+
+    ```yaml
+    prowes:
+      route:
+        annotations:
+          haproxy.router.openshift.io/rate-limit-connections: "true"
+          haproxy.router.openshift.io/rate-limit-connections.rate-http: "100"
+    ```
+
+For other controllers and Gateways, see FOCA's [Helm chart
+guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app).
 
 ## Network policies
 

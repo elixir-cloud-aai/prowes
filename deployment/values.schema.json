@@ -230,7 +230,7 @@
                   "null"
                 ]
               },
-              "description": "Annotations of the Ingress, e.g., for the ingress controller (the chart sets none for particular controllers); take precedence over those set by the chart for https, null removes them"
+              "description": "Annotations of the Ingress, e.g., for the ingress controller; by default, ingress-nginx's size limit of request bodies (proxy-body-size, which must allow the app's limit); take precedence over those set by the chart for https, null removes them"
             },
             "https": {
               "type": "object",

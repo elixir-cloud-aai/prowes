@@ -9,6 +9,7 @@ installed (GitHub's Ubuntu runners have it), and need the library chart
 (`helm dependency build deployment`).
 """
 
+from collections.abc import Mapping
 import hashlib
 import json
 from pathlib import Path
@@ -58,6 +59,10 @@ EXTRA_ENV = {
 }
 WITH_EXTRA_ENV = ("--set-json", f"prowes.extraEnv={json.dumps([EXTRA_ENV])}")
 RWX = ("--set-json", 'prowes.storage.accessModes=["ReadWriteMany"]')
+# ingress-nginx's size limit of request bodies, and an app limit above the
+# default 10 MiB
+BODY_SIZE = "nginx.ingress.kubernetes.io/proxy-body-size"
+LIMIT_20_MIB = ["--set", "config.server.max_content_length=20971520"]
 
 # Rendered manifests, by kind and name
 Docs = dict[tuple[str, str], dict[str, Any]]
@@ -688,3 +693,131 @@ def test_storage_path_from_config() -> None:
     assert "/data" not in mounts
     error = _render_error("--set", "config.custom.post_runs.storage_path=runs")
     assert "storage_path must be an absolute path" in error
+
+
+def _annotations(resource: str, annotations: Mapping[str, str | None]) -> list[str]:
+    """Set annotations of the Ingress or the OpenShift Route.
+
+    Args:
+        resource: Key of the resource in `prowes` (`ingress` or `route`).
+        annotations: Values of the annotations, by name; `None` removes one.
+
+    Returns:
+        Arguments of `helm template`.
+    """
+    args = []
+    for name, value in annotations.items():
+        key = f"prowes.{resource}.annotations.{name.replace('.', r'\.')}"
+        if value is None:
+            args += ["--set-json", f"{key}=null"]
+        else:
+            args += ["--set-string", f"{key}={value}"]
+    return args
+
+
+def _body_size(value: str | None) -> list[str]:
+    """Set the ingress-nginx size limit of request bodies of the Ingress.
+
+    Args:
+        value: Value of the annotation; `None` removes it.
+
+    Returns:
+        Arguments of `helm template`.
+    """
+    return _annotations("ingress", {BODY_SIZE: value})
+
+
+def test_ingress_body_size() -> None:
+    """The Ingress lets ingress-nginx allow the app's size limit, 10 MiB.
+
+    ingress-nginx rejects bodies over 1 MiB by default, before the app could
+    answer with its problem details; `null` removes the annotation.
+    """
+    annotations = _render()[("Ingress", APP)]["metadata"]["annotations"]
+    assert annotations == {BODY_SIZE: "10m"}
+    docs = _render(*_body_size(None))
+    assert "annotations" not in docs[("Ingress", APP)]["metadata"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        _body_size("0"),
+        _body_size("10485760"),
+        _body_size("10240k"),
+        _body_size("1G"),
+        [*LIMIT_20_MIB, *_body_size("20M")],
+        ["--set", "config.server.max_content_length=1048576", *_body_size("1m")],
+        # Without the annotation, the chart can't know the controller's limit
+        [*LIMIT_20_MIB, *_body_size(None)],
+        # The check applies to the Ingress only
+        [*LIMIT_20_MIB, *NO_INGRESS],
+        [*LIMIT_20_MIB, *NO_INGRESS, *OPENSHIFT],
+    ],
+)
+def test_ingress_body_size_allowed(args: list[str]) -> None:
+    """Limits of ingress-nginx at or above the app's limit, or none, render.
+
+    Args:
+        args: Arguments setting the limits.
+    """
+    _render(*args)
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (
+            LIMIT_20_MIB,
+            f"prowes.ingress.annotations: {BODY_SIZE} (10m) must allow at least"
+            " the app's config.server.max_content_length (20971520 bytes)",
+        ),
+        (_body_size("1m"), "set it to 10m or more"),
+        (_body_size("10485759"), "(10485759) must allow at least"),
+        (
+            ["--set", "config.server.max_content_length=10485761"],
+            "set it to 11m or more",
+        ),
+        (_body_size("10 MB"), "must be a size of ingress-nginx"),
+        (_body_size("1.5m"), "must be a size of ingress-nginx"),
+        (_body_size(""), "must be a size of ingress-nginx"),
+    ],
+)
+def test_ingress_body_size_too_small(args: list[str], message: str) -> None:
+    """A limit of ingress-nginx below the app's limit fails to render.
+
+    Requests between the two limits would get ingress-nginx's own `413`
+    page instead of the app's problem details.
+
+    Args:
+        args: Arguments setting the limits.
+        message: Expected part of the error.
+    """
+    assert message in _render_error(*args)
+
+
+def test_ingress_rate_limits() -> None:
+    """Rate limits of ingress-nginx are off by default, set by annotations."""
+    limits = {
+        "nginx.ingress.kubernetes.io/limit-rps": "10",
+        "nginx.ingress.kubernetes.io/limit-burst-multiplier": "5",
+        "nginx.ingress.kubernetes.io/limit-connections": "20",
+    }
+    docs = _render(*_annotations("ingress", limits))
+    annotations = docs[("Ingress", APP)]["metadata"]["annotations"]
+    assert annotations == {BODY_SIZE: "10m", **limits}
+
+
+def test_route_rate_limits() -> None:
+    """Rate limits of the OpenShift router are off by default, set by annotations.
+
+    The router has no size limit of request bodies, so the Route needs none.
+    """
+    docs = _render(*NO_INGRESS, *OPENSHIFT)
+    assert "annotations" not in docs[("Route", APP)]["metadata"]
+    limits = {
+        "haproxy.router.openshift.io/rate-limit-connections": "true",
+        "haproxy.router.openshift.io/rate-limit-connections.rate-http": "100",
+    }
+    docs = _render(*NO_INGRESS, *OPENSHIFT, *_annotations("route", limits))
+    assert docs[("Route", APP)]["metadata"]["annotations"] == limits

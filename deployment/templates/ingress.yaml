@@ -1,1 +1,3 @@
-{{- include "foca-common.ingress" (dict "root" . "settings" (include "prowes.settings" . | fromYaml)) }}
+{{- $context := dict "root" . "settings" (include "prowes.settings" . | fromYaml) }}
+{{- include "prowes.checkProxyBodySize" $context }}
+{{- include "foca-common.ingress" $context }}
