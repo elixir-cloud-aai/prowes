@@ -45,7 +45,10 @@ certificates that `REQUESTS_CA_BUNDLE` or the public certificate
 authorities don't verify. The worker logs failed polls as warnings, with
 the error: `EngineOutcomeUnknown` if the WES instance may have got the
 request, `EngineRequestNotSent` if it certainly didn't, each caused by the
-error of the guarded client that names the cause.
+error of the guarded client that names the cause. After
+`EngineOutcomeUnknown` on `POST /runs` (e.g., a timeout, a redirect or an
+answer that is no JSON), the run is `SYSTEM_ERROR` in proWES, but the WES
+instance may still have created and run it.
 
 ## Logs
 

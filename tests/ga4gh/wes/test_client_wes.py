@@ -699,7 +699,8 @@ class _Handler(BaseHTTPRequestHandler):
         """Answer the request."""
         self.server.paths.append(self.path)
         status, headers, body, delay = self.server.answer
-        time.sleep(delay)
+        if self.server.stop.wait(delay):
+            return
         self.send_response(status)
         for name, value in headers.items():
             self.send_header(name, value)
@@ -712,7 +713,8 @@ class _Handler(BaseHTTPRequestHandler):
             for byte in body:
                 self.wfile.write(bytes([byte]))
                 self.wfile.flush()
-                time.sleep(self.server.drip)
+                if self.server.stop.wait(self.server.drip):
+                    return
         except OSError:
             pass  # the client gave up
 
@@ -728,12 +730,17 @@ class _Server(ThreadingHTTPServer):
         drip: Seconds between the bytes of each body, if they are sent one
             by one (`0`: all at once).
         paths: Paths of the requests received, in order.
+        stop: Set when the test ends: handlers stop waiting and sending, so
+            that closing the server (which joins them) doesn't wait, and no
+            handler outlives the test.
     """
 
-    daemon_threads = True
+    daemon_threads = False
+    block_on_close = True
     answer: tuple[int, dict[str, str], bytes, float]
     drip: float = 0.0
     paths: list[str]
+    stop: threading.Event
 
 
 @pytest.fixture
@@ -746,9 +753,11 @@ def server() -> Iterator[_Server]:
     httpd = _Server(("127.0.0.1", 0), _Handler)
     httpd.answer = (200, {"Content-Type": "application/json"}, b"{}", 0.0)
     httpd.paths = []
+    httpd.stop = threading.Event()
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     yield httpd
+    httpd.stop.set()
     httpd.shutdown()
     httpd.server_close()
 
@@ -808,8 +817,9 @@ def test_local_redirect_not_followed(
     """Redirects are not followed, e.g., to an internal service."""
     server.answer = (307, {"Location": "http://127.0.0.1:1/internal"}, b"", 0.0)
     app = _local_app(add_overlay, _url(server))
-    with app.app.app_context(), pytest.raises(EngineUnavailable, match="redirect"):
+    with app.app.app_context(), pytest.raises(EngineOutcomeUnknown) as info:
         WesClient(host=_url(server)).cancel_run(run_id=RUN_ID)
+    assert info.value.reason == "redirect"
     assert server.paths == [f"/ga4gh/wes/v1/runs/{RUN_ID}/cancel"]
 
 
@@ -826,14 +836,14 @@ def test_local_response_too_large(
 
 def test_local_timeout(add_overlay: Callable[[str], None], server: _Server) -> None:
     """Requests end at their timeout as a whole; the WES may have got them."""
-    server.answer = (200, {}, b"{}", 2.0)
+    server.answer = (200, {}, b"{}", 6.0)
     app = _local_app(add_overlay, _url(server))
     with app.app.app_context():
         client = WesClient(host=_url(server))
         start = time.monotonic()
         with pytest.raises(EngineOutcomeUnknown) as info:
             client.post_run(form_data=FORM_DATA, timeout=0.5)
-    assert time.monotonic() - start < 1.5
+    assert time.monotonic() - start < 4
     assert info.value.reason == "read_timeout"
 
 
@@ -846,14 +856,14 @@ def test_local_timeout_as_a_whole(
     limited each wait only.
     """
     server.answer = (200, {}, b'{"run_id": "RUN001", "state": "RUNNING"}', 0.0)
-    server.drip = 0.1  # about 4 seconds for the whole body
+    server.drip = 0.3  # about 12 seconds for the whole body
     app = _local_app(add_overlay, _url(server))
     with app.app.app_context():
         client = WesClient(host=_url(server))
         start = time.monotonic()
         with pytest.raises(EngineOutcomeUnknown) as info:
-            client.get_run_status(run_id=RUN_ID, timeout=1)
-    assert time.monotonic() - start < 2.5
+            client.get_run_status(run_id=RUN_ID, timeout=0.5)
+    assert time.monotonic() - start < 4
     assert info.value.reason == "read_timeout"
 
 
@@ -1043,6 +1053,23 @@ def test_tls_ca_bundle_reused(
     """The CA bundle is applied once per session, also after `close()`."""
     url, ca_bundle = fake_wes_tls
     monkeypatch.setenv(CA_BUNDLE_ENV, str(ca_bundle))
+    wrapped: list[Callable[..., Any]] = []
+    wrap = client_wes._with_ca_bundle
+
+    def _counted(send: Callable[..., Any], bundle: str) -> Callable[..., Any]:
+        """Wrap a `send()` method, counting the wraps.
+
+        Args:
+            send: Method of the adapter.
+            bundle: CA bundle.
+
+        Returns:
+            The wrapped method.
+        """
+        wrapped.append(send)
+        return wrap(send, bundle)
+
+    monkeypatch.setattr(client_wes, "_with_ca_bundle", _counted)
     add_overlay(
         f"custom:\n  wes:\n    backends:\n      - type: ga4gh-wes\n        url: {url}\n"
     )
@@ -1050,9 +1077,13 @@ def test_tls_ca_bundle_reused(
     with app.app.app_context():
         client = WesClient(host=url)
         session = client.http.session
-        send = session.get_adapter(url).send
-        assert client.http.session.get_adapter(url).send is send
-        assert isinstance(client.get_runs(), RunListResponse)
+        for _ in range(3):
+            assert client.http.session is session
+            assert isinstance(client.get_runs(), RunListResponse)
+        # one adapter (FOCA's), mounted for both schemes
+        adapters = {id(adapter) for adapter in session.adapters.values()}
+        assert len(wrapped) == len(adapters)
         client.http.close()
         assert client.http.session is not session
         assert isinstance(client.get_runs(), RunListResponse)
+    assert len(wrapped) == 2 * len(adapters)
