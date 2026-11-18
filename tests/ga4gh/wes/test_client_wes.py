@@ -276,6 +276,7 @@ def test_valid_response(
     session = FakeSession(body=body)
     response = call(_client(session))
     assert isinstance(response, model)
+    assert response == model(**body)
     assert len(session.calls) == 1
     sent_method, sent_url, kwargs = session.calls[0]
     assert (sent_method, sent_url) == (method, url)

@@ -15,10 +15,12 @@ from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 
 URL = "/ga4gh/wes/v1/runs/{run_id}/cancel"
 RUN_ID = "RUN001"
+# response of the fake, distinct from the request, so that it is passed on
+RESPONSE = {"run_id": "RUN001-CANCELED"}
 
 
 def test_cancel_run(foca_client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Requests are handed on with their run identifier; responses returned."""
+    """Requests are handed on with their run identifier; responses passed on."""
     calls: list[str] = []
 
     def _cancel_run(self: WorkflowRuns, run_id: str, **kwargs: Any) -> dict[str, str]:
@@ -30,13 +32,13 @@ def test_cancel_run(foca_client: Client, monkeypatch: pytest.MonkeyPatch) -> Non
             **kwargs: Further arguments of the request; ignored.
 
         Returns:
-            Run identifier, as the WES API schema `RunId`.
+            Canned response.
         """
         calls.append(run_id)
-        return {"run_id": run_id}
+        return RESPONSE
 
     monkeypatch.setattr(WorkflowRuns, "cancel_run", _cancel_run)
     response = foca_client.post(URL.format(run_id=RUN_ID))
     assert response.status_code == 200
-    assert response.json() == {"run_id": RUN_ID}
+    assert response.json() == RESPONSE
     assert calls == [RUN_ID]
