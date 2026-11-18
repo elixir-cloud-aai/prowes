@@ -438,7 +438,12 @@ def main(args: list[str]) -> None:
     Raises:
         SystemExit: The arguments are invalid.
     """
-    if len(args) >= 3 and args[0] == "verify":
+    if (
+        len(args) >= 3
+        and args[0] == "verify"
+        and args[1].isdigit()
+        and all("=" in arg for arg in args[2:])
+    ):
         verify(dict(arg.split("=", 1) for arg in args[2:]), int(args[1]))
     elif len(args) == 2 and args[0] == "certs":
         create_certificates(Path(args[1]))

@@ -212,6 +212,8 @@ jobs:
           fi
           docker compose exec -T prowes sh -c \
             'test "$(id -u)" = 1000 && touch /data/.probe && rm /data/.probe'
+      # Also covers failures after the script (which shows the logs of its
+      # own failures) and cancellation
       - name: Show app logs
         if: failure() || cancelled()
         run: docker compose logs

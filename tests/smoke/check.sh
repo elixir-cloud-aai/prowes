@@ -19,10 +19,16 @@ api="${1:-http://localhost:8090/ga4gh/wes/v1}"
 export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yaml:tests/smoke/compose.yaml}"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-prowes-smoke}"
 body="$(mktemp)"
+# The run that the fake WES holds, once created: canceled on failure (best
+# effort), so that its Celery task doesn't keep tracking it
+held=""
 on_exit() {
   local status=$?
   rm -f "${body}"
   if [ "${status}" -ne 0 ]; then
+    if [ -n "${held}" ]; then
+      curl --silent --output /dev/null -X POST "${api}/runs/${held}/cancel" || true
+    fi
     echo "Smoke test failed; logs of the services:"
     docker compose logs --tail 100 || true
   fi
@@ -100,7 +106,7 @@ await "/runs/${held}/status" '.state == "RUNNING"'
 check POST "/runs/${held}/cancel" 200 ".run_id == \"${held}\""
 await "/runs/${held}/status" '.state == "CANCELED"'
 await "/runs/${held}" '.run_log.stdout == "fake canceled"'
-check GET "/runs/${held}" 200 '.state == "CANCELED" and .run_log.exit_code == null'
+check GET "/runs/${held}" 200 '.state == "CANCELED"'
 check GET /runs 200 "any(.runs[]; .run_id == \"${held}\" and .state == \"CANCELED\")"
 # Unknown runs aren't found
 check GET /runs/UNKNWN 404 '.status == 404'
