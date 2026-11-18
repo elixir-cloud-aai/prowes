@@ -51,7 +51,13 @@ custom:
 ```
 
 Runs stored before the upgrade are tracked and canceled at the WES instance
-stored with them, as before.
+stored with them.
+
+proWES sends no credentials to WES instances (until authentication,
+[#120](https://github.com/elixir-cloud-aai/prowes/issues/120)): the token of
+the client is no longer passed on, also not for runs stored before the
+upgrade. With authentication off, as in earlier versions, there was none to
+pass on; WES instances must accept requests without credentials.
 
 ### Run identifiers
 

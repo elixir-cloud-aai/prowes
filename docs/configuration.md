@@ -77,14 +77,19 @@ Settings of a WES instance:
 | `auth` | `none` | Credentials for the WES instance: only `none` for now; credentials per WES instance come with authentication ([#120](https://github.com/elixir-cloud-aai/prowes/issues/120)) |
 
 URLs are normalized (e.g., lowercase host, without default port and trailing
-slashes). A URL listed twice is used once, at its first place. WES
-instances at or below the public URL of proWES (`server.public_url`: its root
-URL, without the API path, e.g., `https://prowes.example.org`) are never
-used, so that proWES never forwards runs to itself: proWES refuses to start
-if a configured one is, or if its WES API (`url` and `api_path`) is. Backend
-lists with registry entries need `server.public_url` (the app doesn't start
-without it), as a registry may list proWES itself. Unknown keys and invalid entries (e.g.,
-`type: ga4gh-tes`, `auth: basic`) stop the app on startup.
+slashes). A URL listed twice is used once, at its first place. Unknown keys
+and invalid entries (e.g., `type: ga4gh-tes`, `auth: basic`) stop the app on
+startup.
+
+WES instances at or below the public URL of proWES (`server.public_url`: its
+root URL, without the API path, e.g., `https://prowes.example.org`) are
+never used, so that proWES never forwards runs to itself: proWES refuses to
+start if a configured one is, or if its WES API (`url` and `api_path`) is.
+Backend lists with registry entries need `server.public_url` (the app
+doesn't start without it), as a registry may list proWES itself. All URLs
+of the host and port of the public URL below its path count as proWES: for
+WES instances on the same host and port, set the path prefix of proWES in
+`server.public_url` (e.g., `https://example.org/prowes`).
 
 Requests to WES instances verify TLS certificates (with the public
 certificate authorities, or those of the environment variable

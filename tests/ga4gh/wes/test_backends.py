@@ -20,6 +20,7 @@ from pro_wes.exceptions import NoBackendAvailable
 from pro_wes.ga4gh.wes.backends import WES_API, select_backend
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import RunId
+from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 from tests.conftest import BACKEND_URL
@@ -426,3 +427,42 @@ def test_post_run_to_configured_backend(
     assert stored["wes_endpoint"]["base_path"] == ""
     assert tracked[0]["remote_host"] == "https://wes.example.com"
     assert tracked[0]["remote_base_path"] == ""
+
+
+@pytest.mark.usefixtures("app_env", "mongodb")
+def test_client_token_not_passed_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client's token reaches no WES instance (`auth: none`, #120)."""
+    tokens: list[str | None] = []
+    tracked: list[dict[str, Any]] = []
+    original = WesClient.set_token
+
+    def _set_token(self: WesClient, token: str | None = None) -> None:
+        """Record the token of a client.
+
+        Args:
+            self: WES client.
+            token: Token of the client.
+        """
+        tokens.append(token)
+        original(self, token)
+
+    monkeypatch.setattr(WesClient, "set_token", _set_token)
+    monkeypatch.setattr(
+        WesClient, "post_run", lambda *_args, **_kwargs: RunId(run_id="REMOTE1")
+    )
+    monkeypatch.setattr(WesClient, "cancel_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        task__track_run_progress,
+        "apply_async",
+        lambda _args, kwargs, **_options: tracked.append(kwargs),
+    )
+    app = init_app()
+    with app.app.test_request_context(
+        f"{BASE_PATH}/runs", method="POST", data=RUN_REQUEST
+    ):
+        run_id = WorkflowRuns().run_workflow(jwt="client-token")["run_id"]
+        WorkflowRuns().cancel_run(run_id=run_id, jwt="client-token")
+    assert tokens == [None, None]
+    assert tracked[0]["jwt"] is None

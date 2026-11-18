@@ -115,7 +115,8 @@ def check_backends() -> None:
         if not isinstance(entry, WesServiceEntry):
             continue
         for url in (entry.url, f"{entry.url}{entry.api_path}"):
-            # `expand()` leaves out backends at or below the public URL
+            # `expand()` leaves out backends at or below the public URL: the
+            # same test as for each run, so that the two can't diverge
             probe = WesServiceEntry(
                 type="ga4gh-wes", url=url, url_schemes=entry.url_schemes
             )
