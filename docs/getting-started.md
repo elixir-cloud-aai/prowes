@@ -1,0 +1,65 @@
+# Getting started
+
+To quickly run the service for development or testing, use [Docker
+Compose](https://docs.docker.com/compose/install/), as described below. For
+deployments on Kubernetes, a [Helm](https://helm.sh/) chart is in the
+[`deployment/`](https://github.com/elixir-cloud-aai/prowes/tree/dev/deployment)
+directory (see [Deployment](deployment.md)). The [FOCA deployment
+guide](https://foca.readthedocs.io/en/latest/deployment/) explains how FOCA
+apps, such as this one, are configured with Docker Compose and Helm.
+
+## Quick start
+
+--8<-- "README.md:quick-start"
+
+Only proWES is published, on the host's loopback interface
+(`127.0.0.1:8090`); MongoDB and RabbitMQ are only reachable from the
+containers. To publish proWES elsewhere, override `ports` in a
+`docker-compose.override.yaml`. Docker Compose keeps the data of MongoDB,
+RabbitMQ and the runs in the Compose project's named volumes `mongodb-data`,
+`rabbitmq-data` and `prowes-data` (e.g., `prowes_mongodb-data`, see `docker
+volume ls`); no data directories need to be created. The comments in
+[`docker-compose.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/docker-compose.yaml)
+describe the settings.
+
+The image reports version `0.0.0.dev0` unless you set
+`SETUPTOOLS_SCM_PRETEND_VERSION` on the host (e.g.,
+`SETUPTOOLS_SCM_PRETEND_VERSION=0.20.0 docker compose up -d --build --wait`).
+RabbitMQ's credentials default to `prowes:prowes`; set `RABBITMQ_DEFAULT_USER`
+and `RABBITMQ_DEFAULT_PASS` on the host to change them (on the first start, or
+after `docker compose down --volumes`, which also removes the database and
+the runs).
+
+To also start [Flower](https://flower.readthedocs.io/), a web UI to monitor
+the Celery worker, at `http://localhost:5565`, add the profile `monitoring`
+and set its basic authentication:
+
+```bash
+FLOWER_BASIC_AUTH='<user>:<password>' docker compose --profile monitoring up -d --wait
+```
+
+Docker Compose is for local development and testing; for deployments, see
+[Deployment](deployment.md).
+
+### Other useful commands
+
+To shut down the service, run:
+
+```bash
+docker compose down
+```
+
+Add `--volumes` to also delete the database, the broker's data and the runs.
+
+To inspect the logs, run:
+
+```bash
+docker compose logs
+```
+
+## Usage
+
+[Endpoints](api.md) can be probed with `curl`, as above, or tried in the
+Swagger UI. See [Configuration](configuration.md) to change the
+configuration, e.g., the [service info](configuration.md#service-info) that
+describes your deployment: the defaults are placeholders.

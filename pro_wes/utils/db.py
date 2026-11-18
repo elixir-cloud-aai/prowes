@@ -73,7 +73,7 @@ class DbDocumentConnector:
             state: New run status; one of `pro_wes.ga4gh.wes.models.State`.
 
         Raises:
-            Passed
+            ValueError: The state is not a known run state.
         """
         try:
             State(state)
