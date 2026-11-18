@@ -132,8 +132,17 @@ class WorkflowRuns:
             document=document, uploads=uploads
         )
 
-        # write workflow attachments
-        self._save_attachments(attachments=document_stored.attachments, uploads=uploads)
+        # write workflow attachments; the run fails if they can't be written
+        try:
+            self._save_attachments(
+                attachments=document_stored.attachments, uploads=uploads
+            )
+        except StorageUnavailableProblem:
+            if document_stored.task_id is not None:
+                DbDocumentConnector(
+                    collection=self.db_client, task_id=document_stored.task_id
+                ).update_run_state(state=State.SYSTEM_ERROR.value)
+            raise
 
         # ensure WES endpoint is available
         if (
@@ -552,8 +561,9 @@ class WorkflowRuns:
 
         Credentials in the URLs of the request are refused or removed (cf.
         `custom.post_runs.url_credentials`): in `workflow_url`, and in the
-        string values of `workflow_params`, `workflow_engine_parameters` and
-        `tags`, at any depth. Fields without credentials are kept as sent.
+        strings (keys and values) of `workflow_params`,
+        `workflow_engine_parameters` and `tags`, at any depth. Fields without
+        credentials are kept as sent.
 
         Args:
             form_data: Flask data structure for representing form values.

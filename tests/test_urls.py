@@ -19,7 +19,15 @@ from pro_wes.utils.urls import (
         ("https://:pass@example.org/path", True),
         ("https://@example.org/path", True),
         ("s3://key:secret@bucket/object", True),
+        # forms that lenient (WHATWG) parsers take as user information
+        ("https:/user:pass@example.org/wf.cwl", True),
+        ("https:\\\\user:pass@example.org/x", True),
+        ("　https://user:pass@example.org/", True),
+        # URLs inside strings
+        ("--url=https://user:pass@example.org/", True),
+        ("see https://token@example.org/x", True),
         ("https://example.org/path?user=a@b", False),
+        ("https://example.org/x?next=https://example.com/a@b", False),
         ("https://example.org/a@b", False),
         ("user@example.org", False),
         ("mailto:user@example.org", False),
@@ -28,7 +36,7 @@ from pro_wes.utils.urls import (
     ],
 )
 def test_has_credentials(url: str, expected: bool) -> None:
-    """User names and passwords are found in the authority of URLs only."""
+    """User names and passwords are found after a scheme and slashes only."""
     assert has_credentials(url) is expected
 
 
@@ -48,6 +56,8 @@ def test_has_credentials_malformed() -> None:
         ("https://a@b:c@example.org/", "https://example.org/"),
         ("https://@example.org/", "https://example.org/"),
         ("https://example.org/", "https://example.org/"),
+        ("https:/user:pass@example.org/x", "https:/example.org/x"),
+        ("--url=https://u:p@h/ --in=s3://k@b/o", "--url=https://h/ --in=s3://b/o"),
     ],
 )
 def test_strip_auth(url: str, expected: str) -> None:
@@ -64,23 +74,28 @@ def test_sanitize_url() -> None:
     )
     with pytest.raises(UrlCredentials, match="`f`"):
         sanitize_url("https://u:p@example.org/", "f", "reject")
-    with pytest.raises(MalformedUrl, match="`f`"):
+    with pytest.raises(MalformedUrl, match="`f`") as info:
         sanitize_url("https://[u@example.org/", "f", "strip")
+    # no cause, whose logged message may hold credentials
+    assert info.value.__cause__ is None
+    assert info.value.__suppress_context__
     assert issubclass(UrlCredentials, BadRequest)
     assert issubclass(MalformedUrl, BadRequest)
 
 
 def test_sanitize_json() -> None:
-    """String values at any depth are checked; keys and other types are kept."""
+    """Strings at any depth, also keys, are checked; other types are kept."""
     value = {
         "https://u:p@example.org/key": [1, None, True, {"x": "https://u@h/"}],
         "y": "https://p@h/",
     }
     with pytest.raises(UrlCredentials):
         sanitize_json(value, "f", "reject")
+    with pytest.raises(UrlCredentials):
+        sanitize_json({"https://u@h/": "v"}, "f", "reject")
     assert sanitize_json(value, "f", "strip") is True
     assert value == {
-        "https://u:p@example.org/key": [1, None, True, {"x": "https://h/"}],
+        "https://example.org/key": [1, None, True, {"x": "https://h/"}],
         "y": "https://h/",
     }
     assert sanitize_json(value, "f", "reject") is False

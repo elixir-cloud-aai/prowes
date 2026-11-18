@@ -98,6 +98,10 @@ class RunRequest(BaseModel):
     workflow_engine_parameters: str | None = "{}"
     workflow_url: str
 
+    # Validation errors, which are logged, without the values, which may hold
+    # credentials (cf. `custom.post_runs.url_credentials`)
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     @field_validator(
         "workflow_type",
         "workflow_type_version",

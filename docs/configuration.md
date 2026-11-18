@@ -52,6 +52,9 @@ of proWES must allow bodies at least as large, or it rejects them first
 (e.g., ingress-nginx allows 1 MiB by default; set its annotation
 `nginx.ingress.kubernetes.io/proxy-body-size`, see FOCA's [Helm chart
 guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app)).
+Each form field other than attachments (e.g., `workflow_params`) is also
+limited to 500 kB by Flask (`MAX_FORM_MEMORY_SIZE`, not configurable in
+proWES), with the same `413`.
 
 ### Run requests
 
@@ -65,14 +68,18 @@ guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app)).
   `413 Content Too Large`. All attachments together are limited by the
   [request size limit](#request-size-limit);
 - `url_credentials`: what happens to runs with credentials in URLs
-  (`https://user:password@host/...`), in `workflow_url` and in the string
-  values of `workflow_params`, `workflow_engine_parameters` and `tags`, at
-  any depth: they are rejected with `400 Bad Request` (`reject`, the
-  default), or the credentials are removed (`strip`). Credentials are never
-  stored, forwarded or returned in run logs, and error responses don't echo
-  them. Only URLs with an authority (`scheme://...`) have credentials: e.g.,
-  `user@example.org` and `mailto:user@example.org` are kept. Pass credentials
-  for inputs in other ways, e.g., signed URLs.
+  (`https://user:password@host/...`), in `workflow_url` and in the strings
+  (keys and values) of `workflow_params`, `workflow_engine_parameters` and
+  `tags`, at any depth: they are rejected with `400 Bad Request` (`reject`,
+  the default), or the credentials are removed (`strip`). User information
+  counts as credentials wherever a scheme with slashes or backslashes
+  precedes it in a string, also in forms that lenient URL parsers accept
+  (e.g., `https:/user:password@host`) and in URLs inside strings (e.g.,
+  `--url=https://user:password@host`). Such credentials are not stored,
+  forwarded or returned in run logs, and neither error responses nor logs
+  echo them. Strings without a scheme and slash before the `@`, e.g.,
+  `user@example.org` and `mailto:user@example.org`, are kept. Pass
+  credentials for inputs in other ways, e.g., signed URLs.
 
 Attachments are written to the working directory of the run, in the storage
 of the runs (`storage_path`), each under a safe file name: without

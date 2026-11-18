@@ -257,7 +257,7 @@ def test_chunked_request_too_large(
     fields = {**RUN_REQUEST, "workflow_params": f'{{"input": "{"x" * 4096}"}}'}
     # Werkzeug's client (FOCA's sends a declared size), with a stream of
     # undeclared size, as for chunked bodies
-    flask_client = client._client  # noqa: SLF001 (no streaming in FOCA's client)
+    flask_client = client._client
     response = flask_client.post(
         f"{BASE_PATH}/runs",
         input_stream=BytesIO(_multipart(fields)),
@@ -399,11 +399,12 @@ def test_attachment_without_safe_name(
 def test_attachment_not_writable(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
     storage: Path,
     queued: list[dict[str, Any]],
     remote_wes: list[dict[str, str]],
 ) -> None:
-    """Attachments that can't be written get `500`, and the run isn't forwarded."""
+    """Attachments that can't be written fail the run, which isn't forwarded."""
 
     def _open(*args: Any, **kwargs: Any) -> Any:
         """Fail like a full disk.
@@ -422,6 +423,10 @@ def test_attachment_not_writable(
     assert response.status_code == 500
     assert response.json()["detail"] == "Storage is not accessible."
     assert not remote_wes
+    assert not queued
+    stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
+    assert stored is not None
+    assert stored["run_log"]["state"] == "SYSTEM_ERROR"
 
 
 @pytest.mark.parametrize(
@@ -542,6 +547,34 @@ def test_malformed_url_refused(
     fields = {**RUN_REQUEST, "workflow_params": '{"in": "https://[user@host/x"}'}
     response = _post_run(foca_client, fields)
     _assert_refused(response, 400, mongodb, storage, remote_wes)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        # malformed, with a message of `urlsplit()` that names the netloc
+        {"workflow_params": '{"in": "https://user:s3cr3t@h℀x/"}'},
+        # invalid for another reason (a value other than a string)
+        {"tags": '{"n": 1, "src": "https://user:s3cr3t@h/x"}'},
+        # a lenient form, inside a string
+        {"workflow_engine_parameters": '{"x": "--url=https:/user:s3cr3t@h/"}'},
+    ],
+    ids=["malformed", "invalid", "lenient"],
+)
+def test_credentials_not_logged(
+    fields: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Refused runs with credentials don't leak them to responses or logs."""
+    response = _post_run(foca_client, {**RUN_REQUEST, **fields})
+    _assert_refused(response, 400, mongodb, storage, remote_wes)
+    assert "s3cr3t" not in response.text
+    assert "s3cr3t" not in caplog.text
 
 
 # Validation of run requests and responses

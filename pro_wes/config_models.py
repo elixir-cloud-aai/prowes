@@ -62,10 +62,11 @@ class PostRuns(BaseModel):
             request bodies (`server.max_content_length`).
         url_credentials: What happens to runs with credentials in the URLs of
             their run requests (`https://user:password@host/...`, in
-            `workflow_url` and in the string values of `workflow_params`,
-            `workflow_engine_parameters` and `tags`): they are rejected with
+            `workflow_url` and in the strings of `workflow_params`,
+            `workflow_engine_parameters` and `tags`; cf.
+            `pro_wes.utils.urls.has_credentials`): they are rejected with
             `400 Bad Request` (`reject`), or the credentials are removed
-            (`strip`). Credentials are never stored or forwarded.
+            (`strip`), before runs are stored or forwarded.
     """
 
     storage_path: Path = Path("/data")
