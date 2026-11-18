@@ -108,7 +108,7 @@ the runs in each state (`system_state_counts`).
 | `CANCELING` | No | No | Stored as reported; tracking goes on |
 | `COMPLETE` | Yes | No | Stored; tracking ends |
 | `EXECUTOR_ERROR` | Yes | No | Stored; tracking ends |
-| `SYSTEM_ERROR` | Yes | No | Stored; tracking ends. Also set by proWES for runs it fails to forward or track (see [Run tracking](operations.md#run-tracking)) |
+| `SYSTEM_ERROR` | Yes | If set by proWES and forwarded | Stored; tracking ends. Also set by proWES for runs it fails to forward or track (see [Run tracking](operations.md#run-tracking)) |
 | `CANCELED` | Yes | No | Stored; tracking ends |
 | `PREEMPTED` | Yes | No | Stored; tracking ends (WES 1.1.0) |
 
@@ -122,20 +122,33 @@ the run again.
 `POST /runs/{run_id}/cancel` forwards cancellations of cancelable runs
 only, by the state that proWES has stored at the time of the request:
 runs in the states `QUEUED`, `INITIALIZING`, `RUNNING` and `PAUSED`, and
-runs of state `UNKNOWN` once they have a run at the WES instance (e.g.,
-forwarded but not yet tracked by the worker, or reported as `UNKNOWN` by
-the WES instance). Other runs get `409 Conflict` (problem details, "The
-run can't be canceled in its current state."), and the WES instance isn't
-contacted: finished runs, runs that are being canceled already
-(`CANCELING`), and runs of state `UNKNOWN` that proWES hasn't forwarded
-yet (try again once `POST /runs` has returned). A run in a cancelable
-state without a run at the WES instance gets `500` ("No/few requirements
-provided for WES endpoint.").
+runs whose state proWES doesn't know, once they have a run at the WES
+instance: runs of state `UNKNOWN` (e.g., forwarded but not yet tracked by
+the worker, or reported as `UNKNOWN` by the WES instance), and runs that
+proWES itself set to `SYSTEM_ERROR` (see below). Other runs get `409
+Conflict` (problem details, "The run can't be canceled in its current
+state."), and the WES instance isn't contacted: finished runs (including
+those that the WES instance reported as `SYSTEM_ERROR`), runs that are
+being canceled already (`CANCELING`), and runs of state `UNKNOWN` that
+proWES hasn't forwarded yet (try again once `POST /runs` has returned). A
+run in a cancelable state without a run at the WES instance gets `500`
+("No/few requirements provided for WES endpoint.").
 
-Runs that proWES sets to `SYSTEM_ERROR` itself because it fails to track
-them (see [Run tracking](operations.md#run-tracking)) are final for
-proWES, too, so their cancellations are refused, even if the run is still
-running at the WES instance; cancel those at the WES instance directly.
+proWES sets runs to `SYSTEM_ERROR` itself when it gives up tracking them
+(see [Run tracking](operations.md#run-tracking)): the WES instance is
+unreachable or answers with errors for too long, or tracking takes longer
+than `custom.post_runs.timeout_job`. Such a run may still be running at the
+WES instance, so proWES forwards its cancellation. The stored state stays
+`SYSTEM_ERROR`, as proWES doesn't track the run any longer; check the
+outcome at the WES instance. proWES answers `200` once it has forwarded a
+cancellation, even if the WES instance answers with an error (e.g., the run
+has finished there); passing these errors on is planned
+([#86](https://github.com/elixir-cloud-aai/prowes/issues/86)). proWES
+records which `SYSTEM_ERROR`s it set itself (`system_error_by_prowes` of
+the stored run); runs stored by earlier versions don't have that record,
+and their cancellations are refused, as are those of runs that failed
+before they were forwarded (e.g., the WES instance refused the run
+request).
 
 ## Errors
 

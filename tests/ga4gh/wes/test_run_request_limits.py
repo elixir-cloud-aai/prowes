@@ -427,6 +427,7 @@ def test_attachment_not_writable(
     stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
     assert stored is not None
     assert stored["run_log"]["state"] == "SYSTEM_ERROR"
+    assert stored["system_error_by_prowes"] is True
 
 
 @pytest.mark.parametrize(

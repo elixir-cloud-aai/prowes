@@ -30,7 +30,11 @@ states](api.md#run-states)), the worker stores the outputs, the engine log
 and the task logs of the remote run log, each if it is valid (invalid ones,
 and run logs that can't be read, are logged as warnings); the run keeps its
 own identifier and state. Tasks run without a time limit unless
-`custom.post_runs.timeout_job` is set (in seconds).
+`custom.post_runs.timeout_job` is set (in seconds); runs whose tracking
+takes longer get the state `SYSTEM_ERROR`, too, unless they have finished
+already (e.g., the limit is hit while the final run log is read). Runs
+that proWES sets to `SYSTEM_ERROR` this way may still run at the WES
+instance and can still be canceled (see [Run states](api.md#run-states)).
 
 ## Failed requests to WES instances
 
