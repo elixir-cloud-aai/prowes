@@ -78,13 +78,11 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["pro_wes"]
 
-# 100% coverage is the goal (#81); all modules but the run controller
-# (`pro_wes/ga4gh/wes/workflow_runs.py`, rewritten for WES 1.1.0 in #70) are
-# covered completely, so the threshold is the coverage reached so far, to be
-# raised to 100 with #70
+# All code is covered by the unit tests (#81); `coverage report` fails
+# below 100%
 [tool.coverage.report]
 show_missing = true
-fail_under = 95
+fail_under = 100
 
 [project]
 name = "pro-wes"

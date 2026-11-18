@@ -76,11 +76,9 @@ rest is checked in reviews.
   `dict[str, Any]`, not `dict`); [mypy](https://mypy.readthedocs.io/) checks
   them (`disallow_untyped_defs`, `disallow_any_generics`).
 - **Tests:** [pytest](https://docs.pytest.org/), with coverage measured by
-  [coverage](https://coverage.readthedocs.io/); 100% coverage of `pro_wes`
-  is the goal ([#81](https://github.com/elixir-cloud-aai/prowes/issues/81)),
-  and `coverage report` fails below the threshold `fail_under` of
-  `pyproject.toml` (95% until the run controller is covered completely).
-  Add tests that fail without your change, and don't lower the threshold.
+  [coverage](https://coverage.readthedocs.io/): `pro_wes` is covered
+  completely, and `coverage report` fails below 100% (`fail_under` of
+  `pyproject.toml`). Add tests that fail without your change.
 
 ## Documentation
 

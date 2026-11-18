@@ -582,3 +582,36 @@ def test_check_access_permission(
     else:
         with pytest.raises(Forbidden):
             WorkflowRuns._check_access_permission("RUN001", owner, requester)
+
+
+def test_cancel_run_forwarded(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Cancellations are forwarded with the remote run identifier."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "run_log": {"run_id": "CANCEL", "state": "RUNNING"},
+            "wes_endpoint": {
+                "host": "https://wes.example.org",
+                "base_path": "/ga4gh/wes/v1",
+                "run_id": REMOTE_RUN_ID,
+            },
+        }
+    )
+    canceled: list[str] = []
+    monkeypatch.setattr(
+        WesClient,
+        "cancel_run",
+        lambda _self, run_id, **_kwargs: canceled.append(run_id),
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/CANCEL/cancel")
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "CANCEL"}
+    assert canceled == [REMOTE_RUN_ID]
+
+
+def test_cancel_run_not_found(foca_client: Client) -> None:
+    """Unknown runs can't be canceled."""
+    assert foca_client.post(f"{BASE_PATH}/runs/UNKNWN/cancel").status_code == 404
