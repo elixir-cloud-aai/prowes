@@ -506,10 +506,11 @@ class WorkflowEngineVersion(BaseModel):
 
     Args:
         workflow_engine_version: List of one or more available versions of
-            the workflow engine.
+            the workflow engine; an array, as in the WES specification (not
+            `null`).
     """
 
-    workflow_engine_version: list[str] | None = []
+    workflow_engine_version: list[str] = []
 
 
 class DefaultWorkflowEngineParameter(BaseModel):

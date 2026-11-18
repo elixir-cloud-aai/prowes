@@ -19,6 +19,7 @@ from pro_wes.ga4gh.wes.models import (
     RunLog,
     RunRequest,
     State,
+    WorkflowEngineVersion,
 )
 
 RUN_REQUEST: dict[str, Any] = {
@@ -149,3 +150,10 @@ def test_state_properties() -> None:
     assert not State.COMPLETE.is_cancelable
     assert "RUNNING" in State
     assert "OTHER" not in State
+
+
+def test_workflow_engine_version_not_null() -> None:
+    """Engine versions are arrays (WES 1.1.0), not `null`; default empty."""
+    with pytest.raises(ValidationError):
+        WorkflowEngineVersion(workflow_engine_version=None)  # type: ignore[arg-type]
+    assert WorkflowEngineVersion().workflow_engine_version == []
