@@ -88,13 +88,16 @@ def test_db_names_configured(foca_app: App) -> None:
     assert RUN_COLLECTION in collections
 
 
-def test_main_runs_development_server(
-    add_overlay: Callable[[str], None],
-    monkeypatch: pytest.MonkeyPatch,
-    storage_path: Path,
-) -> None:
-    """`main()` runs the app on the host and port of the config (`server`)."""
-    add_overlay("server:\n  host: 127.0.0.1\n  port: 8093\n")
+@pytest.fixture
+def served_apps(monkeypatch: pytest.MonkeyPatch) -> list[App]:
+    """Record the apps that would be served, instead of serving them.
+
+    Args:
+        monkeypatch: Monkeypatch fixture of the test.
+
+    Returns:
+        Apps whose development server (`App.run()`) was started, in order.
+    """
     runs: list[App] = []
 
     def _run(self: App, **kwargs: Any) -> None:
@@ -102,23 +105,38 @@ def test_main_runs_development_server(
 
         Args:
             self: The app.
-            **kwargs: Arguments of `App.run()`; none expected.
+            **kwargs: Arguments of `App.run()`; none expected, as the
+                host, port and debug mode come from the config.
         """
         assert kwargs == {}
         runs.append(self)
 
     monkeypatch.setattr(App, "run", _run)
+    return runs
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_main_runs_development_server(
+    add_overlay: Callable[[str], None],
+    served_apps: list[App],
+    storage_path: Path,
+    debug: bool,
+) -> None:
+    """`main()` runs the app on the host and port of the config (`server`)."""
+    add_overlay(f"server:\n  host: 127.0.0.1\n  port: 8093\n  debug: {debug}\n")
     main()
-    assert len(runs) == 1
-    assert (runs[0].host, runs[0].port, runs[0].debug) == ("127.0.0.1", 8093, False)
+    assert len(served_apps) == 1
+    app = served_apps[0]
+    assert (app.host, app.port, app.debug) == ("127.0.0.1", 8093, debug)
     assert storage_path.is_dir()
 
 
-def test_module_runs_main(app_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_module_runs_main(
+    app_env: None, monkeypatch: pytest.MonkeyPatch, served_apps: list[App]
+) -> None:
     """`python -m pro_wes.app` runs the app with Flask's development server."""
-    runs: list[App] = []
-    monkeypatch.setattr(App, "run", lambda self, **kwargs: runs.append(self))
     # Run as by `-m`, i.e., without the module imported by the tests
     monkeypatch.delitem(sys.modules, "pro_wes.app")
     runpy.run_module("pro_wes.app", run_name="__main__")
-    assert len(runs) == 1
+    assert len(served_apps) == 1
+    assert served_apps[0].port == 8080

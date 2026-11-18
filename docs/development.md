@@ -52,7 +52,8 @@ to edit in the code.
 To run proWES from the source code, e.g., to debug it or to try changes
 without rebuilding the image, start the app and the Celery worker in the dev
 environment set up as above. They need MongoDB and RabbitMQ; without the
-broker, the app starts and serves the API, but creating runs fails.
+broker, the app starts and serves the API, but `POST /runs` fails after it
+has forwarded the run to the remote WES, so that the run isn't tracked.
 
 1. Start MongoDB and RabbitMQ, e.g., those of Docker Compose, with their
    ports published on the host's loopback interface by a
@@ -73,9 +74,12 @@ broker, the app starts and serves the API, but creating runs fails.
     docker compose up -d --wait mongodb rabbitmq
     ```
 
-    Or install them locally (MongoDB 7.0, as in `docker-compose.yaml`):
-    RabbitMQ's default user `guest` can connect from the same host, so the
-    broker URL below is then `pyamqp://guest:guest@localhost:5672//`.
+    Or install them locally (MongoDB 7.0 and RabbitMQ 4.3, as in
+    `docker-compose.yaml`). RabbitMQ 4.3 then needs the setting that
+    `docker-compose.yaml` gives it, as Celery declares transient
+    non-exclusive queues, which RabbitMQ denies by default: add
+    `deprecated_features.permit.transient_nonexcl_queues = true` to its
+    configuration (e.g., in `/etc/rabbitmq/conf.d/90-foca.conf`).
 
 2. Write a configuration overlay, e.g., `local/config.yaml` (the directory
    `local/` is ignored by Git), that serves the app on the loopback interface
@@ -91,14 +95,20 @@ broker, the app starts and serves the API, but creating runs fails.
     ```
 
 3. Point the app and the worker to the services, with the overlay and the
-   credentials of RabbitMQ (`prowes:prowes`, as in `docker-compose.yaml`),
-   in each shell that runs one of them:
+   credentials of RabbitMQ (`prowes:prowes`, the defaults of
+   `docker-compose.yaml`, or your `RABBITMQ_DEFAULT_USER` and
+   `RABBITMQ_DEFAULT_PASS`, if you set them on the first start), in each
+   shell that runs one of them:
 
     ```bash
     export FOCA_CONFIG_OVERLAY=local/config.yaml
     export MONGO_HOST=localhost
     export CELERY_BROKER_URL='pyamqp://prowes:prowes@localhost:5672//'
     ```
+
+    With a locally installed RabbitMQ, use its default user `guest`, which
+    can connect from the same host only:
+    `pyamqp://guest:guest@localhost:5672//`.
 
 4. From the repository root, start the app with Flask's development server,
    on the host and port of the config (`server.host` and `server.port`, port

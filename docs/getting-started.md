@@ -3,7 +3,8 @@
 To quickly run the service for development or testing, use [Docker
 Compose](https://docs.docker.com/compose/install/), as described below; to
 run it from the source code instead, e.g., to debug it, see [Run from
-source](development.md#run-from-source). For deployments on Kubernetes, a [Helm](https://helm.sh/) chart is in the
+source](development.md#run-from-source). For deployments on Kubernetes, a
+[Helm](https://helm.sh/) chart is in the
 [`deployment/`](https://github.com/elixir-cloud-aai/prowes/tree/dev/deployment)
 directory (see [Deployment](deployment.md)). The [FOCA deployment
 guide](https://foca.readthedocs.io/en/latest/deployment/) explains how FOCA

@@ -77,8 +77,6 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["pro_wes"]
-# The app factory, which needs MongoDB; the image test in CI starts it
-omit = ["pro_wes/app.py"]
 
 # 100% coverage is the goal (#81); reported in CI without a threshold until
 # then
