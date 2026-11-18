@@ -1,9 +1,9 @@
 """Controllers for the `/runs` and children routes."""
 
+from json import dumps, loads
 import logging
 from pathlib import Path
-from shutil import copyfileobj
-from typing import Any
+from typing import Any, NamedTuple
 
 from bson.objectid import ObjectId
 from celery import uuid
@@ -13,6 +13,7 @@ from celery import uuid
 from flask import request  # ast-grep-ignore: framework-free-tasks
 from foca import get_collection, get_custom_config
 from foca.utils.misc import generate_id
+from pydantic import ValidationError
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 from werkzeug.datastructures import (  # ast-grep-ignore: framework-free-tasks
@@ -22,21 +23,26 @@ from werkzeug.utils import secure_filename  # ast-grep-ignore: framework-free-ta
 
 from pro_wes.config_models import CustomConfig
 from pro_wes.exceptions import (
+    AttachmentTooLarge,
     BadRequest,
     EngineUnavailable,
     Forbidden,
     IdsUnavailableProblem,
     InternalServerError,
+    InvalidAttachmentName,
     RunNotFound,
     StorageUnavailableProblem,
+    TooManyAttachments,
     Unauthorized,
     WesEndpointProblem,
 )
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
+    STORED_CONTEXT,
     Attachment,
     DbDocument,
     ErrorResponse,
+    RunLog,
     RunRequest,
     State,
     WesEndpoint,
@@ -44,8 +50,31 @@ from pro_wes.ga4gh.wes.models import (
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
+from pro_wes.utils.urls import UrlCredentialsMode, sanitize_json, sanitize_url
 
 logger = logging.getLogger(__name__)
+
+# Maximum length of the file names of workflow attachments, in bytes (that of
+# common file systems, e.g., ext4 and XFS)
+MAX_FILENAME_BYTES = 255
+
+# Fields of run requests that hold JSON objects (as strings, in forms)
+JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
+
+
+class Upload(NamedTuple):
+    """Workflow attachment of a run request, checked and read.
+
+    Attributes:
+        filename: Name of the file as indicated in the run request.
+        name: Safe file name, under which it is written to the working
+            directory of the run.
+        content: Contents of the file.
+    """
+
+    filename: str
+    name: str
+    content: bytes
 
 
 class WorkflowRuns:
@@ -80,10 +109,14 @@ class WorkflowRuns:
         document: DbDocument = DbDocument()
         controller_config = self.config.post_runs
 
-        # validate and attach request
+        # validate and attach request, without credentials in URLs
         document.run_log.request = self._validate_run_request(
             form_data=request.form,
+            url_credentials=controller_config.url_credentials,
         )
+
+        # check and read workflow attachments, before anything is stored
+        uploads = self._read_attachments()
 
         # get and attach suitable WES endpoint
         document.wes_endpoint = WesEndpoint(
@@ -95,10 +128,21 @@ class WorkflowRuns:
         document.user_id = kwargs.get("user_id")
 
         # create run environment & insert run document into run collection
-        document_stored: DbDocument = self._create_run_environment(document=document)
+        document_stored: DbDocument = self._create_run_environment(
+            document=document, uploads=uploads
+        )
 
-        # write workflow attachments
-        self._save_attachments(attachments=document_stored.attachments)
+        # write workflow attachments; the run fails if they can't be written
+        try:
+            self._save_attachments(
+                attachments=document_stored.attachments, uploads=uploads
+            )
+        except StorageUnavailableProblem:
+            if document_stored.task_id is not None:
+                DbDocumentConnector(
+                    collection=self.db_client, task_id=document_stored.task_id
+                ).update_run_state(state=State.SYSTEM_ERROR.value)
+            raise
 
         # ensure WES endpoint is available
         if (
@@ -287,7 +331,7 @@ class WorkflowRuns:
             requester=kwargs.get("user_id"),
         )
 
-        return document["run_log"]
+        return self._run_log_response(run_id=run_id, run_log=document["run_log"])
 
     def get_run_status(
         self,
@@ -399,6 +443,7 @@ class WorkflowRuns:
     def _create_run_environment(
         self,
         document: DbDocument,
+        uploads: list[Upload],
     ) -> DbDocument:
         """Set up run environment.
 
@@ -407,6 +452,8 @@ class WorkflowRuns:
 
         Args:
             document: Document to be inserted into the run collection.
+            uploads: Workflow attachments of the run, checked and read (cf.
+                `_read_attachments()`).
 
         Returns:
             document: Updated documented as was inserted into the database.
@@ -440,9 +487,10 @@ class WorkflowRuns:
             document.run_log.run_id = run_id
             document.task_id = uuid()
             document.work_dir = str(work_dir)
-            document.attachments = self._process_attachments(
-                work_dir=work_dir,
-            )
+            document.attachments = [
+                Attachment(filename=upload.filename, path=str(work_dir / upload.name))
+                for upload in uploads
+            ]
 
             # insert document into database
             try:
@@ -458,39 +506,77 @@ class WorkflowRuns:
 
         raise IdsUnavailableProblem
 
-    def _process_attachments(self, work_dir: Path) -> list[Attachment]:
-        """Return list of file attachments from request.
+    def _read_attachments(self) -> list[Upload]:
+        """Check and read the workflow attachments of the request.
 
-        Args:
-            work_dir: Working directory for constructing filenames for later storage.
+        Each attachment gets a safe file name (cf. `_secure_filename()`):
+        without directories, so that it is written to the working directory
+        of the run, never elsewhere.
 
         Returns:
-            List of `Attachment` model instances.
+            Workflow attachments, in the order of the request.
+
+        Raises:
+            pro_wes.exceptions.TooManyAttachments: The request has more
+                attachments than `custom.post_runs.max_attachments`.
+            pro_wes.exceptions.AttachmentTooLarge: An attachment is larger
+                than `custom.post_runs.max_attachment_size`.
+            pro_wes.exceptions.InvalidAttachmentName: An attachment has no file
+                name, a safe file name longer than `MAX_FILENAME_BYTES`, or the
+                same safe file name as another one.
         """
-        attachments = []
+        controller_config = self.config.post_runs
         files = request.files.getlist("workflow_attachment")
-        for file in files:
-            if file.filename is None:
-                raise BadRequest("Workflow attachment has no filename.")
-
-            attachments.append(
-                Attachment(
-                    filename=file.filename,
-                    object=file.stream.read(),
-                    path=work_dir / self._secure_filename(name=Path(file.filename)),
-                )
+        if len(files) > controller_config.max_attachments:
+            raise TooManyAttachments(
+                f"More than {controller_config.max_attachments} workflow attachments"
             )
-
-        return attachments
+        uploads: list[Upload] = []
+        names: set[str] = set()
+        for file in files:
+            if not file.filename:
+                raise InvalidAttachmentName("Workflow attachment has no filename.")
+            name = str(self._secure_filename(name=Path(file.filename)))
+            if len(name.encode()) > MAX_FILENAME_BYTES:
+                raise InvalidAttachmentName("File name of attachment too long")
+            if name in names:
+                raise InvalidAttachmentName(f"Attachments with the same name: {name}")
+            names.add(name)
+            # one byte more than allowed, to tell whether it is larger
+            content = file.stream.read(controller_config.max_attachment_size + 1)
+            if len(content) > controller_config.max_attachment_size:
+                raise AttachmentTooLarge(
+                    f"Attachment larger than {controller_config.max_attachment_size}"
+                    " bytes"
+                )
+            uploads.append(Upload(filename=file.filename, name=name, content=content))
+        return uploads
 
     @staticmethod
     def _validate_run_request(
         form_data: ImmutableMultiDict[str, Any],
+        url_credentials: UrlCredentialsMode = "reject",
     ) -> RunRequest:
         """Convert run request form input to `RunRequest` model.
 
+        Credentials in the URLs of the request are refused or removed (cf.
+        `custom.post_runs.url_credentials`): in `workflow_url`, and in the
+        strings (keys and values) of `workflow_params`,
+        `workflow_engine_parameters` and `tags`, at any depth. Fields without
+        credentials are kept as sent.
+
         Args:
             form_data: Flask data structure for representing form values.
+            url_credentials: Whether runs with credentials in URLs are
+                rejected (`reject`), or the credentials removed (`strip`).
+
+        Returns:
+            The run request, without credentials in URLs.
+
+        Raises:
+            pro_wes.exceptions.UrlCredentials: A URL has credentials, and
+                `url_credentials` is `reject`.
+            pro_wes.exceptions.MalformedUrl: A URL is malformed.
         """
         dict_of_lists = form_data.to_dict(flat=False)
         # flatten single item lists
@@ -500,11 +586,76 @@ class WorkflowRuns:
         # remove 'workflow_attachment' field
         dict_atomic.pop("workflow_attachment", None)
         model_instance = RunRequest(**dict_atomic)
-        return model_instance
+        updates: dict[str, str] = {}
+        stripped = sanitize_url(
+            model_instance.workflow_url, "workflow_url", url_credentials
+        )
+        if stripped is not None:
+            updates["workflow_url"] = stripped
+        for field in JSON_FIELDS:
+            value = getattr(model_instance, field)
+            # decodable objects, as validated by the model
+            decoded = loads(value)
+            if sanitize_json(decoded, field, url_credentials):
+                updates[field] = dumps(decoded)
+        return model_instance.model_copy(update=updates)
+
+    @staticmethod
+    def _run_log_response(run_id: str, run_log: dict[str, Any]) -> dict[str, Any]:
+        """Get the response to `GET /runs/{run_id}` from a stored run log.
+
+        The run log is validated against its model (`RunLog`), fields without
+        value are left out, and the JSON fields of the run request are
+        returned as objects, as in the WES specification (the form of `POST
+        /runs` has them as strings), so that the response conforms to the
+        specification. Credentials in the URLs of the run request are removed,
+        for runs stored before they were checked.
+
+        Args:
+            run_id: Workflow run identifier.
+            run_log: Run log, as stored.
+
+        Returns:
+            Response object according to WES API schema `RunLog`.
+
+        Raises:
+            pro_wes.exceptions.InternalServerError: The stored run log doesn't
+                conform to its model, or its run request has malformed URLs.
+        """
+        try:
+            model = RunLog.model_validate(run_log, context=STORED_CONTEXT)
+        except ValidationError as exc:
+            logger.error("Run log of run '%s' doesn't conform to its model.", run_id)
+            raise InternalServerError from exc
+        response: dict[str, Any] = model.model_dump(mode="json", exclude_none=True)
+        request_data = response.get("request")
+        if request_data is None:
+            return response
+        # without credentials, also for runs stored by earlier versions, which
+        # didn't check them
+        try:
+            stripped = sanitize_url(
+                request_data["workflow_url"], "workflow_url", "strip"
+            )
+            if stripped is not None:
+                request_data["workflow_url"] = stripped
+            for field in JSON_FIELDS:
+                if field in request_data:
+                    decoded = loads(request_data[field])
+                    sanitize_json(decoded, field, "strip")
+                    request_data[field] = decoded
+        except BadRequest as exc:
+            logger.error("Run request of run '%s' has malformed URLs.", run_id)
+            raise InternalServerError from exc
+        return response
 
     @staticmethod
     def _secure_filename(name: Path) -> Path:
         """Return a secure version of a filename.
+
+        The name has no directories (separators are replaced), no leading
+        dots and only ASCII characters (cf. `werkzeug.utils.secure_filename`);
+        names without any safe character are replaced by a random one.
 
         Args:
             name: Potentially insecure filename.
@@ -518,18 +669,26 @@ class WorkflowRuns:
         return Path(name_secure)
 
     @staticmethod
-    def _save_attachments(attachments: list[Attachment]) -> None:
+    def _save_attachments(attachments: list[Attachment], uploads: list[Upload]) -> None:
         """Write workflow attachments to storage.
 
+        Files are created exclusively, so that no existing file (or link) is
+        overwritten or followed.
+
         Args:
-            attachments: List of `Attachment` model instances.
+            attachments: Attachments as stored with the run, with their paths.
+            uploads: Their contents, in the same order.
+
+        Raises:
+            pro_wes.exceptions.StorageUnavailableProblem: An attachment can't be
+                written.
         """
-        files = request.files.getlist("workflow_attachment")
-        for attachment in attachments:
-            with open(attachment.path, "wb") as dest:
-                for file in files:
-                    if file.filename == attachment.filename:
-                        copyfileobj(file.stream, dest)
+        for attachment, upload in zip(attachments, uploads, strict=True):
+            try:
+                with open(attachment.path, "xb") as dest:
+                    dest.write(upload.content)
+            except OSError as exc:
+                raise StorageUnavailableProblem from exc
 
     @staticmethod
     def _check_access_permission(

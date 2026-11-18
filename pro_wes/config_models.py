@@ -1,10 +1,16 @@
 """Custom app config models."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from foca.utils.misc import generate_id
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    NonNegativeInt,
+    PositiveInt,
+    field_validator,
+    model_validator,
+)
 
 
 class Defaults(BaseModel):
@@ -47,6 +53,20 @@ class PostRuns(BaseModel):
             until an error is raised and the job is set to state
             `SYSTEM_ERROR`. Once a valid response is obtained, the counter is
             reset to 1.
+        max_attachments: Maximum number of workflow attachments of a run
+            (`0` allows none); runs with more are rejected with `413 Content
+            Too Large`.
+        max_attachment_size: Maximum size of each workflow attachment, in
+            bytes; runs with larger ones are rejected with `413 Content Too
+            Large`. All attachments together are limited by the size of
+            request bodies (`server.max_content_length`).
+        url_credentials: What happens to runs with credentials in the URLs of
+            their run requests (`https://user:password@host/...`, in
+            `workflow_url` and in the strings of `workflow_params`,
+            `workflow_engine_parameters` and `tags`; cf.
+            `pro_wes.utils.urls.has_credentials`): they are rejected with
+            `400 Bad Request` (`reject`), or the credentials are removed
+            (`strip`), before runs are stored or forwarded.
     """
 
     storage_path: Path = Path("/data")
@@ -57,6 +77,9 @@ class PostRuns(BaseModel):
     timeout_job: int | None = None
     polling_wait: float = 3
     polling_attempts: int = 100
+    max_attachments: NonNegativeInt = 100
+    max_attachment_size: PositiveInt = 1048576
+    url_credentials: Literal["reject", "strip"] = "reject"
 
     @field_validator("id_charset")
     @classmethod

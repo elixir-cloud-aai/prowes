@@ -2,7 +2,6 @@
 
 from enum import Enum, EnumMeta
 from json import JSONDecodeError, loads
-from pathlib import Path
 from typing import Any
 
 from pydantic import (
@@ -24,6 +23,24 @@ STORED_KEY = "stored"
 STORED_CONTEXT = {STORED_KEY: True}
 
 
+def _without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Make an object of decoded JSON, refusing duplicate keys.
+
+    Args:
+        pairs: Keys and values of the object, in order.
+
+    Returns:
+        The object.
+
+    Raises:
+        JSONDecodeError: A key occurs more than once.
+    """
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise JSONDecodeError("duplicate keys", "", 0)
+    return result
+
+
 class MetaEnum(EnumMeta):
     """Metaclass for enumerators."""
 
@@ -43,15 +60,17 @@ class BaseEnum(Enum, metaclass=MetaEnum):
 class Attachment(BaseModel):
     """Model for workflow attachment.
 
+    Stored with the run; the contents are written to the storage of the runs
+    only (not to the database).
+
     Args:
         filename: Name of the file as indicated in the run request.
-        object: File object.
-        path: Path to the file on the app's storage system.
+        path: Path to the file on the app's storage system, inside the
+            working directory of the run, with a safe file name.
     """
 
     filename: str
-    object: bytes
-    path: Path
+    path: str
 
 
 class RunRequest(BaseModel):
@@ -96,6 +115,10 @@ class RunRequest(BaseModel):
     tags: str | None = "{}"
     workflow_engine_parameters: str | None = "{}"
     workflow_url: str
+
+    # Validation errors, which are logged, without the values, which may hold
+    # credentials (cf. `custom.post_runs.url_credentials`)
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     @field_validator(
         "workflow_type",
@@ -150,6 +173,10 @@ class RunRequest(BaseModel):
         empty JSON string object '{}' for optional fields and cause a
         `ValueError` to be raised for required fields.
 
+        The values of `tags` and `workflow_engine_parameters` must be strings,
+        as in the WES specification (not checked for stored runs, validation
+        context `STORED_CONTEXT`).
+
         Args:
             value: Field value to be validated.
             info: Validation context, with the name of the field.
@@ -160,20 +187,38 @@ class RunRequest(BaseModel):
         Raises:
             ValueError: The value is required but it is either missing or does
                 not represent any actual content.
-            ValueError: The value could not be JSON deserialized.
+            ValueError: The value could not be JSON deserialized, or has an
+                object with duplicate keys (not checked for stored runs).
             ValueError: The value could be JSON decoded, but the deserialized
                 value does not represent an object/dictionary.
+            ValueError: The tags or workflow engine parameters have values
+                other than strings.
         """
         if value is None or value in {"", "null"}:
             if info.field_name == "workflow_params":
                 raise ValueError("field required")
             return "{}"
+        stored = bool(info.context and info.context.get(STORED_KEY))
         try:
-            decoded = loads(value)
-        except JSONDecodeError as exc:
+            # duplicate keys refused for new requests, as decoding keeps only
+            # the last value, so that the others (e.g., with credentials in
+            # URLs) would be forwarded unchecked
+            decoded = loads(
+                value, object_pairs_hook=dict if stored else _without_duplicates
+            )
+        except (JSONDecodeError, RecursionError) as exc:
+            # also JSON too deeply nested to decode
             raise ValueError("could not be JSON deserialized") from exc
         if not isinstance(decoded, dict):
             raise ValueError("could not be interpreted as object")
+        # objects of strings, as the WES specification defines them; not
+        # checked for stored runs, which earlier versions accepted without
+        if (
+            info.field_name != "workflow_params"
+            and not stored
+            and not all(isinstance(item, str) for item in decoded.values())
+        ):
+            raise ValueError("values must be strings")
         return value
 
     @model_validator(mode="after")
