@@ -198,14 +198,21 @@ jobs:
           fail_ci_if_error: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
           verbose: true
 
-  # Temporary: probes the app started with Docker Compose, until the smoke
-  # test replaces it
+  # Runs the app as deployed with Docker Compose (app, Celery worker,
+  # MongoDB, RabbitMQ) against a fake WES instead of a real one
+  # (`tests/smoke/`): forwards runs, tracks them to their end and cancels
+  # one (see the script)
   smoke:
     name: Smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Up to 5 minutes for the services to become healthy (the script's
+    # `--wait-timeout`), after the image build
+    timeout-minutes: 20
+    # The Compose files and project of the script (its defaults), for the
+    # steps after it (`docker compose exec`, `docker compose logs`)
     env:
-      PROBE_ENDPOINT: localhost:8090/ga4gh/wes/v1/service-info
+      COMPOSE_FILE: docker-compose.yaml:tests/smoke/compose.yaml
+      COMPOSE_PROJECT_NAME: prowes-smoke
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -216,31 +223,18 @@ jobs:
         run: |
           echo "DUMMY=not-a-secret" > pro_wes/.env
           echo "dummy" > pro_wes/tls.key
-      # Waits until the health checks of all services pass, for up to 3
-      # minutes after the build
-      - name: Start app
-        run: docker compose up -d --build --wait --wait-timeout 180
-      # The service info, once the app is healthy (up to 2 minutes)
-      - name: Check that app responds
-        run: |
-          for _ in $(seq 1 24); do
-            status="$(curl -sL -o /dev/null -w '%{http_code}' \
-              --header 'Accept: application/json' \
-              "${PROBE_ENDPOINT}" || true)"
-            if [[ "${status}" == '200' ]]; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::App did not respond with 200 (last: ${status})"
-          exit 1
-      # `prowes:local` is the image that `docker-compose.yaml` builds; the
+      # Builds and starts the app, waits until the containers are healthy
+      # and checks the API with the fake WES (at the script's default URL)
+      - name: Check API with fake WES
+        run: tests/smoke/check.sh
+      # `prowes:smoke` is the image that `docker-compose.yaml` builds with
+      # the override of the smoke test (`tests/smoke/compose.yaml`); the
       # app is installed from a wheel, so the files are looked for anywhere
       # in the image. The app runs as the image's non-root user and can
       # write to the storage of the runs
       - name: Check image contents and user
         run: |
-          found="$(docker run --rm --user 0 --entrypoint sh prowes:local -c \
+          found="$(docker run --rm --user 0 --entrypoint sh prowes:smoke -c \
             'find / -xdev \( -name .env -o -name tls.key \) -print')"
           if [[ -n "${found}" ]]; then
             echo "::error::Secret files in the image: ${found}"
@@ -248,6 +242,8 @@ jobs:
           fi
           docker compose exec -T prowes sh -c \
             'test "$(id -u)" = 1000 && touch /data/.probe && rm /data/.probe'
+      # Also covers failures after the script (which shows the logs of its
+      # own failures) and cancellation
       - name: Show app logs
         if: failure() || cancelled()
         run: docker compose logs
