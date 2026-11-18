@@ -1,0 +1,155 @@
+# Upgrading
+
+Changes to existing deployments and data, per version. Upgrade one version
+at a time and read all sections between your version and the target.
+
+## To version 0.20.0 (FOCA 0.22)
+
+proWES 0.20.0 upgrades FOCA from 0.12 to 0.22. Operators need to check the
+following.
+
+### MongoDB 4.4 or later
+
+Current PyMongo releases refuse to connect to older servers; Docker Compose
+now runs MongoDB 7.0 (before: 3.2). The data files of MongoDB 3.2 can't be
+opened by MongoDB 7.0: either start with an empty database
+(`$PROWES_DATA_DIR/db`; the runs stored so far are lost), or upgrade the
+database one major version at a time (3.2 → 3.4 → 3.6 → 4.0 → 4.2 → 4.4 →
+5.0 → 6.0 → 7.0, with `setFeatureCompatibilityVersion` after each step), or
+export the runs with `mongodump` before and import them with `mongorestore`
+after the upgrade.
+
+### Configuration
+
+Configuration files of earlier versions fail validation, naming the keys
+that FOCA removed. Changed sections: `server` (no `environment` and
+`use_reloader`; `debug` is `False`), `security.auth` (no
+`validation_methods` and `validation_checks`), `exceptions` (`mapping`
+instead of `exceptions`, `required_members` and `status_member`), and
+`custom.post_runs.id_charset`, whose characters are now taken as is (before:
+a Python expression such as `string.ascii_uppercase + string.digits`). Start
+from
+[`pro_wes/config.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/pro_wes/config.yaml).
+
+### Run identifiers
+
+`POST /runs` returns the run's own identifier, by which `GET
+/runs/{run_id}` finds it (before: the identifier at the remote WES, which
+proWES didn't find).
+
+### Errors
+
+Error responses are problem details (`title`, `status` and `detail`, as
+`application/json`) instead of `message` and `code`. Clients that read
+`message` or `code` need to read `detail` and `status` instead.
+
+### Commands
+
+The app is served with `gunicorn --config python:pro_wes.gunicorn
+pro_wes.wsgi:app` and the worker started with `celery -A
+pro_wes.celery_worker worker`, both from `/app` (before: `gunicorn -c
+gunicorn.py wsgi:app` and `celery -A celery_worker worker` from
+`/app/pro_wes`), as in
+[`docker-compose.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/docker-compose.yaml)
+and the Helm chart (2.0.2 or later; deployments that set their own `command`
+or `args` need the same change). The app is created once per Gunicorn worker
+(no longer also by the Gunicorn master), and the Celery worker replaces its
+MongoDB client after forking (no more `MongoClient opened before fork`
+warnings). Gunicorn now runs one worker with 4 threads by default
+(`GUNICORN_THREADS`; before: 1).
+
+### Image
+
+The image is built on FOCA's image and runs as the non-root user `1000`
+(group `0`; before: root); the app is installed from a wheel into
+`site-packages` (before: editable, from `/app/pro_wes`, whose `api` directory
+was world-writable). Only `/data` is writable: volumes mounted there must be
+writable for the user (the Helm chart, 2.0.4 or later, sets `fsGroup: 1000`
+on Kubernetes; OpenShift assigns user and group itself). Runs stored before
+by root may not be writable for the user.
+
+**Upgrade the chart to 2.0.4 before pods pull the new image** (e.g., charts
+with `elixircloud/prowes:latest` and `imagePullPolicy: Always`, on their
+next restart), or make the volume writable for user `1000` first; 2.0.4's
+init containers hand `/data` itself (not its contents) to the user where they
+can, also on volumes whose ownership Kubernetes doesn't manage (e.g., NFS;
+with `root_squash`, they only log a warning). The app now refuses to start if
+it can't write to `custom.post_runs.storage_path` (before: only `POST /runs`
+failed). Run directories that root created before stay root's; to make them
+writable too, run `chown -R 1000:1000 /data` as root on the volume (e.g.,
+from a debug pod). The image now has a health check (the Swagger UI) and a
+default command (Gunicorn, see above).
+
+### Docker Compose
+
+[`docker-compose.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/docker-compose.yaml)
+builds the image `prowes:local` (before: `prowes:latest`) and keeps its data
+in named volumes instead of `PROWES_DATA_DIR` (default `../data/pro_wes`),
+whose data isn't migrated. It runs MongoDB 7.0, RabbitMQ 4.3 with the
+credentials `prowes:prowes` (configurable, see [Getting
+started](getting-started.md#quick-start); before: `guest`) and Flower 2.0
+only with the profile `monitoring` and basic authentication. proWES (port
+8090) and Flower (port 5565) are published on the host's loopback interface
+only; RabbitMQ (before: 5682) and MongoDB (before: 27027) are no longer
+published.
+
+### Broker
+
+`RABBIT_HOST` and `RABBIT_PORT` are read by the app configuration (`jobs`);
+`CELERY_BROKER_URL` takes precedence.
+
+### Logs
+
+The Celery worker logs in the format of the app (section `log`) instead of
+Celery's own.
+
+### Service info (breaking)
+
+The service info is served by FOCA from the configuration, no longer from
+the database:
+
+- Move `custom.service_info` to `service_info.service` (the app refuses to
+  start with `custom.service_info`). The WES fields
+  (`workflow_type_versions`, ...) stay in it and are checked on startup;
+  `contactUrl` must be a URI (e.g., `mailto:support@example.org`, not
+  `support@example.org`).
+- `POST /service-info` is gone (`405 Method Not Allowed`): change the
+  service info in the configuration and restart the app. Service info
+  posted to or changed in the database before is ignored; the collection
+  `service_info` is no longer used and can be dropped
+  (`db.service_info.drop()` in the database of the runs).
+- `version` is the version of the installed package unless
+  `service_info.service.version` is set (before: `0.18.0` from the
+  example configuration). Images built without
+  `--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=<version>` report
+  `0.0.0.dev0`.
+- Fields that aren't set are left out instead of being served as `null`,
+  and values are served as configured (e.g., URLs are no longer
+  normalized). Runs with states that proWES doesn't know are left out of
+  `system_state_counts`. Startup no longer fetches the GA4GH service info
+  schema from GitHub.
+- The Helm chart (2.0.3 or later) no longer creates the collection
+  `service_info`. The chart can't pass a configuration overlay yet
+  (`FOCA_CONFIG_OVERLAY`), so deployments with the chart serve the
+  service info of `pro_wes/config.yaml` in the image until it can
+  ([#38](https://github.com/elixir-cloud-aai/prowes/issues/38)).
+- Runs that proWES accepted keep being tracked if their workflow type or
+  version is later removed from `workflow_type_versions` (new runs are
+  still checked). Workers of earlier versions still check stored runs
+  against the service info in the database: stop them before the app of
+  this version accepts runs (no rolling update across this upgrade).
+
+### Timeouts
+
+Gunicorn's threaded workers don't stop requests that hang, so requests to
+the remote WES are limited: forwarding runs by
+`custom.post_runs.timeout_post` (now 30 seconds; before: none), also for
+reading run logs, canceling runs by `custom.defaults.timeout`.
+
+### Run logs
+
+The Celery worker stores the outputs, the engine log and the task logs of
+the remote run log, each if it is valid (invalid ones and run logs that
+can't be read are logged as warnings); the run keeps its own identifier and
+state (before: the task failed before storing any). Other fields, e.g., of
+WES 1.1, are left out.
