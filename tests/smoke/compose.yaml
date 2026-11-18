@@ -4,22 +4,27 @@
 # overlay `config.yaml` of this directory. Use it with `docker compose -f
 # docker-compose.yaml -f tests/smoke/compose.yaml up -d --build --wait`
 # (`check.sh` does); relative paths are resolved against the directory of
-# the first file, i.e., the repository root
+# the first file, i.e., the repository root. The image is tagged
+# `prowes:smoke`, so that the test leaves the image of other local
+# deployments (`prowes:local`) alone
 #
-# proWES sends all runs to a hard-coded WES (#118, which makes backends
-# configurable): the fake WES takes that host name on the Compose network,
-# with a certificate of its own certificate authority, which proWES trusts
-# instead of the public ones (`REQUESTS_CA_BUNDLE`), so that no run leaves
-# the Compose network
+# proWES sends all runs to a hard-coded WES (`run_workflow()` in
+# `pro_wes/ga4gh/wes/workflow_runs.py`, until #118 makes backends
+# configurable): the fake WES takes that host name on the Compose network
+# (network alias below; also `HOSTS` in `fake_wes.py`), with a certificate
+# of its own certificate authority, which proWES trusts instead of the
+# public ones (`REQUESTS_CA_BUNDLE`), so that no run leaves the Compose
+# network
 
 # Settings of the app and the Celery worker
 x-smoke: &smoke
+  image: prowes:smoke
   environment:
     FOCA_CONFIG_OVERLAY: /smoke/config.yaml
     REQUESTS_CA_BUNDLE: /certs/ca.pem
   volumes:
     - ./tests/smoke:/smoke:ro
-    - smoke-certs:/certs:ro
+    - smoke-certs-data:/certs:ro
   depends_on:
     fake-wes:
       condition: service_healthy
@@ -34,15 +39,15 @@ services:
 
   # Creates the certificates of the fake WES in a volume of their own, as
   # root, as a new volume belongs to root (the fake WES reads them as the
-  # user of the image)
+  # user of the image); keeps existing ones
   smoke-certs:
-    image: prowes:local
+    image: prowes:smoke
     pull_policy: never
     user: "0"
     command: ["python", "/smoke/fake_wes.py", "certs", "/certs"]
     volumes:
       - ./tests/smoke:/smoke:ro
-      - smoke-certs:/certs
+      - smoke-certs-data:/certs
     # The image's health check probes the app, which doesn't run here
     healthcheck:
       disable: true
@@ -52,14 +57,14 @@ services:
   # the image's health check probing its service info over plain HTTP (more
   # often)
   fake-wes:
-    image: prowes:local
+    image: prowes:smoke
     pull_policy: never
     command: ["python", "/smoke/fake_wes.py", "serve", "/certs"]
     environment:
       HEALTHCHECK_URL: http://localhost:8080/ga4gh/wes/v1/service-info
     volumes:
       - ./tests/smoke:/smoke:ro
-      - smoke-certs:/certs:ro
+      - smoke-certs-data:/certs:ro
     depends_on:
       smoke-certs:
         condition: service_completed_successfully
@@ -72,4 +77,4 @@ services:
           - wes-na.cloud.e-infra.cz
 
 volumes:
-  smoke-certs:
+  smoke-certs-data:

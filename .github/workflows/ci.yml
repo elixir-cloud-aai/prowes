@@ -175,7 +175,11 @@ jobs:
   smoke:
     name: Smoke test
     runs-on: ubuntu-latest
+    # Up to 5 minutes for the services to become healthy (the script's
+    # `--wait-timeout`), after the image build
     timeout-minutes: 20
+    # The Compose files and project of the script (its defaults), for the
+    # steps after it (`docker compose exec`, `docker compose logs`)
     env:
       COMPOSE_FILE: docker-compose.yaml:tests/smoke/compose.yaml
       COMPOSE_PROJECT_NAME: prowes-smoke
@@ -190,16 +194,17 @@ jobs:
           echo "DUMMY=not-a-secret" > pro_wes/.env
           echo "dummy" > pro_wes/tls.key
       # Builds and starts the app, waits until the containers are healthy
-      # and checks the API with the fake WES
+      # and checks the API with the fake WES (at the script's default URL)
       - name: Check API with fake WES
-        run: tests/smoke/check.sh http://localhost:8090/ga4gh/wes/v1
-      # `prowes:local` is the image that `docker-compose.yaml` builds; the
+        run: tests/smoke/check.sh
+      # `prowes:smoke` is the image that `docker-compose.yaml` builds with
+      # the override of the smoke test (`tests/smoke/compose.yaml`); the
       # app is installed from a wheel, so the files are looked for anywhere
       # in the image. The app runs as the image's non-root user and can
       # write to the storage of the runs
       - name: Check image contents and user
         run: |
-          found="$(docker run --rm --user 0 --entrypoint sh prowes:local -c \
+          found="$(docker run --rm --user 0 --entrypoint sh prowes:smoke -c \
             'find / -xdev \( -name .env -o -name tls.key \) -print')"
           if [[ -n "${found}" ]]; then
             echo "::error::Secret files in the image: ${found}"

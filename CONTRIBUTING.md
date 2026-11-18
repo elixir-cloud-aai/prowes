@@ -180,12 +180,13 @@ Run it from the repository root:
 tests/smoke/check.sh
 ```
 
-It builds the image and starts the services in the Compose project
-`prowes-smoke` (set `COMPOSE_PROJECT_NAME` to change it), so that the data
-of other local deployments is left alone; proWES is published on
-`127.0.0.1:8090`, as by `docker-compose.yaml`, so stop other deployments
-that publish that port first. The deployment keeps running after the test,
-for inspection; remove it with:
+It builds the image as `prowes:smoke` and starts the services in the
+Compose project `prowes-smoke` (set `COMPOSE_PROJECT_NAME` to change it),
+so that the image and data of other local deployments are left alone;
+proWES is published on `127.0.0.1:8090`, as by `docker-compose.yaml`, so
+stop other deployments that publish that port first. On failure, it shows
+the logs of the services. The deployment keeps running after the test, for
+inspection, and the test can run again on it; remove it with:
 
 ```bash
 COMPOSE_FILE=docker-compose.yaml:tests/smoke/compose.yaml \

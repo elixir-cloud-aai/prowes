@@ -6,11 +6,13 @@ are `QUEUED`, then `RUNNING` and `COMPLETE` (`RUN_SECONDS` after their
 creation), unless their tags hold `fake.hold`: those run until they are
 canceled, then are `CANCELING` for `CANCEL_SECONDS` and finally `CANCELED`.
 The run log has the run request as received, an output with the received
-workflow URL, and the exit code once the run is complete, so that the
-smoke test sees what proWES forwarded and that it fetched the final run
-log. `GET /runs` lists all runs it received.
+workflow URL, and, in final states only, a standard output of its own
+(`FINAL_STDOUT`) and the exit code once complete, so that the smoke test
+sees what proWES forwarded and that it fetched the final run log.
+`GET /runs` lists all runs it received.
 
-proWES sends all runs to a hard-coded WES (#118), so the fake WES takes its
+proWES sends all runs to a hard-coded WES (`run_workflow()` in
+`pro_wes/ga4gh/wes/workflow_runs.py`, until #118), so the fake WES takes its
 place: it serves HTTPS on port 443, with a certificate for that host
 (`HOSTS`) issued by a certificate authority of its own, and Docker Compose
 resolves the host to it (`compose.yaml` of this directory). proWES trusts
@@ -20,7 +22,9 @@ checks of the smoke test inside the container.
 
 Run it with `python fake_wes.py certs <dir>` to create the certificates in
 `<dir>` (`ca.pem`, `server.pem`, `server-key.pem`), then with
-`python fake_wes.py serve <dir>` to serve; it depends on the standard
+`python fake_wes.py serve <dir>` to serve; `python fake_wes.py verify
+<count> <key>=<value>...` checks the runs that a running fake WES got
+(see `verify()`). It depends on the standard
 library and cryptography (a dependency of FOCA).
 """
 
@@ -38,6 +42,7 @@ import threading
 import time
 from typing import Any
 from urllib.parse import parse_qs
+import urllib.request
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -45,8 +50,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 BASE_PATH = "/ga4gh/wes/v1"
-# Host names of the certificate: the WES that proWES sends all runs to (#118)
-# and the service name in Docker Compose
+# Host names of the certificate: the WES that proWES sends all runs to (#118;
+# also the network alias of the fake WES in `compose.yaml`), the service name
+# in Docker Compose and the loopback host
 HOSTS = ["wes-na.cloud.e-infra.cz", "fake-wes", "localhost"]
 HTTP_PORT = 8080
 HTTPS_PORT = 443
@@ -68,6 +74,9 @@ SERVICE_INFO = {
     "tags": {},
 }
 
+# Standard output of runs in final states, which only final run logs have
+FINAL_STDOUT = {"COMPLETE": "fake complete", "CANCELED": "fake canceled"}
+
 RUNS: dict[str, dict[str, Any]] = {}
 LOCK = threading.Lock()
 
@@ -86,9 +95,7 @@ def state_of(run: dict[str, Any], now: float) -> str:
     if canceled is not None:
         return "CANCELED" if now - canceled >= CANCEL_SECONDS else "CANCELING"
     age = now - run["created"]
-    if run["hold"]:
-        return "RUNNING" if age >= RUN_SECONDS / 2 else "QUEUED"
-    if age >= RUN_SECONDS:
+    if not run["hold"] and age >= RUN_SECONDS:
         return "COMPLETE"
     return "RUNNING" if age >= RUN_SECONDS / 2 else "QUEUED"
 
@@ -112,7 +119,7 @@ def run_log(run_id: str, run: dict[str, Any], now: float) -> dict[str, Any]:
         "run_log": {
             "name": "fake",
             "cmd": ["fake"],
-            "stdout": "fake stdout",
+            "stdout": FINAL_STDOUT.get(state, "fake stdout"),
             "stderr": "fake stderr",
             "exit_code": 0 if state == "COMPLETE" else None,
         },
@@ -380,21 +387,67 @@ def serve(directory: Path) -> None:
     ThreadingHTTPServer(("", HTTP_PORT), Handler).serve_forever()
 
 
-def main(args: list[str]) -> None:
-    """Create the certificates or serve, as the arguments say.
+def verify(expected: dict[str, str], count: int) -> None:
+    """Check the runs that a running fake WES got, via plain HTTP.
+
+    Only the runs whose requests have the expected form fields are checked,
+    so that runs of earlier smoke tests on the same deployment are left
+    out: there must be `count` of them, as proWES forwards them, and all
+    must be finished.
 
     Args:
-        args: Command-line arguments: `certs <dir>` or `serve <dir>`.
+        expected: Form fields that the run requests must have.
+        count: Number of runs with these fields.
+
+    Raises:
+        SystemExit: The check fails.
+    """
+    base = f"http://localhost:{HTTP_PORT}{BASE_PATH}/runs"
+    with urllib.request.urlopen(base) as response:
+        runs = json.load(response)["runs"]
+    matching = []
+    for run in runs:
+        url = f"{base}/{run['run_id']}"
+        # The URL of the fake WES itself, with the run identifier it issued
+        with urllib.request.urlopen(url) as response:  # noqa: S310
+            log = json.load(response)
+        request = log["request"]
+        if all(request.get(key) == value for key, value in expected.items()):
+            matching.append(log)
+    if len(matching) != count:
+        raise SystemExit(
+            f"The fake WES got {len(matching)} runs with {expected}, not {count}"
+        )
+    unfinished = [
+        log["run_id"]
+        for log in matching
+        if log["state"] not in ("COMPLETE", "CANCELED")
+    ]
+    if unfinished:
+        raise SystemExit(f"Runs not finished at the fake WES: {unfinished}")
+
+
+def main(args: list[str]) -> None:
+    """Create the certificates, serve or verify, as the arguments say.
+
+    Args:
+        args: Command-line arguments: `certs <dir>`, `serve <dir>` or
+            `verify <count> <key>=<value>...` (the number of runs and form
+            fields of their requests).
 
     Raises:
         SystemExit: The arguments are invalid.
     """
-    if len(args) != 2 or args[0] not in ("certs", "serve"):
-        raise SystemExit("usage: fake_wes.py certs|serve <dir>")
-    if args[0] == "certs":
+    if len(args) >= 3 and args[0] == "verify":
+        verify(dict(arg.split("=", 1) for arg in args[2:]), int(args[1]))
+    elif len(args) == 2 and args[0] == "certs":
         create_certificates(Path(args[1]))
-    else:
+    elif len(args) == 2 and args[0] == "serve":
         serve(Path(args[1]))
+    else:
+        raise SystemExit(
+            "usage: fake_wes.py certs|serve <dir> | verify <count> <key>=<value>..."
+        )
 
 
 if __name__ == "__main__":
