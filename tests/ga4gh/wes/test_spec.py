@@ -25,8 +25,6 @@ BASE_PATH = "/ga4gh/wes/v1"
 # that add them; the contract tests fail when one of them is added, so that
 # this list is kept up to date
 NOT_YET_MODELED: dict[str, set[str]] = {
-    # `PREEMPTED` (#123)
-    "State": {"PREEMPTED"},
     # `task_logs_url` (#124)
     "RunLog": {"task_logs_url"},
     # fields of task logs (`TaskLog`) beyond those of `Log` (#124)
@@ -88,7 +86,7 @@ def test_states_module_replaced() -> None:
 def test_state_matches_spec(schemas: dict[str, Any]) -> None:
     """The states are those of the specification."""
     values = {state.value for state in State}
-    assert values == set(schemas["State"]["enum"]) - NOT_YET_MODELED["State"]
+    assert values == set(schemas["State"]["enum"])
 
 
 def test_log_matches_spec(schemas: dict[str, Any]) -> None:
