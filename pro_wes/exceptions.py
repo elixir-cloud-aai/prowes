@@ -25,7 +25,9 @@ from pymongo.errors import PyMongoError
 __all__ = [
     "AttachmentTooLarge",
     "BadRequest",
+    "EngineOutcomeUnknown",
     "EngineProblem",
+    "EngineRequestNotSent",
     "EngineUnavailable",
     "Forbidden",
     "IdsUnavailableProblem",
@@ -53,6 +55,52 @@ class EngineProblem(InternalServerError):
 
 class EngineUnavailable(EngineProblem):
     """The external workflow engine is not available."""
+
+
+class EngineRequestNotSent(EngineUnavailable):
+    """A request certainly didn't reach the external workflow engine.
+
+    E.g., its host has no (allowed) address, connecting or the TLS handshake
+    failed, or its timeout passed before it was sent (cf.
+    :py:class:`foca.utils.http.RequestNotSent`).
+
+    Attributes:
+        reason: Reason code of FOCA's guarded HTTP client, e.g.,
+            `connect_error`, `not_public` or `tls_error`.
+    """
+
+    def __init__(self, description: str | None = None, reason: str = "") -> None:
+        """Create the error.
+
+        Args:
+            description: Description, without credentials.
+            reason: Reason code; `connect_error` if empty.
+        """
+        super().__init__(description)
+        self.reason = reason or "connect_error"
+
+
+class EngineOutcomeUnknown(EngineUnavailable):
+    """The external workflow engine may have got, and processed, a request.
+
+    E.g., the response timed out, the connection was lost after sending, or
+    the response was larger than allowed (cf.
+    :py:class:`foca.utils.http.RequestMaybeSent`).
+
+    Attributes:
+        reason: Reason code of FOCA's guarded HTTP client, e.g.,
+            `read_timeout`, `connection_lost` or `response_too_large`.
+    """
+
+    def __init__(self, description: str | None = None, reason: str = "") -> None:
+        """Create the error.
+
+        Args:
+            description: Description, without credentials.
+            reason: Reason code; `connection_lost` if empty.
+        """
+        super().__init__(description)
+        self.reason = reason or "connection_lost"
 
 
 class NoBackendAvailable(ServiceUnavailable):

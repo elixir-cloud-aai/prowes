@@ -5,12 +5,14 @@ import re
 from typing import Annotated, Any, Literal, Self
 
 from foca.plugins.backends import RegistryEntry, ServiceEntry
+from foca.utils.http import MAX_RESPONSE_SIZE
 from foca.utils.misc import generate_id
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     NonNegativeInt,
+    PositiveFloat,
     PositiveInt,
     field_validator,
     model_validator,
@@ -117,14 +119,20 @@ class Wes(BaseModel):
             verified WES instances are used (`type: ga4gh-service-registry`;
             cf. :py:mod:`foca.plugins.backends`). None by default: runs are
             refused until a deployment configures them.
+        max_response_size: Maximum size of each response of a WES instance,
+            in bytes (by default FOCA's, 16 MiB); larger responses fail the
+            request.
 
     Attributes:
         backends: WES instances that runs may be forwarded to, in order.
+        max_response_size: Maximum size of each response of a WES instance,
+            in bytes.
     """
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     backends: list[WesBackendEntry] = []
+    max_response_size: PositiveInt = MAX_RESPONSE_SIZE
 
     @model_validator(mode="after")
     def unique_ids(self) -> Self:
@@ -148,15 +156,15 @@ class Defaults(BaseModel):
     """Model for global default parameters.
 
     Args:
-        timeout: Timeout for outgoing requests. May be overridden by more
-            specific parameters for each endpoint.
+        timeout: Timeout of requests to WES instances (e.g., status and
+            cancellation), in seconds, for each request as a whole. May be
+            overridden by more specific parameters for each endpoint.
 
     Attributes:
-        timeout: Timeout for outgoing requests. May be overridden by more
-            specific parameters for each endpoint.
+        timeout: Timeout of requests to WES instances, in seconds.
     """
 
-    timeout: int | None = 3
+    timeout: PositiveFloat = 3
 
 
 class PostRuns(BaseModel):
@@ -171,9 +179,9 @@ class PostRuns(BaseModel):
         id_charset: Characters of run identifiers, taken as is (expressions
             such as `string.digits` are not evaluated).
         id_length: Length of run identifiers.
-        timeout_post: How long, in seconds, the application should attempt to
-            reach a remote WES instance when sending a new workflow run
-            request. Set to `None` to disable timing out.
+        timeout_post: Timeout of sending a new workflow run request to a
+            remote WES instance, and of reading run logs, in seconds, for
+            each request as a whole.
         timeout_job: How long, in seconds, a background job tracking a
             workflow run is allowed to run. Set to `None` to disable timing
             out.
@@ -204,7 +212,7 @@ class PostRuns(BaseModel):
     db_insert_attempts: int = 10
     id_charset: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     id_length: int = 6
-    timeout_post: int | None = 30
+    timeout_post: PositiveFloat = 30
     timeout_job: int | None = None
     polling_wait: float = 3
     polling_attempts: int = 100

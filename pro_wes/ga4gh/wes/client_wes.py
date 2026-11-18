@@ -1,12 +1,56 @@
-"""Basic WES client."""
+"""WES client, sending requests with FOCA's guarded HTTP client.
 
+Requests to WES instances go through FOCA's guarded HTTP client
+(:py:class:`foca.utils.http.GuardedClient`):
+
+- `https` only, unless the configured entry of the WES instance allows
+  `http` (`url_schemes`); TLS certificates are always verified, with the
+  public certificate authorities, or with those of the file or directory
+  that the environment variable `REQUESTS_CA_BUNDLE` names
+  (:py:data:`CA_BUNDLE_ENV`) instead;
+- configured WES instances may have private addresses (operators trust
+  them); discovered ones only public ones, unless their registry entry has
+  `allow_private_addresses`; WES instances that the backend list doesn't
+  yield (e.g., of runs stored before it changed) only public ones, over
+  `https`;
+- redirects are not followed: they fail the request;
+- each request ends within its timeout as a whole (name resolution,
+  connecting, sending and reading), and responses are read up to
+  `custom.wes.max_response_size` bytes;
+- proxy settings and `.netrc` files of the environment are ignored.
+
+Failed requests raise :py:class:`pro_wes.exceptions.EngineUnavailable`:
+:py:class:`pro_wes.exceptions.EngineRequestNotSent` if the WES instance
+certainly didn't get the request, and
+:py:class:`pro_wes.exceptions.EngineOutcomeUnknown` if it may have got (and
+processed) it, e.g., after a read timeout.
+"""
+
+from collections.abc import Callable
+import logging
+import os
 from typing import Any
 
-from pydantic import ValidationError
+from foca import get_custom_config
+from foca.plugins.backends import RegistryEntry
+from foca.utils.http import (
+    GuardedClient,
+    HttpResponse,
+    RequestMaybeSent,
+    RequestNotSent,
+    ResponseTooLarge,
+)
+from pydantic import BaseModel, ValidationError
 import requests
-from requests.exceptions import RequestException
+from urllib3 import encode_multipart_formdata
 
-from pro_wes.exceptions import EngineUnavailable
+from pro_wes.config_models import CustomConfig
+from pro_wes.exceptions import (
+    EngineOutcomeUnknown,
+    EngineRequestNotSent,
+    EngineUnavailable,
+)
+from pro_wes.ga4gh.wes.backends import get_backend_list
 from pro_wes.ga4gh.wes.models import (
     ErrorResponse,
     RunId,
@@ -16,9 +60,146 @@ from pro_wes.ga4gh.wes.models import (
     ServiceInfo,
 )
 
+logger = logging.getLogger(__name__)
+
+CA_BUNDLE_ENV = "REQUESTS_CA_BUNDLE"
+"""Environment variable with the path of the certificate authorities that
+WES instances are verified with, instead of the public ones (a file or a
+directory, as for requests)."""
+
+
+class _GuardedHttp(GuardedClient):
+    """Guarded HTTP client that may verify with other certificate authorities.
+
+    FOCA's guarded client verifies TLS certificates with the public
+    certificate authorities only (it ignores the environment, also
+    `REQUESTS_CA_BUNDLE`); with a CA bundle, its `https` requests are
+    verified with that one instead (never without verification).
+
+    Attributes:
+        ca_bundle: Path of the file or directory of the certificate
+            authorities, if any.
+    """
+
+    def __init__(self, *, ca_bundle: str | None = None, **kwargs: Any) -> None:
+        """Create the client.
+
+        Args:
+            ca_bundle: Path of the file or directory of the certificate
+                authorities; `None` for the public ones.
+            **kwargs: Keyword arguments of
+                :py:class:`foca.utils.http.GuardedClient`.
+        """
+        super().__init__(**kwargs)
+        self.ca_bundle = ca_bundle
+
+    @property
+    def session(self) -> requests.Session:
+        """Get the session of the client, created on first use.
+
+        Returns:
+            FOCA's guarded session, whose `https` requests are verified with
+            the CA bundle, if any.
+        """
+        session = super().session
+        if self.ca_bundle is not None:
+            # FOCA's guarded adapter, mounted for both schemes (`verify` only
+            # matters for `https`)
+            for adapter in session.adapters.values():
+                if not getattr(adapter, "_prowes_ca_bundle", False):
+                    adapter.send = _with_ca_bundle(  # type: ignore[method-assign]
+                        adapter.send, self.ca_bundle
+                    )
+                    adapter._prowes_ca_bundle = True  # type: ignore[attr-defined]
+        return session
+
+
+def _with_ca_bundle(send: Callable[..., Any], ca_bundle: str) -> Callable[..., Any]:
+    """Wrap the `send()` method of a transport adapter to use a CA bundle.
+
+    Args:
+        send: Method of the adapter.
+        ca_bundle: Path of the file or directory of the certificate
+            authorities.
+
+    Returns:
+        Method that verifies with the CA bundle where `send()` would verify
+        with the public certificate authorities (`verify=True`, as FOCA's
+        guarded client always sends); never without verification.
+    """
+
+    def _send(request: requests.PreparedRequest, **kwargs: Any) -> Any:
+        """Send a request, verified with the CA bundle.
+
+        Args:
+            request: Prepared request.
+            **kwargs: Other arguments of `send()`.
+
+        Returns:
+            Response.
+        """
+        if kwargs.get("verify", True) is True:
+            kwargs["verify"] = ca_bundle
+        return send(request, **kwargs)
+
+    return _send
+
+
+def _access(host: str) -> tuple[bool, bool]:
+    """Get what requests to a WES instance may do.
+
+    Must be called in an app context.
+
+    Args:
+        host: Base URL of the WES instance.
+
+    Returns:
+        Whether `http` and whether private addresses are allowed: for
+        configured WES instances, `http` if their entry allows it
+        (`url_schemes`), and private addresses always; for discovered ones,
+        `https` only, and private addresses if their registry entry allows
+        them; for others (e.g., no longer listed), neither.
+    """
+    backend_list = get_backend_list()
+    backend = backend_list.find(host)
+    if backend is None:
+        return False, False
+    entry = backend_list.entry_for(backend)
+    if isinstance(entry, RegistryEntry):
+        return False, entry.allow_private_addresses
+    return "http" in entry.url_schemes, True
+
+
+def _validate[T: BaseModel](body: Any, model: type[T]) -> ErrorResponse | T:
+    """Validate a response body as the model of an operation or as an error.
+
+    Args:
+        body: Parsed JSON body.
+        model: Model of the operation's response.
+
+    Returns:
+        The body as the model, or as an error response.
+
+    Raises:
+        ValueError: The body is neither.
+    """
+    if not isinstance(body, dict):
+        raise ValueError(f"invalid response: {body}")
+    try:
+        return model(**body)
+    except ValidationError:
+        try:
+            return ErrorResponse(**body)
+        except ValidationError as exc:
+            raise ValueError(f"invalid response: {body}") from exc
+
 
 class WesClient:
     """Client to communicate with GA4GH WES API.
+
+    Must be created in an app context (it reads the config and the backend
+    list, cf. :py:mod:`pro_wes.ga4gh.wes.client_wes`). A client is not meant
+    to be shared between threads.
 
     Arguments:
         host: Host at which the WES API is served; note that this should
@@ -35,7 +216,9 @@ class WesClient:
         url: URL to WES endpoints, built from `url` and `base_path`,
             e.g.,"https://wes.rahtiapp.fi/ga4gh/wes/v1".
         token: Bearer token for gaining access to WES endpoints.
-        session: Client server session.
+        timeout: Timeout of requests without one of their own, in seconds
+            (`custom.defaults.timeout`).
+        http: Guarded HTTP client of the requests.
     """
 
     def __init__(
@@ -50,16 +233,20 @@ class WesClient:
             part for part in (host.rstrip("/"), base_path.strip("/")) if part
         )
         self.set_token(token)
-        self.session = requests.Session()
-        # Redirects are not followed (e.g., of a WES instance discovered in a
-        # registry, to an internal service): they fail as unavailable
-        # (`TooManyRedirects`), until requests go through FOCA's guarded
-        # client
-        self.session.max_redirects = 0
+        config = get_custom_config(CustomConfig)
+        self.timeout: float = config.defaults.timeout
+        allow_http, allow_private_addresses = _access(host)
+        self.http: GuardedClient = _GuardedHttp(
+            ca_bundle=os.environ.get(CA_BUNDLE_ENV) or None,
+            timeout=self.timeout,
+            allow_http=allow_http,
+            allow_private_addresses=allow_private_addresses,
+            max_response_size=config.wes.max_response_size,
+        )
 
     def get_service_info(
         self,
-        **kwargs: Any,
+        timeout: float | None = None,
     ) -> ErrorResponse | ServiceInfo:
         """Retrieve information about the WES instance.
 
@@ -68,35 +255,31 @@ class WesClient:
         invalid until versions are read per instance (#122).
 
         Args:
-            **kwargs: Additional keyword arguments passed along with request.
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's (`custom.defaults.timeout`).
 
         Returns:
             Response object according to WES API schema `ServiceInfo`. Cf.
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+
+        Raises:
+            pro_wes.exceptions.EngineUnavailable: The request failed.
+            ValueError: The response does not conform to any of the expected
+                schemas.
         """
-        self.set_headers()
-        url = f"{self.url}/service-info"
-        response: ErrorResponse | ServiceInfo
-        try:
-            response_unvalidated = self.session.get(url, **kwargs).json()
-        except (RequestException, ValueError) as exc:
-            raise EngineUnavailable("external workflow engine unavailable") from exc
-        try:
-            response = ServiceInfo(**response_unvalidated)
-        except ValidationError:
-            try:
-                response = ErrorResponse(**response_unvalidated)
-            except ValidationError as exc:
-                raise ValueError(f"invalid response: {response_unvalidated}") from exc
-        return response
+        body = self._request("GET", "/service-info", timeout=timeout)
+        return _validate(body, ServiceInfo)
 
     def post_run(
         self,
         form_data: dict[str, str],
-        files: dict[str, Any] | None = None,
-        **kwargs: Any,
+        files: dict[str, tuple[str, bytes]] | None = None,
+        timeout: float | None = None,
     ) -> ErrorResponse | RunId:
         """Send workflow run request.
+
+        The run request is sent as `multipart/form-data`, as the WES API
+        specifies.
 
         Args:
             form_data: Form data according to WES API schema `RunRequest`. Cf.
@@ -109,12 +292,10 @@ class WesClient:
                 The following form fields are optional:
                 * `tags`
                 * `workflow_engine_parameters`
-            files: Dictionary of files to be attached. Cf.
-                https://requests.readthedocs.io/en/latest/api/#requests.request
-                for possible structures of dictionary.
-            **kwargs: Additional keyword arguments passed along with request,
-                e.g., `timeout`, the request timeout in seconds (`None`
-                disables it).
+            files: Files to be attached, by form field: file name and
+                content.
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's (`custom.defaults.timeout`).
 
         Returns:
             WES API schema `RunId`. Cf.
@@ -122,75 +303,48 @@ class WesClient:
 
         Raises:
             ValueError: The form data does not conform to the expected schema.
+            pro_wes.exceptions.EngineUnavailable: The request failed.
             ValueError: The response does not conform to any of the expected
                 schemas.
         """
-        self.set_headers()
-        url = f"{self.url}/runs"
-        response: ErrorResponse | RunId
-        if files is None:
-            files = {}
         try:
             RunRequest(**form_data)
         except Exception as exc:
             raise ValueError(f"invalid form data: {form_data}") from exc
-        try:
-            response_unvalidated = self.session.post(
-                url,
-                data=form_data,
-                files=files,
-                **kwargs,
-            ).json()
-        except (RequestException, ValueError) as exc:
-            raise EngineUnavailable("external workflow engine unavailable") from exc
-        try:
-            response = RunId(**response_unvalidated)
-        except ValidationError:
-            try:
-                response = ErrorResponse(**response_unvalidated)
-            except ValidationError as exc:
-                raise ValueError(f"invalid response: {response_unvalidated}") from exc
-        return response
+        fields: list[tuple[str, str | tuple[str, bytes]]] = list(form_data.items())
+        fields.extend((files or {}).items())
+        data, content_type = encode_multipart_formdata(fields)
+        body = self._request(
+            "POST", "/runs", timeout=timeout, data=data, content_type=content_type
+        )
+        return _validate(body, RunId)
 
     def get_runs(
         self,
-        **kwargs: Any,
+        timeout: float | None = None,
     ) -> ErrorResponse | RunListResponse:
         """Retrieve list of workflow runs.
 
         Args:
-            **kwargs: Additional keyword arguments passed along with request,
-                e.g., `timeout`, the request timeout in seconds (`None`
-                disables it).
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's (`custom.defaults.timeout`).
 
         Returns:
             WES API schema `RunListResponse`. Cf.
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
+            pro_wes.exceptions.EngineUnavailable: The request failed.
             ValueError: The response does not conform to any of the expected
                 schemas.
         """
-        self.set_headers()
-        url = f"{self.url}/runs"
-        response: ErrorResponse | RunListResponse
-        try:
-            response_unvalidated = self.session.get(url, **kwargs).json()
-        except (RequestException, ValueError) as exc:
-            raise EngineUnavailable("external workflow engine unavailable") from exc
-        try:
-            response = RunListResponse(**response_unvalidated)
-        except ValidationError:
-            try:
-                response = ErrorResponse(**response_unvalidated)
-            except ValidationError as exc:
-                raise ValueError(f"invalid response: {response_unvalidated}") from exc
-        return response
+        body = self._request("GET", "/runs", timeout=timeout)
+        return _validate(body, RunListResponse)
 
     def get_run(
         self,
         run_id: str,
-        **kwargs: Any,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Retrieve detailed information about a workflow run.
 
@@ -199,9 +353,8 @@ class WesClient:
 
         Args:
             run_id: Workflow run identifier.
-            **kwargs: Additional keyword arguments passed along with request,
-                e.g., `timeout`, the request timeout in seconds (`None`
-                disables it).
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's (`custom.defaults.timeout`).
 
         Returns:
             Response object, as sent; according to WES API schema `RunLog` if
@@ -209,92 +362,61 @@ class WesClient:
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
-            pro_wes.exceptions.EngineUnavailable: The service is unavailable,
-                or its response is no JSON object.
+            pro_wes.exceptions.EngineUnavailable: The request failed, or the
+                response is no JSON object.
         """
-        self.set_headers()
-        url = f"{self.url}/runs/{run_id}"
-        try:
-            response_unvalidated = self.session.get(url, **kwargs).json()
-        except (RequestException, ValueError) as exc:
-            raise EngineUnavailable("external workflow engine unavailable") from exc
-        if not isinstance(response_unvalidated, dict):
+        body = self._request("GET", f"/runs/{run_id}", timeout=timeout)
+        if not isinstance(body, dict):
             raise EngineUnavailable("external workflow engine sent no JSON object")
-        return response_unvalidated
+        return body
 
     def get_run_status(
         self,
         run_id: str,
-        **kwargs: Any,
+        timeout: float | None = None,
     ) -> ErrorResponse | RunStatus:
         """Retrieve status information about a workflow run.
 
         Args:
             run_id: Workflow run identifier.
-            **kwargs: Additional keyword arguments passed along with request,
-                e.g., `timeout`, the request timeout in seconds (`None`
-                disables it).
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's (`custom.defaults.timeout`).
 
         Returns:
             WES API schema `RunStatus`. Cf.
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
+            pro_wes.exceptions.EngineUnavailable: The request failed.
             ValueError: The response does not conform to any of the expected
                 schemas.
         """
-        self.set_headers()
-        url = f"{self.url}/runs/{run_id}/status"
-        response: ErrorResponse | RunStatus
-        try:
-            response_unvalidated = self.session.get(url, **kwargs).json()
-        except (RequestException, ValueError) as exc:
-            raise EngineUnavailable("external workflow engine unavailable") from exc
-        try:
-            response = RunStatus(**response_unvalidated)
-        except ValidationError:
-            try:
-                response = ErrorResponse(**response_unvalidated)
-            except ValidationError as exc:
-                raise ValueError(f"invalid response: {response_unvalidated}") from exc
-        return response
+        body = self._request("GET", f"/runs/{run_id}/status", timeout=timeout)
+        return _validate(body, RunStatus)
 
     def cancel_run(
         self,
         run_id: str,
-        **kwargs: Any,
+        timeout: float | None = None,
     ) -> ErrorResponse | RunId:
         """Cancel workflow run.
 
         Args:
             run_id: Workflow run identifier.
-            **kwargs: Additional keyword arguments passed along with request,
-                e.g., `timeout`, the request timeout in seconds (`None`
-                disables it).
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's (`custom.defaults.timeout`).
 
         Returns:
             WES API schema `RunId`. Cf.
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
+            pro_wes.exceptions.EngineUnavailable: The request failed.
             ValueError: The response does not conform to any of the expected
                 schemas.
         """
-        self.set_headers()
-        url = f"{self.url}/runs/{run_id}/cancel"
-        response: ErrorResponse | RunId
-        try:
-            response_unvalidated = self.session.post(url, **kwargs).json()
-        except (RequestException, ValueError) as exc:
-            raise EngineUnavailable("external workflow engine unavailable") from exc
-        try:
-            response = RunId(**response_unvalidated)
-        except ValidationError:
-            try:
-                response = ErrorResponse(**response_unvalidated)
-            except ValidationError as exc:
-                raise ValueError(f"invalid response: {response_unvalidated}") from exc
-        return response
+        body = self._request("POST", f"/runs/{run_id}/cancel", timeout=timeout)
+        return _validate(body, RunId)
 
     def set_token(
         self,
@@ -308,29 +430,93 @@ class WesClient:
         """
         self.token = token
 
-    def set_headers(
+    def headers(
         self,
-        content_accept: str = "application/json",
         content_type: str | None = None,
-    ) -> None:
-        """Set session headers.
+    ) -> dict[str, str]:
+        """Get the headers of a request.
 
-        Headers that aren't given are removed from the session, so that they
-        don't stick to later requests: `Content-Type` if `content_type` is
-        `None`, and `Authorization` if the client has no or an empty token
-        (no anonymous request carries `Authorization: Bearer None`).
+        Each request gets its own headers, so that none sticks to later
+        requests. Without a token (or with an empty one), no `Authorization`
+        header is sent (no anonymous request carries `Authorization: Bearer
+        None`).
 
         Args:
-            content_accept: Requested MIME/content type.
-            content_type: Type of content sent with the request.
+            content_type: Type of content sent with the request, if any.
+
+        Returns:
+            Headers: `Accept` (JSON), and `Content-Type` and `Authorization`
+            if given.
         """
-        headers: dict[str, str | None] = {
-            "Accept": content_accept,
-            "Content-Type": content_type,
-            "Authorization": f"Bearer {self.token}" if self.token else None,
-        }
-        for name, value in headers.items():
-            if value is None:
-                self.session.headers.pop(name, None)
-            else:
-                self.session.headers[name] = value
+        headers = {"Accept": "application/json"}
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        timeout: float | None = None,
+        data: bytes | None = None,
+        content_type: str | None = None,
+    ) -> Any:
+        """Send a request to the WES API and parse the response.
+
+        Args:
+            method: HTTP method.
+            path: Path of the endpoint, relative to the WES API.
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's.
+            data: Body, if any.
+            content_type: Type of the body, if any.
+
+        Returns:
+            Parsed JSON body of the response.
+
+        Raises:
+            pro_wes.exceptions.EngineRequestNotSent: The WES instance
+                certainly didn't get the request (e.g., its host has no
+                allowed address, connecting or the TLS handshake failed, the
+                timeout passed before sending, or the CA bundle can't be
+                read).
+            pro_wes.exceptions.EngineOutcomeUnknown: The WES instance may
+                have got the request (e.g., the response timed out, or is
+                larger than `custom.wes.max_response_size`).
+            pro_wes.exceptions.EngineUnavailable: The response is a redirect,
+                or its body is no JSON.
+        """
+        url = f"{self.url}{path}"
+        self.http.timeout = self.timeout if timeout is None else timeout
+        try:
+            response: HttpResponse = self.http.request(
+                method, url, headers=self.headers(content_type), data=data
+            )
+        except ResponseTooLarge as exc:
+            logger.error(
+                "Response of WES instance larger than allowed"
+                " (`custom.wes.max_response_size`): %s",
+                exc,
+            )
+            raise EngineOutcomeUnknown(str(exc), reason=exc.reason) from exc
+        except RequestMaybeSent as exc:
+            raise EngineOutcomeUnknown(str(exc), reason=exc.reason) from exc
+        except RequestNotSent as exc:
+            raise EngineRequestNotSent(str(exc), reason=exc.reason) from exc
+        except OSError as exc:
+            # e.g., a CA bundle that doesn't exist (`cert_verify()` of
+            # requests), before anything is sent
+            raise EngineRequestNotSent(
+                f"{method} {url} not sent: {type(exc).__name__}"
+            ) from exc
+        if 300 <= response.status < 400:
+            raise EngineUnavailable(
+                f"{method} {url} redirected (status {response.status}); redirects"
+                " are not followed"
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise EngineUnavailable("external workflow engine sent no JSON") from exc
