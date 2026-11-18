@@ -11,11 +11,12 @@
 # - the worker connects to the broker (it logs that it is ready);
 # - neither the app nor the worker log errors;
 # - MongoDB's claim is kept on uninstallation and adopted by a new release,
-#   with its data.
+#   with its data;
+# - upgrades of releases with resources of the legacy chart fail.
 #
 # Run by the `chart-install` job of `.github/workflows/ci.yml`; locally,
-# with a kind cluster of that name and `KUBECONFIG` set (see "Testing the chart" in
-# `docs/deployment.md`). Needs docker, kind, helm and kubectl.
+# with a kind cluster of that name and `KUBECONFIG` set (see "Testing the
+# chart" in `docs/deployment.md`). Needs docker, kind, helm and kubectl.
 
 set -euo pipefail
 
@@ -94,7 +95,8 @@ if [[ "${claim}" != "${RELEASE}-data" ]]; then
 fi
 
 # The worker logs that it is ready once it has connected to the broker; it
-# has no probes, so its logs are polled. Errors in Gunicorn's (`[ERROR]`),
+# has no probes, so its logs are polled (FOCA's log format appends the
+# logger, `[celery.apps.worker]`). Errors in Gunicorn's (`[ERROR]`),
 # FOCA's (`: ERROR   ]`) and Celery's (`ERROR/`) log formats, except the
 # connection retries while the broker starts
 echo "Checking the worker"
@@ -102,13 +104,13 @@ logs=""
 for _ in $(seq 1 30); do
   logs="$(kubectl logs -n "${NAMESPACE}" --all-containers --prefix \
     -l app.kubernetes.io/component=worker --tail=-1 2>&1)" || true
-  if grep -q ' ready\.$' <<< "${logs}"; then
+  if grep -Eq ' ready\.( |$)' <<< "${logs}"; then
     break
   fi
   sleep 5
 done
 printf '%s\n' "${logs}"
-if ! grep -q ' ready\.$' <<< "${logs}"; then
+if ! grep -Eq ' ready\.( |$)' <<< "${logs}"; then
   echo "::error::The worker is not ready"
   exit 1
 fi
@@ -152,4 +154,25 @@ if [[ "${kept}" != "1" ]]; then
   echo "::error::MongoDB's data did not survive the reinstallation (${kept})"
   exit 1
 fi
+
+# A Deployment as the legacy chart created them (annotated with the release,
+# without the label `app.kubernetes.io/instance`; no pods) makes upgrades of
+# the release fail (`prowes.checkUpgrade`), as they would delete the legacy
+# volumes
+echo "Checking that upgrades of legacy releases fail"
+kubectl create deployment legacy-mongodb -n "${NAMESPACE}" --image "${IMAGE}" \
+  --replicas 0
+kubectl annotate deployment legacy-mongodb -n "${NAMESPACE}" \
+  meta.helm.sh/release-name="${RELEASE}"
+if output="$(helm upgrade "${RELEASE}" "${CHART}" -n "${NAMESPACE}" \
+    --reuse-values 2>&1)"; then
+  echo "::error::The upgrade of a release with legacy resources did not fail"
+  exit 1
+fi
+printf '%s\n' "${output}"
+if ! grep -q 'was installed with the legacy chart' <<< "${output}"; then
+  echo "::error::The upgrade failed for another reason than the legacy resources"
+  exit 1
+fi
+kubectl delete deployment legacy-mongodb -n "${NAMESPACE}"
 echo "The chart works"

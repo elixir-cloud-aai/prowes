@@ -212,7 +212,8 @@ Flower (`flower.enabled`, off by default) shows the worker's tasks, with
 their arguments, including the tokens that clients sent with their runs, so
 it requires basic authentication: create a Secret with the key `basic-auth`
 (`<user>:<password>`) and set `flower.existingSecret`. Flower is not exposed
-outside the cluster; reach it with:
+outside the cluster (the legacy chart's Ingress for Flower is gone; for one of
+your own, admit its controller in `flower.networkPolicy.ingressFrom`); reach it with:
 
 ```bash
 kubectl port-forward svc/<app>-flower 5555:5555 -n <namespace>
@@ -324,6 +325,7 @@ replacements:
 | `mongodb.volumeSize` | `mongodb.persistence.size` |
 | `flower.basicAuth` | a Secret of your own, in `flower.existingSecret` |
 | `prowes.initResources` | none: `fsGroup` makes `/data` writable |
+| Flower's Ingress | none: `kubectl port-forward`, or an Ingress of your own with `flower.networkPolicy.ingressFrom` |
 
 Releases of the legacy chart can't be upgraded in place: the names of their
 volumes changed, so an upgrade would delete them with the data (the chart

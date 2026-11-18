@@ -160,7 +160,10 @@ def _volumes(docs: Docs, name: str) -> dict[str, dict[str, Any]]:
     Returns:
         The volume sources, by volume name.
     """
-    return {volume.pop("name"): volume for volume in _pod(docs, name)["volumes"]}
+    return {
+        volume["name"]: {key: value for key, value in volume.items() if key != "name"}
+        for volume in _pod(docs, name)["volumes"]
+    }
 
 
 def _overlay(docs: Docs) -> dict[str, Any]:
@@ -531,7 +534,125 @@ def test_library_chart_pinned() -> None:
     assert f"foca-common {locked['version']}" in schema["$comment"]
 
 
-def test_values_schema_rejects_unknown_storage_keys() -> None:
-    """The schema rejects misspelt keys of the storage of the runs."""
-    error = _render_error("--set", "prowes.storage.sise=2Gi")
-    assert "sise" in error
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (
+            ("--set", "prowes.storage.sise=2Gi"),
+            "at '/prowes/storage': additional properties 'sise' not allowed",
+        ),
+        (("--set", "prowes.replicas=x"), "at '/prowes/replicas': got string"),
+    ],
+)
+def test_values_schema(args: tuple[str, str], message: str) -> None:
+    """The values schema rejects misspelt keys and values of the wrong type.
+
+    Args:
+        args: Arguments setting an invalid value.
+        message: Expected part of the error.
+    """
+    assert message in _render_error(*args)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['{"name": "X"}', '[{"value": "x"}]', '["X=x"]'],
+)
+def test_extra_env_invalid(value: str) -> None:
+    """`prowes.extraEnv` must be a list of variables with names.
+
+    The schema rejects these values before the chart's own check would.
+
+    Args:
+        value: Value of `prowes.extraEnv`, as JSON.
+    """
+    error = _render_error("--set-json", f"prowes.extraEnv={value}")
+    assert "at '/prowes" in error
+    assert "extraEnv" in error
+
+
+def test_flower_needs_broker_secret() -> None:
+    """Flower requires the broker URL, also with an external broker."""
+    error = _render_error(
+        *FLOWER_ON,
+        "--set",
+        "broker.enabled=false",
+        "--set",
+        "worker.enabled=false",
+        broker_secret=None,
+    )
+    assert "broker.existingSecret must be set if flower.enabled" in error
+
+
+def test_flower_name_collision() -> None:
+    """The app's name must not collide with Flower's."""
+    name = "a" * 56 + "-flower"
+    error = _render_error(*FLOWER_ON, "--set", f"fullnameOverride={name}")
+    assert f"would both be named {name}" in error
+
+
+def test_flower_network_policy_peers() -> None:
+    """Flower admits only the peers of `flower.networkPolicy.ingressFrom`."""
+    policy = _render(*FLOWER_ON)[("NetworkPolicy", FLOWER)]
+    assert policy["spec"]["ingress"] == []
+    peers = [{"podSelector": {"matchLabels": {"app": "proxy"}}}]
+    peers_arg = f"flower.networkPolicy.ingressFrom={json.dumps(peers)}"
+    policy = _render(*FLOWER_ON, "--set-json", peers_arg)[("NetworkPolicy", FLOWER)]
+    assert policy["spec"]["ingress"] == [
+        {"from": peers, "ports": [{"port": 5555, "protocol": "TCP"}]}
+    ]
+
+
+def test_notes_variants() -> None:
+    """The notes describe the HTTPRoute, the Route and a disabled worker."""
+    parents = [{"name": "gateway", "namespace": "gateway-system"}]
+    host = ("--set", "hostName=wes.example.org")
+    notes = render_notes(
+        *host,
+        *NO_INGRESS,
+        "--set",
+        "prowes.httpRoute.enabled=true",
+        "--set-json",
+        f"prowes.httpRoute.parentRefs={json.dumps(parents)}",
+    )
+    assert "The HTTPRoute serves the app" in notes
+    notes = render_notes(*host, *NO_INGRESS, *OPENSHIFT)
+    assert "https://wes.example.org/ga4gh/wes/v1/ui/" in notes
+    assert "kubectl port-forward" not in notes
+    notes = render_notes(*NO_INGRESS, "--set", "prowes.route.enabled=false")
+    assert "(prowes.route.enabled is false)" in notes
+    notes = render_notes(*NO_INGRESS, "--set", "worker.enabled=false")
+    assert "The Celery worker is disabled" in notes
+
+
+def test_external_mongodb() -> None:
+    """With an external MongoDB, the overlay has its host, which is required."""
+    docs = _render("--set", "mongodb.enabled=false", "--set", "config.db.host=db")
+    assert ("Deployment", MONGODB) not in docs
+    assert _overlay(docs)["db"] == {"host": "db"}
+    env = _env(_container(docs, APP))
+    assert env["MONGO_PASSWORD"]["valueFrom"]["secretKeyRef"] == {
+        "name": MONGODB_SECRET,
+        "key": "password",
+    }
+    error = _render_error("--set", "mongodb.enabled=false")
+    assert "config.db.host must be set" in error
+
+
+def test_mongodb_without_auth() -> None:
+    """Without authentication, no MongoDB credentials are passed."""
+    docs = _render("--set", "mongodb.auth.enabled=false", mongodb_secret=None)
+    for name in (APP, WORKER):
+        assert "MONGO_USERNAME" not in _env(_container(docs, name))
+
+
+def test_external_broker() -> None:
+    """With an external broker, only its URL is passed to the app and worker."""
+    docs = _render("--set", "broker.enabled=false")
+    assert ("StatefulSet", BROKER) not in docs
+    env = _env(_container(docs, WORKER))
+    assert env["CELERY_BROKER_URL"]["valueFrom"]["secretKeyRef"]["name"] == (
+        BROKER_SECRET
+    )
+    error = _render_error(broker_secret=None)
+    assert "broker.existingSecret must be set" in error
