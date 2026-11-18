@@ -103,12 +103,17 @@ def test_post_service_info_not_allowed(foca_client: Client) -> None:
 
 @pytest.mark.usefixtures("app_context")
 def test_state_counts_unknown_state() -> None:
-    """Runs with unknown states are not counted, without failing."""
+    """Runs with unknown states are not counted, without failing.
+
+    Also runs without a state, and one without a run log (the unique index
+    on `run_log.run_id` allows one run without an identifier).
+    """
     get_collection(RUN_DB, RUN_COLLECTION).insert_many(
         [
             {"run_log": {"run_id": "RUN001", "state": "OTHER"}},
             {"run_log": {"run_id": "RUN002", "state": "RUNNING"}},
             {"run_log": {"run_id": "RUN003"}},
+            {},
         ]
     )
     counts = state_counts()

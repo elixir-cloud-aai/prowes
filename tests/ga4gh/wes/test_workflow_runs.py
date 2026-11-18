@@ -540,19 +540,26 @@ def test_runs_indexes(foca_app: App, mongodb: MongoClient[dict[str, Any]]) -> No
     """The app creates the indexes of the runs collection at start.
 
     Run identifiers are unique; the runs of a user are found by user and
-    newest first (`GET /runs` with authentication).
+    newest first (`GET /runs` with authentication). The names are those of
+    the docs (operations, upgrading); the previous index on `run_id` and
+    `task_id` is no longer configured.
 
     Args:
         foca_app: The app, which created the indexes.
         mongodb: Database of the test (FOCA's fixture).
     """
-    indexes = {
-        tuple((key, int(direction)) for key, direction in index["key"]): index
-        for index in mongodb[RUN_DB][RUN_COLLECTION].index_information().values()
+    indexes = mongodb[RUN_DB][RUN_COLLECTION].index_information()
+    keys = {
+        name: [(key, int(direction)) for key, direction in index["key"]]
+        for name, index in indexes.items()
     }
-    assert indexes[(("run_log.run_id", 1),)].get("unique") is True
-    assert (("user_id", 1), ("_id", -1)) in indexes
-    assert (("run_id", 1), ("task_id", 1)) not in indexes
+    assert keys == {
+        "_id_": [("_id", 1)],
+        "run_log.run_id_1": [("run_log.run_id", 1)],
+        "user_id_1__id_-1": [("user_id", 1), ("_id", -1)],
+    }
+    assert indexes["run_log.run_id_1"].get("unique") is True
+    assert not indexes["run_log.run_id_1"].get("sparse")
 
 
 @pytest.mark.usefixtures("queued", "remote_wes")

@@ -71,14 +71,17 @@ The collection `runs` gets two indexes, which the app creates at its first
 start (see [Database indexes](operations.md#database-indexes)): a unique
 index on the run identifier (`run_log.run_id`), and one for listing the
 runs of a user (`user_id`, `_id` descending). Before, the unique index was
-on the keys `run_id` and `task_id`, which run documents don't have at the
-top level: duplicate run identifiers were rejected only by the working
-directory of each run, not across instances of the app that share the
-database but not the storage.
+on the keys `run_id` (which run documents don't have at the top level; the
+run identifier is `run_log.run_id`) and `task_id`: duplicate run
+identifiers were rejected only by the working directory of each run, not
+across instances of the app that share the database but not the storage.
 
 Before upgrading, check that no run identifier is stored twice, as the app
-doesn't start otherwise (`IndexConflictError`); in `mongosh`, connected to
-the database of proWES (default: `runStore`):
+doesn't start otherwise (`IndexConflictError`). Earlier versions replaced
+the identifier of a run with that of the remote WES, or with none, once the
+run was tracked, so databases of long-running deployments may well hold
+duplicates. In `mongosh`, connected to the database of proWES (default:
+`runStore`):
 
 ```javascript
 db.runs.aggregate([
@@ -88,8 +91,13 @@ db.runs.aggregate([
 ```
 
 Without output, there are none. Otherwise, delete or change all but one of
-the runs of each identifier listed (`_id: null` stands for runs without an
-identifier).
+the runs of each identifier listed. The index is not sparse (the previous
+one was): runs without an identifier (`run_log.run_id`) count as runs of
+the same identifier, listed as `_id: null`.
+
+With `db.create_indexes_on_startup: false`, the app creates no indexes:
+create the new ones by hand (see [Database
+indexes](operations.md#database-indexes)).
 
 The previous index (`run_id_1_task_id_1`) is kept, but no longer used;
 drop it after the upgrade:
