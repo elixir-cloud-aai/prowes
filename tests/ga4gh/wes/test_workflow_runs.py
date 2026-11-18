@@ -379,19 +379,25 @@ def test_post_run_remote_error_status(
     assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"
 
 
-@pytest.mark.usefixtures("queued", "remote_wes")
+@pytest.mark.usefixtures("queued")
 @pytest.mark.parametrize(
-    "update",
+    ("update", "detail"),
     [
-        {"wes_endpoint": None},
-        {"wes_endpoint": WesEndpoint(host="https://wes.example.org", base_path=None)},
-        {"task_id": None},
+        ({"wes_endpoint": None}, "An unexpected error occurred."),
+        (
+            {"wes_endpoint": WesEndpoint(host="https://h", base_path=None)},
+            "An unexpected error occurred.",
+        ),
+        ({"task_id": None}, "No/few unique run identifiers available."),
     ],
+    ids=["no endpoint", "no base path", "no task"],
 )
 def test_post_run_incomplete_document(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
+    remote_wes: list[dict[str, str]],
     update: dict[str, Any],
+    detail: str,
 ) -> None:
     """Runs stored without endpoint, base path or task fail with `500`."""
     create = WorkflowRuns._create_run_environment
@@ -409,22 +415,38 @@ def test_post_run_incomplete_document(
         return create(self, **kwargs).model_copy(update=update)
 
     monkeypatch.setattr(WorkflowRuns, "_create_run_environment", _create)
-    assert _post_run(foca_client, RUN_REQUEST).status_code == 500
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 500
+    assert response.json()["detail"] == detail
+    # refused before forwarding
+    assert not remote_wes
 
 
 @pytest.mark.usefixtures("queued", "remote_wes")
 @pytest.mark.parametrize(
-    "update",
+    ("update", "detail"),
     [
-        lambda doc: doc.model_copy(update={"wes_endpoint": None}),
-        lambda doc: doc.model_copy(
-            update={"wes_endpoint": WesEndpoint(host="https://h", base_path=None)}
+        (
+            lambda doc: doc.model_copy(update={"wes_endpoint": None}),
+            "An unexpected error occurred.",
         ),
-        lambda doc: doc.model_copy(
-            update={"wes_endpoint": WesEndpoint(host="https://h", run_id=None)}
+        (
+            lambda doc: doc.model_copy(
+                update={"wes_endpoint": WesEndpoint(host="https://h", base_path=None)}
+            ),
+            "An unexpected error occurred.",
         ),
-        lambda doc: doc.model_copy(
-            update={"run_log": doc.run_log.model_copy(update={"run_id": None})}
+        (
+            lambda doc: doc.model_copy(
+                update={"wes_endpoint": WesEndpoint(host="https://h", run_id=None)}
+            ),
+            "No/few requirements provided for WES endpoint.",
+        ),
+        (
+            lambda doc: doc.model_copy(
+                update={"run_log": doc.run_log.model_copy(update={"run_id": None})}
+            ),
+            "No/few unique run identifiers available.",
         ),
     ],
     ids=["no endpoint", "no base path", "no remote run id", "no run id"],
@@ -433,6 +455,7 @@ def test_post_run_incomplete_update(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
     update: Callable[[DbDocument], DbDocument],
+    detail: str,
 ) -> None:
     """Runs without endpoint or identifiers after forwarding fail with `500`."""
     upsert = DbDocumentConnector.upsert_fields_in_root_object
@@ -450,7 +473,9 @@ def test_post_run_incomplete_update(
         return update(upsert(self, **kwargs))
 
     monkeypatch.setattr(DbDocumentConnector, "upsert_fields_in_root_object", _upsert)
-    assert _post_run(foca_client, RUN_REQUEST).status_code == 500
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 500
+    assert response.json()["detail"] == detail
 
 
 @pytest.mark.usefixtures("remote_wes")
