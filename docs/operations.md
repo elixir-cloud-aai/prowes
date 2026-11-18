@@ -83,7 +83,10 @@ other checks have passed (job `publish`) does it get a [GitHub artifact
 attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
 of its provenance and a keyless [Sigstore](https://www.sigstore.dev/)
 signature, and then the tags `dev` and `sha-<commit>` (the full commit
-hash). CI never tags `latest`: release images (`X.Y.Z` and `latest`) will be
+hash). Only a commit that is still the head of `dev` when `publish` runs is
+signed, attested and tagged: the digests of commits that a newer push
+overtook stay on Docker Hub untagged and unsigned, so not every commit has a
+`sha-<commit>` tag. CI never tags `latest`: release images (`X.Y.Z` and `latest`) will be
 published by a release workflow
 ([#116](https://github.com/elixir-cloud-aai/prowes/issues/116)). Images
 published before (`latest` and tags by date, `YYYYMMDD`) are neither

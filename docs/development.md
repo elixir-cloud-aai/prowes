@@ -130,8 +130,11 @@ skipped on pull requests and in forks, which the gate allows. A fork can dry
 run them by setting the repository variable `DOCKERHUB_ORG` to its own
 Docker Hub organization (and the secrets `DOCKERHUB_LOGIN` and
 `DOCKERHUB_TOKEN`, in an environment `dev-images`): the image is then
-published there instead of to `elixircloud`. See [Verifying
-images](operations.md#verifying-images) for what the image jobs publish.
+published there instead of to `elixircloud`. `DOCKERHUB_ORG` is a
+repository variable (before: a secret, which the workflow no longer reads).
+`publish` signs and tags only commits that are still the head of `dev`. See
+[Verifying images](operations.md#verifying-images) for what the image jobs
+publish.
 
 ## Smoke test
 

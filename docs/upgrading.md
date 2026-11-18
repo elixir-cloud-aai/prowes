@@ -90,8 +90,9 @@ pushed that way until the first release
 ([#116](https://github.com/elixir-cloud-aai/prowes/issues/116)), from which
 on it points to the newest release. Deployments that pull `latest` to follow
 `dev` (e.g., the Helm chart's default, `elixircloud/prowes:latest`, with
-`imagePullPolicy: Always`) need to pull `dev` instead, or better a
-`sha-<commit>` tag, which never moves.
+`imagePullPolicy: Always`) need to pull `dev` instead, or better an existing
+`sha-<commit>` tag, which never moves (commits that a newer push overtook
+before their image was published have none).
 
 ### Docker Compose
 

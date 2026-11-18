@@ -22,7 +22,6 @@ PUBLISH = (
     "github.event_name == 'push' && (github.repository_owner == "
     "'elixir-cloud-aai' || vars.DOCKERHUB_ORG != '')"
 )
-IMAGE_JOBS = {"push", "scan", "publish"}
 # The jobs that may read secrets, and the secrets they read
 SECRETS = {
     "push": {"DOCKERHUB_LOGIN", "DOCKERHUB_TOKEN"},
@@ -178,17 +177,84 @@ def test_version_uv_image() -> None:
     """`push` finds the uv image of the `Dockerfile`, pinned by digest.
 
     `push` derives the version with the build requirements, which it
-    exports from `uv.lock` with that image.
+    exports from `uv.lock` with that image; its `sed` pattern (an extended
+    regular expression, which Python reads the same) must match the
+    `Dockerfile`.
     """
-    run = next(
-        step["run"]
-        for step in _jobs()["push"]["steps"]
-        if step.get("name") == "Derive version"
-    )
-    assert "AS uv$" in run
+    run = _steps("push")["Derive version"]["run"]
+    match = re.search(r"sed -En 's/(.+)/\\1/p' Dockerfile", run)
+    assert match
+    pattern = match.group(1).replace("\\/", "/")
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert re.search(
-        r"^FROM ghcr\.io/astral-sh/uv:[^ @]+@sha256:[0-9a-f]{64} AS uv$",
-        dockerfile,
-        re.MULTILINE,
+    images = [
+        found.group(1)
+        for line in dockerfile.splitlines()
+        if (found := re.fullmatch(pattern, line))
+    ]
+    assert len(images) == 1
+    assert re.fullmatch(r"ghcr\.io/astral-sh/uv:[^ @]+@sha256:[0-9a-f]{64}", images[0])
+
+
+def _steps(job_id: str) -> dict[str, dict[str, Any]]:
+    """Get the steps of a job of `ci.yml`.
+
+    Args:
+        job_id: ID of the job.
+
+    Returns:
+        The steps, by name, in order.
+    """
+    return {step["name"]: step for step in _jobs()[job_id]["steps"]}
+
+
+def test_push_by_digest_only() -> None:
+    """`push` pushes by digest only, untagged, and can't sign or attest."""
+    assert _jobs()["push"]["permissions"] == {"contents": "read"}
+    build = _steps("push")["Build and push image by digest"]["with"]
+    assert "push-by-digest=true" in build["outputs"]
+    assert "tags" not in build
+    assert build["sbom"] is True
+    assert build["provenance"] == "mode=max"
+
+
+def test_scan_upload_upstream_only() -> None:
+    """The scan scans the pushed digest; findings go to upstream only."""
+    steps = _steps("scan")
+    assert _expression(steps["Scan image"]["with"]["upload"]) == (
+        "github.repository_owner == 'elixir-cloud-aai' && "
+        "(github.event_name == 'push' || "
+        "github.event.pull_request.head.repo.full_name == github.repository)"
     )
+    # A local build only where nothing is pushed; otherwise the digest
+    for name in ("Set up Docker Buildx", "Build image"):
+        assert _expression(steps[name]["if"]) == "env.PUBLISH != 'true'", name
+    run = steps["Determine image"]["run"]
+    assert 'if [[ "${PUBLISH}" != "true" ]]; then' in run
+    assert run.rstrip().endswith(
+        'echo "image=${IMAGE_NAME}@${DIGEST}" >> "$GITHUB_OUTPUT"'
+    )
+
+
+def test_publish_signs_before_tagging() -> None:
+    """`publish` attests and signs the digest before it tags it.
+
+    Every step after the check of the branch head runs only if the commit
+    is still the head, and the tags are `dev` and `sha-<commit>`, never
+    `latest`.
+    """
+    publish = _jobs()["publish"]
+    assert publish["environment"] == "dev-images"
+    assert publish["concurrency"] == {
+        "group": "${{ github.workflow }}-publish-${{ github.ref }}",
+        "cancel-in-progress": False,
+    }
+    steps = _steps("publish")
+    names = list(steps)
+    assert names[0] == "Check that commit is still the branch head"
+    for name in names[1:]:
+        assert steps[name]["if"] == "steps.head.outputs.current == 'true'", name
+    assert names[-3:] == ["Install cosign", "Sign image", "Tag image"]
+    assert names.index("Attest build provenance") < names.index("Sign image")
+    tag = steps["Tag image"]["run"]
+    assert '"${IMAGE_NAME}:dev" "${IMAGE_NAME}:sha-${SHA}"' in tag
+    assert "latest" not in tag
