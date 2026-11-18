@@ -105,13 +105,22 @@ def test_post_service_info_not_allowed(foca_client: Client) -> None:
 def test_state_counts_unknown_state() -> None:
     """Runs with unknown states are not counted, without failing."""
     get_collection(RUN_DB, RUN_COLLECTION).insert_many(
-        [{"run_log": {"state": "PREEMPTED"}}, {"run_log": {"state": "RUNNING"}}, {}]
+        [{"run_log": {"state": "OTHER"}}, {"run_log": {"state": "RUNNING"}}, {}]
     )
     counts = state_counts()
-    assert "PREEMPTED" not in counts
+    assert "OTHER" not in counts
     assert counts["RUNNING"] == 1
     assert sum(counts.values()) == 1
     assert runtime_fields() == {"system_state_counts": counts}
+
+
+@pytest.mark.usefixtures("app_context")
+def test_state_counts_preempted() -> None:
+    """Preempted runs (WES 1.1.0) are counted."""
+    get_collection(RUN_DB, RUN_COLLECTION).insert_one(
+        {"run_log": {"state": "PREEMPTED"}}
+    )
+    assert state_counts()["PREEMPTED"] == 1
 
 
 def test_state_counts_not_configurable(add_overlay: Callable[[str], None]) -> None:

@@ -307,6 +307,9 @@ class State(BaseEnum):
         CANCELED: The task was canceled by the user.
         CANCELING: The task was canceled by the user, and is in the process of
             stopping.
+        PREEMPTED: The task was stopped (preempted) by the system (WES
+            1.1.0), e.g., as the resources it ran on were reclaimed; final:
+            proWES doesn't resubmit the run.
     """
 
     UNKNOWN = "UNKNOWN"
@@ -319,6 +322,7 @@ class State(BaseEnum):
     SYSTEM_ERROR = "SYSTEM_ERROR"
     CANCELED = "CANCELED"
     CANCELING = "CANCELING"
+    PREEMPTED = "PREEMPTED"
 
     @property
     def is_finished(self) -> bool:
@@ -328,6 +332,7 @@ class State(BaseEnum):
             self.EXECUTOR_ERROR,
             self.SYSTEM_ERROR,
             self.CANCELED,
+            self.PREEMPTED,
         )
 
     @property

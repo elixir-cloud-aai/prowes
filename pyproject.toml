@@ -124,10 +124,13 @@ dev = [
     "ast-grep-cli>=0.51",
     "celery-types>=0.20.0",
     "coverage>=7.16",
+    # Validates error responses against the served specification (tests)
+    "jsonschema>=4.26",
     "mongomock>=4.3",
     "mypy>=2.4",
     "pre-commit>=4.6",
     "pytest>=9.1",
+    "types-jsonschema>=4.26",
     "types-PyYAML>=6.0.12",
     "types-requests>=2.33",
     # Locks the dependencies (`uv lock`, checked by pre-commit); also the
