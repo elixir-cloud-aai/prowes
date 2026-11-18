@@ -209,7 +209,7 @@ def test_list_runs(
     body = response.json()
     assert len(body["runs"]) == 2
     assert {run["state"] for run in body["runs"]} == {"UNKNOWN"}
-    assert body["next_page_token"]
+    assert body["next_page_token"] == ""
     page = foca_client.get(f"{BASE_PATH}/runs", params={"page_size": 1})
     assert len(page.json()["runs"]) == 1
     assert page.json()["runs"][0] == body["runs"][0]
@@ -558,6 +558,33 @@ def test_list_runs_pages(foca_client: Client) -> None:
     ).json()
     assert len(second["runs"]) == 1
     assert second["runs"][0]["run_id"] != first["runs"][0]["run_id"]
+    assert second["next_page_token"] == ""
+
+
+@pytest.mark.parametrize("page_size", [2, 3, 10])
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_last_page(
+    mongodb: MongoClient[dict[str, Any]], page_size: int
+) -> None:
+    """The last page has no next page token, also if it is full (#84).
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        page_size: Number of runs per page.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [{"run_log": {"run_id": f"RUN{i:03}", "state": "QUEUED"}} for i in range(3)]
+    )
+    runs: list[dict[str, Any]] = []
+    page = WorkflowRuns().list_runs(page_size=page_size)
+    runs += page["runs"]
+    while page["next_page_token"]:
+        page = WorkflowRuns().list_runs(
+            page_size=page_size, page_token=page["next_page_token"]
+        )
+        assert page["runs"]
+        runs += page["runs"]
+    assert [run["run_id"] for run in runs] == ["RUN002", "RUN001", "RUN000"]
 
 
 @pytest.mark.usefixtures("app_context")

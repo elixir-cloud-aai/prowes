@@ -283,8 +283,16 @@ class WorkflowRuns:
             .limit(page_size)
         )
 
-        # set next page token
-        next_page_token = str(resources[-1]["_id"]) if resources else ""
+        # set next page token: only if older runs are left (#84)
+        next_page_token = ""
+        if resources:
+            last_id = resources[-1]["_id"]
+            older = self.db_client.find_one(
+                filter={**filter_dict, "_id": {"$lt": last_id}},
+                projection={"_id": True},
+            )
+            if older is not None:
+                next_page_token = str(last_id)
 
         # format response
         for run in resources:
