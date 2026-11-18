@@ -18,6 +18,11 @@ server:
   # development, on a loopback host
   debug: False
   testing: False
+  # Maximum size of request bodies (10 MiB), with all workflow attachments;
+  # larger requests are rejected with `413 Content Too Large` before they
+  # are parsed. A reverse proxy in front of the app must allow at least as
+  # much (e.g., ingress-nginx allows 1 MiB by default)
+  max_content_length: 10485760
 
 # Security configuration: the WES API is served without authentication
 # (`api.specs[].disable_auth`); authentication follows with its own issue.
@@ -66,8 +71,10 @@ api:
       disable_auth: True
       connexion:
         strict_validation: True
-        # workaround until cwl-WES responses are fixed
-        validate_responses: False
+        # Responses are checked against the specification, so that no
+        # unchecked data (e.g., of the remote WES) reaches clients; invalid
+        # ones become `500` errors
+        validate_responses: True
         base_path: /ga4gh/wes/v1
         options:
           swagger_ui: True
@@ -170,5 +177,12 @@ custom:
     storage_path: "/data"
     timeout_job: null
     timeout_post: 30
+    # Workflow attachments: at most 100 per run, of at most 1 MiB each
+    # (`413 Content Too Large` otherwise)
+    max_attachments: 100
+    max_attachment_size: 1048576
+    # Runs with credentials in URLs (`https://user:password@host/...`):
+    # `reject` (`400 Bad Request`) or `strip` (remove the credentials)
+    url_credentials: reject
   list_runs:
     default_page_size: 5

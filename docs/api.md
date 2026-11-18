@@ -21,8 +21,10 @@ completes it (e.g., with the schemas of the GA4GH service info).
 ## Runs
 
 For `POST /runs`, proWES validates the request (a form, as the WES API
-defines it), stores the run in its database, writes its workflow
-attachments to the storage of the runs (`custom.post_runs.storage_path`, see
+defines it), checks its limits and the credentials in its URLs (see [Run
+requests](configuration.md#run-requests)), stores the run in its database,
+writes its workflow attachments to the storage of the runs
+(`custom.post_runs.storage_path`, see
 [Configuration](configuration.md#settings)) and forwards the request to a
 WES instance. Currently, that is a single, built-in WES instance; WES
 instances become configurable with
@@ -35,6 +37,13 @@ its state and, once the run has finished, stores its outputs, its engine log
 and its task logs (see [Run tracking](operations.md#run-tracking)). `GET
 /runs/{run_id}` and `GET /runs/{run_id}/status` answer from the database;
 `POST /runs/{run_id}/cancel` forwards the cancellation to the WES instance.
+
+`GET /runs/{run_id}` returns the run request with `workflow_params`, `tags`
+and `workflow_engine_parameters` as JSON objects, as the WES specification
+defines `RunLog` (the form of `POST /runs` has them as JSON-encoded
+strings), and leaves out fields without value (e.g., an `exit_code` that the
+WES instance didn't report). All responses are validated against the
+specification (see [Responses](configuration.md#responses)).
 
 ## Errors
 
@@ -54,4 +63,18 @@ a run that doesn't exist:
 
 Errors of the WES instance when a run is forwarded become `400`, `401`,
 `403` or, for all others, `500` responses of proWES, and the run gets the
-state `SYSTEM_ERROR`.
+state `SYSTEM_ERROR`. So does a run whose workflow attachments can't be
+written to the storage of the runs (`500`, "Storage is not accessible."); it
+is not forwarded.
+
+Error responses of `POST /runs` for requests that proWES rejects (neither
+stored nor forwarded):
+
+| Status | Cause |
+| --- | --- |
+| `400 Bad Request` | The form is invalid (e.g., a missing field, `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
+| `413 Content Too Large` | The request body is larger than `server.max_content_length` (see [Request size limit](configuration.md#request-size-limit)), the run has more workflow attachments than `custom.post_runs.max_attachments`, or an attachment is larger than `custom.post_runs.max_attachment_size` |
+
+The `detail` of each names the cause; credentials of URLs are never echoed.
+Responses that don't conform to the specification (e.g., a
+stored run log that is invalid) become `500 Internal server error`.

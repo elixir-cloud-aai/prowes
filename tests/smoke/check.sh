@@ -4,9 +4,10 @@
 # the app, the Celery worker, MongoDB, RabbitMQ and the fake WES, waits
 # until their health checks pass, then creates runs, which proWES forwards
 # to the fake WES, waits until the Celery worker has tracked them (via
-# RabbitMQ) to their final state, and checks the other endpoints and the
-# cancellation of a run. Run it from the repository root, with the base URL
-# of the WES API as argument (default
+# RabbitMQ) to their final state, and checks the other endpoints, the
+# cancellation of a run, and that run requests with credentials in URLs and
+# larger than the size limit are rejected. Run it from the repository root,
+# with the base URL of the WES API as argument (default
 # `http://localhost:8090/ga4gh/wes/v1`); needs curl, jq and Docker Compose.
 # On failure, it shows the logs of the services. The deployment is left
 # running (Compose project `COMPOSE_PROJECT_NAME`, default `prowes-smoke`,
@@ -118,6 +119,31 @@ check GET '/runs?page_size=100' 200 "any(.runs[]; .run_id == \"${held}\" and .st
 # have)
 check GET /runs/unknwn 404 '.status == 404'
 check GET /runs/unknwn/status 404 '.status == 404'
+# Runs with credentials in URLs are rejected (`url_credentials: reject`),
+# without echoing them
+check POST /runs 400 '.status == 400 and (.detail | test("credentials")) and (tostring | test("s3cr3t") | not)' \
+  "workflow_params=${params}" 'workflow_type=CWL' 'workflow_type_version=v1.0' \
+  'workflow_url=https://user:s3cr3t@example.org/smoke.cwl'
+# Request bodies larger than `server.max_content_length` (10 MiB) are
+# rejected before they are parsed: an attachment of 11 MiB. The app may
+# answer before curl has sent the whole body and close the connection, so
+# that curl fails after receiving the answer: only the status counts
+large="$(mktemp)"
+head -c $((11 * 1024 * 1024)) /dev/zero > "${large}"
+status="$(curl --silent --max-time 30 --output "${body}" \
+  --write-out '%{http_code}' -X POST --header 'Accept: application/json' \
+  --form-string "workflow_params=${params}" --form-string 'workflow_type=CWL' \
+  --form-string 'workflow_type_version=v1.0' \
+  --form-string 'workflow_url=https://example.org/smoke.cwl' \
+  --form "workflow_attachment=@${large};filename=large.bin" "${api}/runs" \
+  || true)"
+rm -f "${large}"
+# (the size limit of bodies, not that of each attachment)
+if [ "${status}" != 413 ] || ! jq -e '.status == 413 and (.detail | test("request body"))' "${body}" > /dev/null; then
+  echo "::error::POST /runs with 11 MiB: status ${status}, expected 413"
+  cat "${body}"
+  exit 1
+fi
 # The fake WES got each run once, with all fields as sent to proWES (the
 # held one with its tags, so it was held until canceled), and both are
 # finished there

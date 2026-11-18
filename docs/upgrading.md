@@ -37,6 +37,38 @@ from
 /runs/{run_id}` finds it (before: the identifier at the remote WES, which
 proWES didn't find).
 
+### Limits of run requests
+
+Run requests are limited and sanitized (see
+[Security](configuration.md#security)): request bodies to 10 MiB
+(`server.max_content_length`; before: unlimited), workflow attachments to 100
+per run of 1 MiB each (`custom.post_runs.max_attachments`,
+`max_attachment_size`), all with `413 Content Too Large`. Runs with
+credentials in URLs (`https://user:password@host/...`) are rejected with
+`400 Bad Request` (`custom.post_runs.url_credentials: reject`; set `strip` to
+remove the credentials instead), as are `tags` and
+`workflow_engine_parameters` with values other than strings. Raise the limits
+for clients that send larger runs, also at the reverse proxy in front of
+proWES.
+
+Workflow attachments are written with their contents, under safe file names
+(before: runs with attachments failed with `500`); their contents are no
+longer stored in the database. A run whose attachments can't be written
+(e.g., a full volume) is stored with the state `SYSTEM_ERROR` and gets `500`. Upgrade
+the app and the Celery worker together: workers of earlier versions can't
+read the attachments of runs that this version stores.
+
+### Run logs
+
+`GET /runs/{run_id}` returns the run request with `workflow_params`, `tags`
+and `workflow_engine_parameters` as JSON objects (before: JSON-encoded
+strings), as the WES specification defines them, and leaves out fields
+without value (before: `null`). Responses are now validated against the
+specification (`validate_responses: True`); runs stored by earlier versions
+with `tags` or `workflow_engine_parameters` whose values aren't strings get
+`500` responses. Credentials in the URLs of runs stored by earlier versions
+are removed from the run logs returned (not from the database).
+
 ### Errors
 
 Error responses are problem details (`title`, `status` and `detail`, as
