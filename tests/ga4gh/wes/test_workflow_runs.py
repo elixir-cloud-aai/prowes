@@ -561,7 +561,7 @@ def test_list_runs_pages(foca_client: Client) -> None:
     assert second["next_page_token"] == ""
 
 
-@pytest.mark.parametrize("page_size", [2, 3, 10])
+@pytest.mark.parametrize("page_size", [0, 1, 2, 3, 10])
 @pytest.mark.usefixtures("app_context")
 def test_list_runs_last_page(
     mongodb: MongoClient[dict[str, Any]], page_size: int
