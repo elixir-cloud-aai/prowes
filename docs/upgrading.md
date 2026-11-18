@@ -76,6 +76,13 @@ run identifier is `run_log.run_id`) and `task_id`: duplicate run
 identifiers were rejected only by the working directory of each run, not
 across instances of the app that share the database but not the storage.
 
+Stop all apps and Celery workers of the earlier version before the new app
+starts, and run the check below in between (no rolling upgrade): workers of
+earlier versions replace run identifiers (see below), which the new unique
+index rejects if another run has the same one, and their task then fails,
+leaving the run in its current state. Workers of this version don't change
+run identifiers.
+
 Before upgrading, check that no run identifier is stored twice, as the app
 doesn't start otherwise (`IndexConflictError`). Earlier versions replaced
 the identifier of a run with that of the remote WES, or with none, once the
