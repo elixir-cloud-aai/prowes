@@ -289,3 +289,37 @@ the resource's kind (`kind`) and the resource (`resource`).
 {{- fail (printf "release %s was installed with the legacy chart (version 2), and upgrading it would delete its volume with the MongoDB data (%s %s): uninstall it and install the current chart instead, keeping the data as described in docs/deployment.md (From the legacy chart)" .root.Release.Name .kind (dig "metadata" "name" "" .resource)) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Fails if ingress-nginx's size limit of request bodies, the annotation
+`nginx.ingress.kubernetes.io/proxy-body-size` of the Ingress (`10m` by
+default, see `prowes.ingress.annotations`), is below the app's limit
+(`config.server.max_content_length`, see `foca-common.maxContentLength`):
+ingress-nginx would reject the bodies in between with its own `413` page
+instead of the app's problem details. Sizes are those of nginx: bytes, or
+with the suffix `k`, `m` or `g` (either case), here with at most 9 digits
+and no leading zeros (so that they are parsed as decimals and do not
+overflow); `0` disables the limit.
+Checked only if the Ingress is enabled and has the annotation: other
+ingress controllers ignore it, and without it, the chart can't know the
+controller's limit. Call with the context dict (as the library's
+templates); renders nothing.
+*/}}
+{{- define "prowes.checkProxyBodySize" -}}
+{{- $ingress := .root.Values.prowes.ingress | default dict -}}
+{{- $annotations := $ingress.annotations | default dict -}}
+{{- $name := "nginx.ingress.kubernetes.io/proxy-body-size" -}}
+{{- if and $ingress.enabled (hasKey $annotations $name) (not (kindIs "invalid" (index $annotations $name))) -}}
+{{- $size := toString (index $annotations $name) -}}
+{{- if not (regexMatch "^(0|[1-9][0-9]{0,8})[kKmMgG]?$" $size) -}}
+{{- fail (printf "prowes.ingress.annotations: %s must be a size of ingress-nginx (at most 9 digits without leading zeros, bytes or with the suffix k, m or g, e.g., 10m; \"0\" for no limit), not %q" $name $size) -}}
+{{- end -}}
+{{- $number := regexFind "^[0-9]+" $size -}}
+{{- $factor := get (dict "" 1 "k" 1024 "m" 1048576 "g" 1073741824) (lower (trimPrefix $number $size)) -}}
+{{- $bytes := mul (int64 $number) $factor -}}
+{{- $limit := include "foca-common.maxContentLength" . -}}
+{{- if and $limit (ne $bytes 0) (lt $bytes (int64 $limit)) -}}
+{{- fail (printf "prowes.ingress.annotations: %s (%s) must allow at least the app's config.server.max_content_length (%s bytes), or ingress-nginx rejects larger request bodies with its own 413 page: set it to %dm or more (\"0\" for no limit)" $name $size $limit (div (add (int64 $limit) 1048575) 1048576)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

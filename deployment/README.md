@@ -22,6 +22,10 @@ helm install prowes deployment -n prowes \
 proWES serves the WES API without authentication for now: limit access to
 it in front of the app.
 
+For the size limit of request bodies at the Ingress (10 MiB by default) and
+rate limits (off by default), see [Body size and rate
+limits](https://prowes.readthedocs.io/en/latest/deployment/#body-size-and-rate-limits).
+
 The [deployment guide](https://prowes.readthedocs.io/en/latest/deployment/)
 (source: [`docs/deployment.md`](../docs/deployment.md)) describes the
 installation, the Secrets, the configuration (including the service info of
