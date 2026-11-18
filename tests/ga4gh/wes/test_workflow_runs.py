@@ -194,6 +194,7 @@ def test_post_run_remote_error(
     stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
     assert stored is not None
     assert stored["run_log"]["state"] == "SYSTEM_ERROR"
+    assert stored["system_error_by_prowes"] is True
     assert not queued
 
 
@@ -359,6 +360,7 @@ def test_post_run_remote_unavailable(
     response = _post_run(foca_client, RUN_REQUEST)
     assert response.status_code == 500
     assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored(mongodb)["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("queued")
@@ -378,6 +380,7 @@ def test_post_run_remote_error_status(
     )
     assert _post_run(foca_client, RUN_REQUEST).status_code == expected
     assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored(mongodb)["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("queued")
@@ -870,6 +873,75 @@ def test_cancel_run_cancelable(
     response = foca_client.post(f"{BASE_PATH}/runs/ACTIVE/cancel")
     assert response.status_code == 200
     assert canceled == [REMOTE_RUN_ID]
+
+
+def test_cancel_run_system_error_by_prowes(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Runs that proWES set to `SYSTEM_ERROR` (lost track of) can be canceled.
+
+    The cancellation is forwarded; the stored state is kept, as proWES doesn't
+    track the run any longer.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "run_log": {"run_id": "LOST01", "state": "SYSTEM_ERROR"},
+            "system_error_by_prowes": True,
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
+    )
+    canceled: list[str] = []
+    monkeypatch.setattr(
+        WesClient,
+        "cancel_run",
+        lambda _self, run_id, **_kwargs: canceled.append(run_id),
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/LOST01/cancel")
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "LOST01"}
+    assert canceled == [REMOTE_RUN_ID]
+    assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"system_error_by_prowes": False, "wes_endpoint": REMOTE_ENDPOINT},
+        {"wes_endpoint": REMOTE_ENDPOINT},
+        {"system_error_by_prowes": None, "wes_endpoint": REMOTE_ENDPOINT},
+        {"system_error_by_prowes": True},
+        {
+            "system_error_by_prowes": True,
+            "wes_endpoint": {**REMOTE_ENDPOINT, "run_id": None},
+        },
+    ],
+    ids=[
+        "reported by WES",
+        "unmarked (earlier versions)",
+        "null mark",
+        "by proWES without endpoint",
+        "by proWES without remote run",
+    ],
+)
+def test_cancel_run_system_error_refused(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    document: dict[str, Any],
+) -> None:
+    """Other `SYSTEM_ERROR`s get `409`, without contacting the WES.
+
+    Those reported by the WES instance, and those of proWES without a remote
+    run (e.g., the run request failed).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "FAILED", "state": "SYSTEM_ERROR"}, **document}
+    )
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/FAILED/cancel")
+    assert response.status_code == 409
 
 
 @pytest.mark.parametrize(

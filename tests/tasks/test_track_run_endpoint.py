@@ -88,3 +88,4 @@ def test_track_run_without_remote_run_id(
     # not left `INITIALIZING` (#166)
     assert document is not None
     assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert document["system_error_by_prowes"] is True

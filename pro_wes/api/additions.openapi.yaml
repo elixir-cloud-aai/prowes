@@ -133,8 +133,8 @@ paths:
         409:
           description: >-
             proWES extension: the run isn't cancelable in its current state
-            (it has finished, is being canceled, or is of unknown state and
-            not forwarded yet).
+            (it has finished, other than by proWES losing track of it, is
+            being canceled, or is of unknown state and not forwarded yet).
           content:
             application/json:
               schema:

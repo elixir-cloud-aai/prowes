@@ -118,7 +118,7 @@ def task__track_run_progress(
 
             # ensure WES endpoint is available
             if document.wes_endpoint is None or document.wes_endpoint.run_id is None:
-                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                db_client.set_system_error()
                 raise WesEndpointProblem
             try:
                 response = wes_client.get_run_status(
@@ -132,14 +132,14 @@ def task__track_run_progress(
                     attempt += 1
                     logger.warning(exc, exc_info=True)
                     continue
-                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                db_client.set_system_error()
                 raise
             if not isinstance(response, RunStatus):
                 if attempt <= controller_config.polling_attempts:
                     attempt += 1
                     logger.warning("Received error response: %s", response)
                     continue
-                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                db_client.set_system_error()
                 raise EngineProblem("Received too many error responses.")
             attempt = 1
             if response.state != run_state:
@@ -155,7 +155,7 @@ def task__track_run_progress(
         )
     except SoftTimeLimitExceeded:
         # tracking took longer than `custom.post_runs.timeout_job`
-        db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+        db_client.set_system_error()
         raise
 
     logger.info("[%s] Processing completed.", task_id)

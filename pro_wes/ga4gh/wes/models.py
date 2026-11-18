@@ -414,6 +414,9 @@ class DbDocument(BaseModel):
     Args:
         attachments: Names of attached files.
         run_log: Complete logging information for workflow run.
+        system_error_by_prowes: Whether proWES itself set the state to
+            `SYSTEM_ERROR` (e.g., it lost track of the run), rather than the
+            WES instance reporting it.
         task_id: Identifier of worker task.
         user_id: Identifier of resource owner.
         wes_endpoint: Information about the endpoint to where the run request
@@ -423,6 +426,9 @@ class DbDocument(BaseModel):
     Attributes:
         attachments: Names of attached files.
         run_log: Complete logging information for workflow run.
+        system_error_by_prowes: Whether proWES itself set the state to
+            `SYSTEM_ERROR` (e.g., it lost track of the run), rather than the
+            WES instance reporting it.
         task_id: Identifier of worker task.
         user_id: Identifier of resource owner.
         wes_endpoint: Information about the endpoint to where the run request
@@ -432,6 +438,7 @@ class DbDocument(BaseModel):
 
     attachments: list[Attachment] = []
     run_log: RunLog = RunLog()
+    system_error_by_prowes: bool = False
     task_id: str | None = None
     user_id: str | None = None
     work_dir: str | None = None

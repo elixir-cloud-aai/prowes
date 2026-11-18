@@ -186,14 +186,18 @@ Conflict`, without contacting the WES instance (see [Run
 states](api.md#run-states)): finished runs (`COMPLETE`, `EXECUTOR_ERROR`,
 `SYSTEM_ERROR`, `CANCELED`, `PREEMPTED`), runs being canceled
 (`CANCELING`) and runs of state `UNKNOWN` that aren't forwarded yet.
-Before, every cancellation was forwarded, and proWES answered `200` with
+Runs that proWES itself set to `SYSTEM_ERROR` because it lost track of
+them are still canceled at the WES instance: proWES now records such
+errors in the run document (`system_error_by_prowes`). Runs stored by
+earlier versions lack that record; their cancellations are refused if
+their state is `SYSTEM_ERROR`, so cancel those at the WES instance
+directly. Before, every cancellation was forwarded, and proWES answered `200` with
 the run identifier even if the WES instance answered with an error (`500`
 if it couldn't be reached). Runs without a run at the WES instance (no or
 incomplete `wes_endpoint`) now get `500` with the problem details of
 `WesEndpointProblem` ("No/few requirements provided for WES endpoint.";
 before: `500` "An unexpected error occurred."). Clients that cancel runs
-must accept `409`; runs that proWES set to `SYSTEM_ERROR` while they still
-run at the WES instance need to be canceled there.
+must accept `409`.
 
 ### Commands
 

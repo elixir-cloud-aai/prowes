@@ -168,6 +168,18 @@ def test_track_run_until_finished(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("run")
+def test_track_run_remote_system_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `SYSTEM_ERROR` reported by the remote WES is not marked as proWES's."""
+    _fake_remote(
+        monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.SYSTEM_ERROR)]
+    )
+    assert _track() == TASK_ID
+    document = _stored()
+    assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert document["system_error_by_prowes"] is False
+
+
+@pytest.mark.usefixtures("run")
 def test_track_run_ignores_client_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tasks queued with a client token (earlier versions) don't pass it on."""
     _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
@@ -298,6 +310,7 @@ def test_track_run_invalid_status(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ValueError, match="invalid response"):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("run")
@@ -307,6 +320,7 @@ def test_track_run_soft_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SoftTimeLimitExceeded):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("run")
@@ -319,6 +333,7 @@ def test_track_run_too_many_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(EngineProblem):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("run")
@@ -328,6 +343,7 @@ def test_track_run_remote_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(EngineUnavailable):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("run")
