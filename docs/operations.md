@@ -50,6 +50,36 @@ error of the guarded client that names the cause. After
 answer that is no JSON), the run is `SYSTEM_ERROR` in proWES, but the WES
 instance may still have created and run it.
 
+## Database indexes
+
+The app creates the indexes of the collection `runs` at start if they are
+missing (`db.dbs.runStore.collections.runs.indexes` in
+[`pro_wes/config.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/pro_wes/config.yaml)):
+
+| Index | Keys | Purpose |
+| --- | --- | --- |
+| `run_log.run_id_1` | `run_log.run_id` (unique, not sparse) | Run identifiers are unique, also across instances of the app that share the database but not the storage: `POST /runs` tries another identifier if one is taken |
+| `user_id_1__id_-1` | `user_id`, `_id` descending | `GET /runs` with authentication finds the runs of the caller, newest first, without reading the runs of other users |
+
+Existing indexes are kept, also ones that are no longer configured (see
+[Upgrading](upgrading.md#database-indexes)). The app doesn't start if a
+configured index can't be created: e.g., if stored runs share an identifier
+(as the index is not sparse, runs without `run_log.run_id` count as runs of
+the same identifier), or the database user may not create indexes. On large
+collections, the index builds make the first start take longer.
+
+With `db.create_indexes_on_startup: false` (FOCA; default: `true`), the app
+creates no indexes: create them by hand before the first start, e.g., in
+`mongosh`, connected to the database of proWES (default: `runStore`):
+
+```javascript
+db.runs.createIndex({ "run_log.run_id": 1 }, { unique: true })
+db.runs.createIndex({ user_id: 1, _id: -1 })
+```
+
+Without the unique index, run identifiers are unique only by the working
+directory of each run in the storage.
+
 ## Logs
 
 The app and the worker log to standard error, in the format of the section

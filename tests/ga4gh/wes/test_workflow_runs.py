@@ -509,6 +509,60 @@ def test_post_run_id_taken(
 
 
 @pytest.mark.usefixtures("queued", "remote_wes")
+def test_post_run_id_stored(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    storage_path: Path,
+) -> None:
+    """Identifiers of stored runs are skipped, also without a working directory.
+
+    E.g., runs stored by another instance that shares the database, but not
+    the storage. The unique index on `run_log.run_id` rejects the duplicate;
+    its working directory is removed again.
+
+    Args:
+        foca_client: Test client of the app.
+        monkeypatch: Monkeypatch fixture of the test.
+        mongodb: Database of the test (FOCA's fixture).
+        storage_path: Storage directory of the runs.
+    """
+    collection = mongodb[RUN_DB][RUN_COLLECTION]
+    collection.insert_one({"run_log": {"run_id": "TAKEN1", "state": "QUEUED"}})
+    ids = iter(["TAKEN1", "FREE01"])
+    monkeypatch.setattr(workflow_runs, "generate_id", lambda **_kwargs: next(ids))
+    assert _post_run(foca_client, RUN_REQUEST).json() == {"run_id": "FREE01"}
+    assert collection.count_documents({"run_log.run_id": "TAKEN1"}) == 1
+    assert [path.name for path in storage_path.iterdir()] == ["FREE01"]
+
+
+def test_runs_indexes(foca_app: App, mongodb: MongoClient[dict[str, Any]]) -> None:
+    """The app creates the indexes of the runs collection at start.
+
+    Run identifiers are unique; the runs of a user are found by user and
+    newest first (`GET /runs` with authentication). The names are those of
+    the docs (operations, upgrading); the previous index on `run_id` and
+    `task_id` is no longer configured.
+
+    Args:
+        foca_app: The app, which created the indexes.
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    indexes = mongodb[RUN_DB][RUN_COLLECTION].index_information()
+    keys = {
+        name: [(key, int(direction)) for key, direction in index["key"]]
+        for name, index in indexes.items()
+    }
+    assert keys == {
+        "_id_": [("_id", 1)],
+        "run_log.run_id_1": [("run_log.run_id", 1)],
+        "user_id_1__id_-1": [("user_id", 1), ("_id", -1)],
+    }
+    assert indexes["run_log.run_id_1"].get("unique") is True
+    assert not indexes["run_log.run_id_1"].get("sparse")
+
+
+@pytest.mark.usefixtures("queued", "remote_wes")
 def test_post_run_storage_missing(foca_client: Client, storage_path: Path) -> None:
     """Runs fail with `500` if the storage directory is gone."""
     storage_path.rmdir()
