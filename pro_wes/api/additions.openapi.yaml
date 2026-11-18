@@ -119,6 +119,16 @@ paths:
         401: *problem
         403: *problem
         404: *problem
+        # proWES extension: runs that aren't cancelable (`State.is_cancelable`)
+        # aren't canceled at the WES instance
+        409:
+          description: >-
+            proWES extension: the run isn't cancelable in its current state
+            (it has finished, is being canceled or its state is unknown).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         500: *problem
 components:
   schemas:

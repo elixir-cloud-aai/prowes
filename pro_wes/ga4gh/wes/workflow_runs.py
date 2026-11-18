@@ -30,6 +30,7 @@ from pro_wes.exceptions import (
     IdsUnavailableProblem,
     InternalServerError,
     InvalidAttachmentName,
+    RunNotCancelable,
     RunNotFound,
     StorageUnavailableProblem,
     TooManyAttachments,
@@ -413,16 +414,25 @@ class WorkflowRuns:
         Returns:
             Workflow run identifier.
 
+        Only runs in a cancelable state (:py:attr:`State.is_cancelable`) are
+        canceled at the WES instance; others (e.g., finished runs) are refused
+        without contacting it.
+
         Raises:
             pro_wes.exceptions.Forbidden: The requester is not allowed to access the
                 resource.
             pro_wes.exceptions.RunNotFound: The requested workflow run is not available.
+            pro_wes.exceptions.RunNotCancelable: The workflow run is not in a
+                cancelable state.
+            pro_wes.exceptions.WesEndpointProblem: The workflow run has no remote
+                run to cancel.
         """
         # retrieve workflow run
         document = self.db_client.find_one(
             filter={"run_log.run_id": run_id},
             projection={
                 "user_id": True,
+                "run_log.state": True,
                 "wes_endpoint.host": True,
                 "wes_endpoint.base_path": True,
                 "wes_endpoint.run_id": True,
@@ -442,14 +452,27 @@ class WorkflowRuns:
             requester=kwargs.get("user_id"),
         )
 
+        # ensure workflow run is cancelable; runs stored without state are of
+        # unknown state (as in `RunLog`)
+        state = State(document.get("run_log", {}).get("state", State.UNKNOWN))
+        if not state.is_cancelable:
+            logger.error("Run '%s' not cancelable in state '%s'.", run_id, state.value)
+            raise RunNotCancelable
+
+        # ensure workflow run has a remote run
+        wes_endpoint: dict[str, str] = document.get("wes_endpoint") or {}
+        if not {"host", "base_path", "run_id"} <= wes_endpoint.keys():
+            logger.error("Run '%s' has no remote run to cancel.", run_id)
+            raise WesEndpointProblem
+
         # cancel workflow run
         wes_client: WesClient = WesClient(
-            host=document["wes_endpoint"]["host"],
-            base_path=document["wes_endpoint"]["base_path"],
+            host=wes_endpoint["host"],
+            base_path=wes_endpoint["base_path"],
             token=kwargs.get("jwt"),
         )
         wes_client.cancel_run(
-            run_id=document["wes_endpoint"]["run_id"],
+            run_id=wes_endpoint["run_id"],
             timeout=self.config.defaults.timeout,
         )
 
