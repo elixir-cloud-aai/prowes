@@ -158,9 +158,11 @@ config:
 
 The app reads the list on startup and refuses to start with invalid entries
 (the pod then fails its startup, with the reason in its logs). WES
-instances behind a private certificate authority need it in the image's
-trust store or in a file mounted into the pods, with `REQUESTS_CA_BUNDLE`
-pointing to it (`prowes.extraEnv`); TLS verification can't be switched off.
+instances behind a private certificate authority need it in a file mounted
+into the pods, with `REQUESTS_CA_BUNDLE` pointing to it (`prowes.extraEnv`;
+it replaces the public certificate authorities, so add those to the file if
+other WES instances need them; the image's system trust store isn't used);
+TLS verification can't be switched off.
 Set `config.server.public_url` to the root URL of proWES, without the API
 path (e.g., `https://<hostName>`, plus the path prefix of a reverse proxy, if
 any), so that proWES never forwards runs to itself, e.g., when a registry

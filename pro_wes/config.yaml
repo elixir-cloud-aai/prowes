@@ -176,6 +176,10 @@ exceptions:
 
 # Custom configuration (cf. `pro_wes.config_models.CustomConfig`)
 custom:
+  # Timeouts of requests to WES instances, in seconds, for each request as
+  # a whole (positive numbers; they can't be switched off): status and
+  # cancellation (`defaults.timeout`), forwarding runs and reading run logs
+  # (`post_runs.timeout_post`)
   defaults:
     timeout: 2
   post_runs:
@@ -207,5 +211,8 @@ custom:
   #     - type: ga4gh-wes
   #       url: https://wes.example.org
   # Cf. "WES instances" in `docs/configuration.md`
+  # Responses of WES instances are read up to `max_response_size` bytes
+  # (16 MiB); larger ones fail the request
   wes:
     backends: []
+    max_response_size: 16777216

@@ -7,7 +7,7 @@ from connexion import App
 from pydantic import ValidationError
 import pytest
 
-from pro_wes.config_models import PostRuns
+from pro_wes.config_models import Defaults, PostRuns, Wes
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
 from pro_wes.ga4gh.wes import models
@@ -140,6 +140,40 @@ def test_id_charset_invalid(charset: str) -> None:
     """Run identifier characters that FOCA can't use stop the app on startup."""
     with pytest.raises(ValidationError):
         PostRuns(id_charset=charset)
+
+
+@pytest.mark.parametrize(
+    "timeout", [None, 0, -1, "never", float("inf"), float("nan"), 1e10, 86401]
+)
+def test_timeouts_required(timeout: Any) -> None:
+    """Timeouts of requests to WES instances: positive, finite, at most a day.
+
+    Before, `null` disabled them; FOCA's guarded client needs a deadline.
+
+    Args:
+        timeout: Invalid timeout.
+    """
+    with pytest.raises(ValidationError):
+        PostRuns(timeout_post=timeout)
+    with pytest.raises(ValidationError):
+        Defaults(timeout=timeout)
+
+
+def test_timeouts() -> None:
+    """Timeouts may have fractions of seconds; the job timeout may be `null`."""
+    assert PostRuns(timeout_post=2.5, timeout_job=None).timeout_post == 2.5
+    assert Defaults(timeout=0.5).timeout == 0.5
+
+
+@pytest.mark.parametrize("size", [None, 0, -1])
+def test_max_response_size_invalid(size: Any) -> None:
+    """Responses of WES instances are always limited, to a positive size.
+
+    Args:
+        size: Invalid size.
+    """
+    with pytest.raises(ValidationError):
+        Wes(max_response_size=size)
 
 
 def test_state_properties() -> None:
