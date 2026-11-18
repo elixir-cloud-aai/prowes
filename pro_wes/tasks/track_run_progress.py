@@ -88,30 +88,32 @@ def task__track_run_progress(
         task_id=task_id,
     )
 
-    # update state: INITIALIZING
-    db_client.update_run_state(state=State.INITIALIZING.value)
-
-    # instantiate WES client
-    wes_client: WesClient = WesClient(
-        host=remote_host,
-        base_path=remote_base_path,
-        # never the client's token (also not of tasks queued by earlier
-        # versions): no credentials for WES instances until #120
-        token=None,
-    )
-
-    # fetch run log and upsert database document
-    document: DbDocument = _update_run_log(
-        db_client=db_client,
-        wes_client=wes_client,
-        run_id=remote_run_id,
-        timeout=controller_config.timeout_post,
-    )
-
-    # track workflow run progress, from the state stored last (so that a
-    # remote `UNKNOWN` is stored, too)
-    run_state: State = State.INITIALIZING
+    # a time limit (`custom.post_runs.timeout_job`) may be hit anywhere from
+    # here on
     try:
+        # update state: INITIALIZING
+        db_client.update_run_state(state=State.INITIALIZING.value)
+
+        # instantiate WES client
+        wes_client: WesClient = WesClient(
+            host=remote_host,
+            base_path=remote_base_path,
+            # never the client's token (also not of tasks queued by earlier
+            # versions): no credentials for WES instances until #120
+            token=None,
+        )
+
+        # fetch run log and upsert database document
+        document: DbDocument = _update_run_log(
+            db_client=db_client,
+            wes_client=wes_client,
+            run_id=remote_run_id,
+            timeout=controller_config.timeout_post,
+        )
+
+        # track workflow run progress, from the state stored last (so that a
+        # remote `UNKNOWN` is stored, too)
+        run_state: State = State.INITIALIZING
         attempt: int = 1
         while not run_state.is_finished:
             sleep(controller_config.polling_wait)
@@ -143,10 +145,8 @@ def task__track_run_progress(
                 raise EngineProblem("Received too many error responses.")
             attempt = 1
             if response.state != run_state:
-                # stored first, so that a state counts as tracked only once
-                # it is stored (cf. the time limit below)
-                db_client.update_run_state(state=response.state.value)
                 run_state = response.state
+                db_client.update_run_state(state=run_state.value)
 
         # fetch final run log and upsert database document
         _update_run_log(
@@ -156,15 +156,38 @@ def task__track_run_progress(
             timeout=controller_config.timeout_post,
         )
     except SoftTimeLimitExceeded:
-        # tracking took longer than `custom.post_runs.timeout_job`; runs that
-        # finished already (e.g., the limit is hit while the final run log is
-        # read) keep their final state
-        if not run_state.is_finished:
+        # tracking took longer than `custom.post_runs.timeout_job`; runs whose
+        # stored state is final already (e.g., the limit is hit while the
+        # final run log is read) keep it: the stored state is read, as the
+        # limit may be hit between storing a state and tracking it
+        if not _stored_state_is_finished(db_client=db_client):
             db_client.set_system_error()
         raise
 
     logger.info("[%s] Processing completed.", task_id)
     return task_id
+
+
+def _stored_state_is_finished(db_client: DbDocumentConnector) -> bool:
+    """Check whether the stored state of a run is final.
+
+    Args:
+        db_client: Connector to the run document.
+
+    Returns:
+        Whether the stored state is final; `False` if the run, or its state,
+            is missing or invalid.
+    """
+    document = db_client.collection.find_one(
+        filter={"task_id": db_client.task_id},
+        projection={"run_log.state": True, "_id": False},
+    )
+    if document is None:
+        return False
+    try:
+        return State(document["run_log"]["state"]).is_finished
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 # Fields of remote run logs that are stored, with their types (cf.
