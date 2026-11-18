@@ -228,3 +228,9 @@ celeryd.pid
 
 # Dependencies of the Helm chart (`helm dependency build deployment`)
 deployment/charts/
+
+# Local Docker Compose overrides and files of local runs from source (see
+# `docs/development.md`)
+/docker-compose.override.yaml
+/docker-compose.override.yml
+/local/
