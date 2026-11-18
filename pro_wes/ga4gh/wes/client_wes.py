@@ -162,14 +162,15 @@ def _access(host: str) -> tuple[bool, bool]:
         configured WES instances, `http` if their entry allows it
         (`url_schemes`), and private addresses always; for discovered ones,
         `https` only, and private addresses if their registry entry allows
-        them; for others (e.g., no longer listed), neither. Discovered
-        backends are looked up in the registry snapshot of the process
-        (read if it is due), without reading the registries again for hosts
-        that it lacks: hosts come from new runs' backend selection, so a
-        miss means that the host is no longer listed.
+        them; for others (e.g., no longer listed), neither. Hosts missing
+        from the registry snapshot of the process are looked up again in the
+        registries (at most once per registry every 10 seconds, FOCA's
+        `MIN_REFRESH_INTERVAL`): another process (e.g., the app, for the
+        Celery worker) may have chosen a WES instance that this process's
+        snapshot doesn't list yet.
     """
     backend_list = get_backend_list()
-    backend = backend_list.find(host, refresh=False)
+    backend = backend_list.find(host)
     if backend is None:
         return False, False
     entry = backend_list.entry_for(backend)
