@@ -32,6 +32,23 @@ and run logs that can't be read, are logged as warnings); the run keeps its
 own identifier and state. Tasks run without a time limit unless
 `custom.post_runs.timeout_job` is set (in seconds).
 
+## Database indexes
+
+The app creates the indexes of the collection `runs` at start if they are
+missing (`db.dbs.runStore.collections.runs.indexes` in
+[`pro_wes/config.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/pro_wes/config.yaml)):
+
+| Index | Keys | Purpose |
+| --- | --- | --- |
+| `run_log.run_id_1` | `run_log.run_id` (unique) | Run identifiers are unique, also across instances of the app that share the database but not the storage: `POST /runs` tries another identifier if one is taken |
+| `user_id_1__id_-1` | `user_id`, `_id` descending | `GET /runs` with authentication finds the runs of the caller, newest first, without reading the runs of other users |
+
+Existing indexes are kept, also ones that are no longer configured (see
+[Upgrading](upgrading.md#database-indexes)). The app doesn't start if a
+configured index can't be created: e.g., if stored runs share an identifier,
+or the database user may not create indexes. On large collections, the
+index builds make the first start take longer.
+
 ## Logs
 
 The app and the worker log to standard error, in the format of the section

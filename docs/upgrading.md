@@ -65,6 +65,42 @@ pass on; WES instances must accept requests without credentials.
 /runs/{run_id}` finds it (before: the identifier at the remote WES, which
 proWES didn't find).
 
+### Database indexes
+
+The collection `runs` gets two indexes, which the app creates at its first
+start (see [Database indexes](operations.md#database-indexes)): a unique
+index on the run identifier (`run_log.run_id`), and one for listing the
+runs of a user (`user_id`, `_id` descending). Before, the unique index was
+on the keys `run_id` and `task_id`, which run documents don't have at the
+top level: duplicate run identifiers were rejected only by the working
+directory of each run, not across instances of the app that share the
+database but not the storage.
+
+Before upgrading, check that no run identifier is stored twice, as the app
+doesn't start otherwise (`IndexConflictError`); in `mongosh`, connected to
+the database of proWES (default: `runStore`):
+
+```javascript
+db.runs.aggregate([
+  { $group: { _id: "$run_log.run_id", count: { $sum: 1 } } },
+  { $match: { count: { $gt: 1 } } },
+])
+```
+
+Without output, there are none. Otherwise, delete or change all but one of
+the runs of each identifier listed (`_id: null` stands for runs without an
+identifier).
+
+The previous index (`run_id_1_task_id_1`) is kept, but no longer used;
+drop it after the upgrade:
+
+```javascript
+db.runs.dropIndex("run_id_1_task_id_1")
+```
+
+On large collections, building the new indexes makes the first start take
+longer.
+
 ### Limits of run requests
 
 Run requests are limited and sanitized (see
