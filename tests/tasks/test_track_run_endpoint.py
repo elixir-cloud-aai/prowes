@@ -32,7 +32,7 @@ def test_track_run_without_remote_run_id(
     """Runs whose document has no remote run identifier are not polled.
 
     The run log is fetched once, before polling starts; no status is
-    requested.
+    requested. The run is set to `SYSTEM_ERROR` before the task fails.
     """
     calls: list[str] = []
 
@@ -83,4 +83,8 @@ def test_track_run_without_remote_run_id(
                 )
         finally:
             task__track_run_progress.pop_request()
+        document = get_collection(RUN_DB, RUN_COLLECTION).find_one({"task_id": TASK_ID})
     assert calls == [f"get_run {REMOTE_RUN_ID}"]
+    # not left `INITIALIZING` (#166)
+    assert document is not None
+    assert document["run_log"]["state"] == "SYSTEM_ERROR"
