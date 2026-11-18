@@ -114,8 +114,13 @@ Secrets, passed to the app and the worker as environment variables
 (`prowes.extraEnv`, Kubernetes `EnvVar`s, e.g., with
 `valueFrom.secretKeyRef`), which the config can reference (`${VAR}`, see
 [Configuration](configuration.md#environment-variables-and-overlays)).
-Rendering fails for the variables that the chart sets itself, and for
-`MONGO_DBNAME`, as the chart provisions the database `runStore` only.
+Rendering fails for the variables that the chart sets itself, for
+`MONGO_DBNAME`, `MONGO_URI`, `MONGO_HOST` and `MONGO_PORT`, as the chart
+provisions the database `runStore` only (set `config.db` for an external
+MongoDB), and for `PORT`, as the chart's port is 8080. Pods read the values
+of Secrets when they start: after changing a Secret (e.g., rotating the
+MongoDB or broker credentials), restart them, e.g., with `kubectl rollout
+restart deployment/<app> deployment/<app>-worker -n <namespace>`.
 
 ### Service info
 
@@ -158,7 +163,8 @@ changing them later changes the pod selectors, which can't be upgraded.
 ## Storage of the runs
 
 The app writes the workflow attachments of each run into a directory of its
-own under `/data` (`custom.post_runs.storage_path`). The chart mounts a
+own under `/data` (`custom.post_runs.storage_path`; the chart mounts the
+storage at the path that `config` sets, if any). The chart mounts a
 PersistentVolumeClaim there, in the app's pods only (the worker doesn't use
 the storage): `<app>-data`, of `prowes.storage.size` (1 GiB), with
 `prowes.storage.accessModes` and `prowes.storage.storageClass` (the
@@ -192,7 +198,8 @@ from the values only).
   unless `prowes.storage.resourcePolicy` is `keep`.
 - **Without persistence** (`prowes.storage.enabled: false`), the runs are
   kept in an `emptyDir` (limited to `size`; the pod is evicted when it is
-  full) and lost when the pod is replaced, e.g., for tests.
+  full) and lost when the pod is replaced, e.g., for tests; `prowes.replicas`
+  must be 1, as each pod would have runs of its own.
 
 ## Celery worker and broker
 
@@ -346,7 +353,10 @@ anew; to keep the runs, export the database first with `mongodump` (e.g.,
 from the legacy MongoDB pod) and import it into the new release's MongoDB
 with `mongorestore`, as the app user or root, into the database `runStore`.
 The workflow attachments of earlier runs (`/data`) are not needed once the
-runs have been forwarded.
+runs have been forwarded. Uninstalling the legacy release also removes its
+broker and the queued tracking tasks: migrate when no runs are active, as
+the new worker doesn't resume tracking runs whose tasks were lost (their
+states stay as they were).
 
 ## Testing the chart
 

@@ -95,15 +95,34 @@ truncated like the library's names of the other components (e.g.,
 {{- end -}}
 
 {{/*
-"true" if the app's pods may share the storage of the runs across nodes
-(`ReadWriteMany` in `prowes.storage.accessModes`), or keep it in an
-`emptyDir` of their own (storage disabled); empty otherwise.
+"true" if the app's pods share the storage of the runs across nodes: a claim
+with `ReadWriteMany` in `prowes.storage.accessModes`; empty otherwise (also
+without storage, as each pod has an `emptyDir` of its own).
 */}}
 {{- define "prowes.storageShared" -}}
 {{- $storage := .Values.prowes.storage | default dict -}}
-{{- if or (not (include "prowes.storageClaim" .)) (has "ReadWriteMany" ($storage.accessModes | default (list "ReadWriteOnce"))) -}}
+{{- if and (include "prowes.storageClaim" .) (has "ReadWriteMany" ($storage.accessModes | default (list "ReadWriteOnce"))) -}}
 true
 {{- end -}}
+{{- end -}}
+
+{{/*
+Path of the storage of the runs in the app's container: the base config's
+`custom.post_runs.storage_path` (`/data`), unless `config` sets another.
+*/}}
+{{- define "prowes.storagePath" -}}
+{{- $path := "/data" -}}
+{{- $custom := get (.Values.config | default dict) "custom" -}}
+{{- if kindIs "map" $custom -}}
+{{- $postRuns := get $custom "post_runs" -}}
+{{- if and (kindIs "map" $postRuns) (get $postRuns "storage_path") -}}
+{{- $path = get $postRuns "storage_path" -}}
+{{- end -}}
+{{- end -}}
+{{- if not (and (kindIs "string" $path) (hasPrefix "/" $path)) -}}
+{{- fail "config.custom.post_runs.storage_path must be an absolute path" -}}
+{{- end -}}
+{{- $path -}}
 {{- end -}}
 
 {{/*
@@ -117,8 +136,8 @@ collides with the app's; renders nothing.
 {{- fail "prowes.storage must be a map with the settings of the storage of the runs (enabled, size, accessModes, storageClass, existingClaim, resourcePolicy)" -}}
 {{- end -}}
 {{- $replicas := .Values.prowes.replicas -}}
-{{- if and (not (kindIs "invalid" $replicas)) (gt (int $replicas) 1) (include "prowes.storageClaim" .) (not (include "prowes.storageShared" .)) -}}
-{{- fail "prowes.replicas must be 1 unless prowes.storage.accessModes includes ReadWriteMany: the app's pods write the runs to one volume, which they may need on different nodes" -}}
+{{- if and (not (kindIs "invalid" $replicas)) (gt (int $replicas) 1) (not (include "prowes.storageShared" .)) -}}
+{{- fail "prowes.replicas must be 1 unless prowes.storage is enabled with ReadWriteMany in prowes.storage.accessModes: the app's pods must see the runs of each other, on one volume that they may need on different nodes" -}}
 {{- end -}}
 {{- if eq (include "foca-common.fullname" .) (include "prowes.storageFullname" .) -}}
 {{- fail (printf "the app and the storage of the runs would both be named %s: choose a fullnameOverride that does not end in -data" (include "foca-common.fullname" .)) -}}
@@ -127,11 +146,14 @@ collides with the app's; renders nothing.
 
 {{/*
 Environment variables that the chart sets in the app's and the worker's
-containers, which `prowes.extraEnv` must not set again, and `MONGO_DBNAME`,
-which would move the app to a database that the chart does not provision.
+containers, which `prowes.extraEnv` must not set again, the variables that
+would move the app to a database that the chart does not provision
+(`MONGO_DBNAME`, `MONGO_URI`, `MONGO_HOST`, `MONGO_PORT`; set `config.db` for
+an external MongoDB), and `PORT`, which would move Gunicorn off the chart's
+port 8080.
 */}}
 {{- define "prowes.reservedEnv" -}}
-{{- list "FOCA_CONFIG_OVERLAY" "GUNICORN_CMD_ARGS" "MONGO_USERNAME" "MONGO_PASSWORD" "CELERY_BROKER_URL" "CELERY_RESULT_BACKEND" "MONGO_DBNAME" | toJson -}}
+{{- list "FOCA_CONFIG_OVERLAY" "GUNICORN_CMD_ARGS" "MONGO_USERNAME" "MONGO_PASSWORD" "CELERY_BROKER_URL" "CELERY_RESULT_BACKEND" "MONGO_DBNAME" "MONGO_URI" "MONGO_HOST" "MONGO_PORT" "PORT" | toJson -}}
 {{- end -}}
 
 {{/*
@@ -165,8 +187,8 @@ a `name`, set once) that the chart does not set itself; renders nothing.
 {{/*
 A Deployment rendered by the library (`manifest`, YAML; empty if disabled),
 with the environment variables of `prowes.extraEnv` added to its containers
-and, for the app (`storage`), the storage of the runs mounted at `/data`
-(`custom.post_runs.storage_path` of the base config): the claim of
+and, for the app (`storage`), the storage of the runs mounted at
+`prowes.storagePath` (`custom.post_runs.storage_path`, `/data`): the claim of
 `prowes.storageClaim`, or an `emptyDir` of `prowes.storage.size` if storage
 is disabled. Pods of an app whose claim is not `ReadWriteMany` are replaced
 instead of rolled (`Recreate`), so that the old pod has released the claim
@@ -185,7 +207,7 @@ root context (`root`), the manifest and `storage` (true for the app).
 {{- range $container := $pod.containers -}}
 {{- $_ := set $container "env" (concat ($container.env | default list) $env) -}}
 {{- if $.storage -}}
-{{- $_ := set $container "volumeMounts" (append ($container.volumeMounts | default list) (dict "mountPath" "/data" "name" "data")) -}}
+{{- $_ := set $container "volumeMounts" (append ($container.volumeMounts | default list) (dict "mountPath" (include "prowes.storagePath" $.root) "name" "data")) -}}
 {{- end -}}
 {{- end -}}
 {{- if .storage -}}
@@ -197,7 +219,7 @@ root context (`root`), the manifest and `storage` (true for the app).
 {{- $_ := set $volume "emptyDir" (include "foca-common.emptyDir" ($root.Values.prowes.storage.size | default nil) | fromYaml).emptyDir -}}
 {{- end -}}
 {{- $_ := set $pod "volumes" (append ($pod.volumes | default list) $volume) -}}
-{{- if not (include "prowes.storageShared" $root) -}}
+{{- if and $claim (not (include "prowes.storageShared" $root)) -}}
 {{- $_ := set $manifest.spec "strategy" (dict "type" "Recreate") -}}
 {{- end -}}
 {{- end -}}

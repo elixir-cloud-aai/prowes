@@ -384,14 +384,16 @@ def test_storage_keep() -> None:
 
 def test_storage_disabled() -> None:
     """Without storage, the runs are kept in an `emptyDir` of `size`."""
-    docs = _render(
-        "--set", "prowes.storage.enabled=false", "--set", "prowes.replicas=2"
-    )
+    docs = _render("--set", "prowes.storage.enabled=false")
     assert ("PersistentVolumeClaim", STORAGE) not in docs
     assert _volumes(docs, APP)["data"] == {"emptyDir": {"sizeLimit": "1Gi"}}
     assert docs[("Deployment", APP)]["spec"]["strategy"]["type"] == "RollingUpdate"
     notes = render_notes(*NO_INGRESS, "--set", "prowes.storage.enabled=false")
     assert "The storage of the runs is an emptyDir" in notes
+    error = _render_error(
+        "--set", "prowes.storage.enabled=false", "--set", "prowes.replicas=2"
+    )
+    assert "prowes.replicas must be 1 unless" in error
 
 
 def test_storage_must_be_map() -> None:
@@ -430,6 +432,10 @@ def test_extra_env() -> None:
         "CELERY_BROKER_URL",
         "CELERY_RESULT_BACKEND",
         "MONGO_DBNAME",
+        "MONGO_URI",
+        "MONGO_HOST",
+        "MONGO_PORT",
+        "PORT",
     ],
 )
 def test_extra_env_reserved(name: str) -> None:
@@ -650,10 +656,12 @@ def test_external_broker() -> None:
     """With an external broker, only its URL is passed to the app and worker."""
     docs = _render("--set", "broker.enabled=false")
     assert ("StatefulSet", BROKER) not in docs
-    env = _env(_container(docs, WORKER))
-    assert env["CELERY_BROKER_URL"]["valueFrom"]["secretKeyRef"]["name"] == (
-        BROKER_SECRET
-    )
+    for name in (APP, WORKER):
+        env = _env(_container(docs, name))
+        assert env["CELERY_BROKER_URL"]["valueFrom"]["secretKeyRef"] == {
+            "name": BROKER_SECRET,
+            "key": "broker-url",
+        }
     error = _render_error(broker_secret=None)
     assert "broker.existingSecret must be set" in error
 
@@ -670,3 +678,13 @@ def test_max_content_length() -> None:
     assert "maxContentLength: 10485760" in helpers
     error = _render_error("--set", "config.server.max_content_length=0")
     assert "/config/server/max_content_length" in error
+
+
+def test_storage_path_from_config() -> None:
+    """The storage is mounted at the storage path that `config` sets."""
+    docs = _render("--set", "config.custom.post_runs.storage_path=/runs")
+    mounts = _mounts(_container(docs, APP))
+    assert mounts["/runs"] == "data"
+    assert "/data" not in mounts
+    error = _render_error("--set", "config.custom.post_runs.storage_path=runs")
+    assert "storage_path must be an absolute path" in error

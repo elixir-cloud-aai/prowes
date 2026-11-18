@@ -65,7 +65,7 @@ prowes:
   readinessProbe: {}
   livenessProbe: {}
   # Number of the app's pods; with more than one, the storage of the runs
-  # (`storage`) must be `ReadWriteMany` (see docs/deployment.md, Storage of
+  # (`storage`) must be enabled with `ReadWriteMany` (see docs/deployment.md, Storage of
   # the runs)
   replicas: 1
   # PodDisruptionBudget of the app's pods, so that voluntary disruptions
@@ -83,10 +83,15 @@ prowes:
   # (`valueFrom.secretKeyRef`), which must not be in `config`. Rendering
   # fails for the variables that the chart sets (`FOCA_CONFIG_OVERLAY`,
   # `GUNICORN_CMD_ARGS`, `MONGO_USERNAME`, `MONGO_PASSWORD`,
-  # `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`), and for `MONGO_DBNAME`, as
-  # the chart provisions the database `runStore`
+  # `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`), for `MONGO_DBNAME`,
+  # `MONGO_URI`, `MONGO_HOST` and `MONGO_PORT`, as the chart provisions the
+  # database `runStore` (set `config.db` for an external MongoDB), and for
+  # `PORT` (the chart's port is 8080). Pods read values from Secrets when
+  # they start: restart them after changing a Secret
+  # (`kubectl rollout restart`)
   extraEnv: []
-  # Storage of the runs (`custom.post_runs.storage_path`, `/data`), where the
+  # Storage of the runs (`custom.post_runs.storage_path`, `/data`, or the
+  # path that `config` sets), where the
   # app writes the attachments of each run; mounted into the app's pods only,
   # as the worker does not use it. A PersistentVolumeClaim (`<app name>-data`)
   # of `size`, with `accessModes` and `storageClass` (the cluster's default
@@ -96,7 +101,7 @@ prowes:
   # (`Recreate`) instead of rolled, so that the claim is never needed by two
   # pods on different nodes, and `replicas` must be 1. If disabled, the runs
   # are kept in an `emptyDir` (limited to `size`) and lost when the pod is
-  # replaced. Helm deletes the claim when the release is uninstalled, unless
+  # replaced, and `replicas` must be 1, too. Helm deletes the claim when the release is uninstalled, unless
   # `resourcePolicy` is `keep` (see docs/deployment.md, Storage of the runs)
   storage:
     enabled: true
