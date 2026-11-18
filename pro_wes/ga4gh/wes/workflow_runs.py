@@ -477,11 +477,11 @@ class WorkflowRuns:
             state = State(document["run_log"].get("state") or State.UNKNOWN)
         except ValueError:
             state = State.UNKNOWN
-        state_unknown_to_prowes = state is State.UNKNOWN or (
+        remote_state_unknown = state is State.UNKNOWN or (
             state is State.SYSTEM_ERROR
             and document.get("system_error_by_prowes") is True
         )
-        if not (state.is_cancelable or (state_unknown_to_prowes and has_remote_run)):
+        if not (state.is_cancelable or (remote_state_unknown and has_remote_run)):
             logger.error("Run '%s' not cancelable in state '%s'.", run_id, state.value)
             raise RunNotCancelable
 

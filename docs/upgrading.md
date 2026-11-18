@@ -186,18 +186,36 @@ Conflict`, without contacting the WES instance (see [Run
 states](api.md#run-states)): finished runs (`COMPLETE`, `EXECUTOR_ERROR`,
 `SYSTEM_ERROR`, `CANCELED`, `PREEMPTED`), runs being canceled
 (`CANCELING`) and runs of state `UNKNOWN` that aren't forwarded yet.
-Runs that proWES itself set to `SYSTEM_ERROR` because it lost track of
-them are still canceled at the WES instance: proWES now records such
-errors in the run document (`system_error_by_prowes`). Runs stored by
-earlier versions lack that record; their cancellations are refused if
-their state is `SYSTEM_ERROR`, so cancel those at the WES instance
-directly. Before, every cancellation was forwarded, and proWES answered `200` with
+Before, every cancellation was forwarded, and proWES answered `200` with
 the run identifier even if the WES instance answered with an error (`500`
 if it couldn't be reached). Runs without a run at the WES instance (no or
 incomplete `wes_endpoint`) now get `500` with the problem details of
 `WesEndpointProblem` ("No/few requirements provided for WES endpoint.";
 before: `500` "An unexpected error occurred."). Clients that cancel runs
 must accept `409`.
+
+Runs that proWES itself set to `SYSTEM_ERROR` because it lost track of
+them are still canceled at the WES instance: proWES now records such
+errors in the run document (`system_error_by_prowes`). Runs stored by
+earlier versions lack that record, so their `SYSTEM_ERROR`s are refused.
+The upgrade doesn't add the record: earlier versions didn't store whether
+proWES or the WES instance set `SYSTEM_ERROR`. To find these runs, e.g.,
+to cancel them at the WES instance directly, list them in `mongosh`,
+connected to the database of proWES (default: `runStore`):
+
+```javascript
+db.runs.find(
+  {
+    "run_log.state": "SYSTEM_ERROR",
+    system_error_by_prowes: { $exists: false },
+    "wes_endpoint.run_id": { $type: "string" },
+  },
+  { _id: 0, "run_log.run_id": 1, wes_endpoint: 1 },
+)
+```
+
+Some of the runs listed may have been reported as `SYSTEM_ERROR` by the
+WES instance; check their state there before canceling them.
 
 ### Commands
 

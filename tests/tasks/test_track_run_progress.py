@@ -324,6 +324,42 @@ def test_track_run_soft_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("run")
+def test_track_run_soft_time_limit_final_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs that finish before tracking takes too long keep their final state.
+
+    E.g., the time limit is hit while the final run log is read.
+    """
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    calls: list[str] = []
+
+    def _get_run(_self: WesClient, run_id: str, **_kwargs: Any) -> dict[str, Any]:
+        """Return a run log, then hit the time limit.
+
+        Args:
+            _self: WES client; ignored.
+            run_id: Run identifier.
+            **_kwargs: Further arguments; ignored.
+
+        Returns:
+            Run log, on the first call.
+
+        Raises:
+            SoftTimeLimitExceeded: On later calls.
+        """
+        calls.append(run_id)
+        if len(calls) > 1:
+            raise SoftTimeLimitExceeded()
+        return {"outputs": {"out": 1}}
+
+    monkeypatch.setattr(WesClient, "get_run", _get_run)
+    with pytest.raises(SoftTimeLimitExceeded):
+        _track()
+    document = _stored()
+    assert document["run_log"]["state"] == "COMPLETE"
+    assert document["system_error_by_prowes"] is False
+
+
+@pytest.mark.usefixtures("run")
 def test_track_run_too_many_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """Runs whose status can't be read in a row fail with `SYSTEM_ERROR`."""
     _fake_remote(

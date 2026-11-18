@@ -110,8 +110,8 @@ def task__track_run_progress(
 
     # track workflow run progress, from the state stored last (so that a
     # remote `UNKNOWN` is stored, too)
+    run_state: State = State.INITIALIZING
     try:
-        run_state: State = State.INITIALIZING
         attempt: int = 1
         while not run_state.is_finished:
             sleep(controller_config.polling_wait)
@@ -154,8 +154,11 @@ def task__track_run_progress(
             timeout=controller_config.timeout_post,
         )
     except SoftTimeLimitExceeded:
-        # tracking took longer than `custom.post_runs.timeout_job`
-        db_client.set_system_error()
+        # tracking took longer than `custom.post_runs.timeout_job`; runs that
+        # finished already (e.g., the limit is hit while the final run log is
+        # read) keep their final state
+        if not run_state.is_finished:
+            db_client.set_system_error()
         raise
 
     logger.info("[%s] Processing completed.", task_id)

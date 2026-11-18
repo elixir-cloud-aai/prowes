@@ -94,7 +94,7 @@ class DbDocumentConnector:
         """
         self._set_state(state=State.SYSTEM_ERROR.value, system_error_by_prowes=True)
 
-    def _set_state(self, state: str, system_error_by_prowes: bool) -> None:
+    def _set_state(self, *, state: str, system_error_by_prowes: bool) -> None:
         """Store the run status, and whether proWES set it to `SYSTEM_ERROR`.
 
         Args:
