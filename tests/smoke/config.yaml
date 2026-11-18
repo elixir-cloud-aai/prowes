@@ -1,0 +1,6 @@
+# Config overlay for the Compose smoke test (`tests/smoke/compose.yaml`):
+# the Celery worker polls the fake WES every second (instead of every 3
+# seconds), so that the smoke test sees state changes quickly
+custom:
+  post_runs:
+    polling_wait: 1

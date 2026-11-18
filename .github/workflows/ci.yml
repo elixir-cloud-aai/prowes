@@ -168,14 +168,17 @@ jobs:
           fail_ci_if_error: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
           verbose: true
 
-  # Temporary: probes the app started with Docker Compose, until the smoke
-  # test replaces it
+  # Runs the app as deployed with Docker Compose (app, Celery worker,
+  # MongoDB, RabbitMQ) against a fake WES instead of a real one
+  # (`tests/smoke/`): forwards runs, tracks them to their end and cancels
+  # one (see the script)
   smoke:
     name: Smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
-      PROBE_ENDPOINT: localhost:8090/ga4gh/wes/v1/service-info
+      COMPOSE_FILE: docker-compose.yaml:tests/smoke/compose.yaml
+      COMPOSE_PROJECT_NAME: prowes-smoke
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -186,24 +189,10 @@ jobs:
         run: |
           echo "DUMMY=not-a-secret" > pro_wes/.env
           echo "dummy" > pro_wes/tls.key
-      # Waits until the health checks of all services pass, for up to 3
-      # minutes after the build
-      - name: Start app
-        run: docker compose up -d --build --wait --wait-timeout 180
-      # The service info, once the app is healthy (up to 2 minutes)
-      - name: Check that app responds
-        run: |
-          for _ in $(seq 1 24); do
-            status="$(curl -sL -o /dev/null -w '%{http_code}' \
-              --header 'Accept: application/json' \
-              "${PROBE_ENDPOINT}" || true)"
-            if [[ "${status}" == '200' ]]; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::App did not respond with 200 (last: ${status})"
-          exit 1
+      # Builds and starts the app, waits until the containers are healthy
+      # and checks the API with the fake WES
+      - name: Check API with fake WES
+        run: tests/smoke/check.sh http://localhost:8090/ga4gh/wes/v1
       # `prowes:local` is the image that `docker-compose.yaml` builds; the
       # app is installed from a wheel, so the files are looked for anywhere
       # in the image. The app runs as the image's non-root user and can

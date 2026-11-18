@@ -1,0 +1,75 @@
+# Compose override for the smoke test (`check.sh` of this directory, job
+# `smoke` of `.github/workflows/ci.yml`): proWES and the Celery worker send
+# runs to a fake WES (`fake_wes.py`) instead of a real one, with the config
+# overlay `config.yaml` of this directory. Use it with `docker compose -f
+# docker-compose.yaml -f tests/smoke/compose.yaml up -d --build --wait`
+# (`check.sh` does); relative paths are resolved against the directory of
+# the first file, i.e., the repository root
+#
+# proWES sends all runs to a hard-coded WES (#118, which makes backends
+# configurable): the fake WES takes that host name on the Compose network,
+# with a certificate of its own certificate authority, which proWES trusts
+# instead of the public ones (`REQUESTS_CA_BUNDLE`), so that no run leaves
+# the Compose network
+
+# Settings of the app and the Celery worker
+x-smoke: &smoke
+  environment:
+    FOCA_CONFIG_OVERLAY: /smoke/config.yaml
+    REQUESTS_CA_BUNDLE: /certs/ca.pem
+  volumes:
+    - ./tests/smoke:/smoke:ro
+    - smoke-certs:/certs:ro
+  depends_on:
+    fake-wes:
+      condition: service_healthy
+
+services:
+
+  prowes:
+    <<: *smoke
+
+  prowes-worker:
+    <<: *smoke
+
+  # Creates the certificates of the fake WES in a volume of their own, as
+  # root, as a new volume belongs to root (the fake WES reads them as the
+  # user of the image)
+  smoke-certs:
+    image: prowes:local
+    pull_policy: never
+    user: "0"
+    command: ["python", "/smoke/fake_wes.py", "certs", "/certs"]
+    volumes:
+      - ./tests/smoke:/smoke:ro
+      - smoke-certs:/certs
+    # The image's health check probes the app, which doesn't run here
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  # The fake WES, in the app's image (built for the other services), with
+  # the image's health check probing its service info over plain HTTP (more
+  # often)
+  fake-wes:
+    image: prowes:local
+    pull_policy: never
+    command: ["python", "/smoke/fake_wes.py", "serve", "/certs"]
+    environment:
+      HEALTHCHECK_URL: http://localhost:8080/ga4gh/wes/v1/service-info
+    volumes:
+      - ./tests/smoke:/smoke:ro
+      - smoke-certs:/certs:ro
+    depends_on:
+      smoke-certs:
+        condition: service_completed_successfully
+    healthcheck:
+      interval: 5s
+      start_period: 5s
+    networks:
+      default:
+        aliases:
+          - wes-na.cloud.e-infra.cz
+
+volumes:
+  smoke-certs:

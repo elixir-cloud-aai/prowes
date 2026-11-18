@@ -158,11 +158,46 @@ locally:
 | `title` | PR title | Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/), at most 50 characters |
 | `lint` | Lint | `uv run pre-commit run --all-files`, `pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff`, `uv build` |
 | `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
-| `smoke` | Smoke test | `docker compose up -d --build`, then `curl localhost:8090/ga4gh/wes/v1/service-info` |
+| `smoke` | Smoke test | `tests/smoke/check.sh` (see [Smoke test](#smoke-test)) |
 | `push` | Push image | Pushes to `dev` in this repository only |
 | `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
 
 `CI passed` is the only required check. Add every new job to its `needs`.
+
+### Smoke test
+
+The smoke test ([`tests/smoke/`](tests/smoke/)) deploys proWES with Docker
+Compose, as [`docker-compose.yaml`](docker-compose.yaml) does (app, Celery
+worker, MongoDB, RabbitMQ), against a fake WES
+([`tests/smoke/fake_wes.py`](tests/smoke/fake_wes.py)) instead of a real
+one. It creates runs, which proWES forwards to the fake WES, waits until
+the Celery worker has tracked them to their final state, and checks the
+run list, the run logs, the run status, the cancellation of a run and that
+the fake WES got the runs as sent. It needs Docker Compose, curl and jq.
+Run it from the repository root:
+
+```bash
+tests/smoke/check.sh
+```
+
+It builds the image and starts the services in the Compose project
+`prowes-smoke` (set `COMPOSE_PROJECT_NAME` to change it), so that the data
+of other local deployments is left alone; proWES is published on
+`127.0.0.1:8090`, as by `docker-compose.yaml`, so stop other deployments
+that publish that port first. The deployment keeps running after the test,
+for inspection; remove it with:
+
+```bash
+COMPOSE_FILE=docker-compose.yaml:tests/smoke/compose.yaml \
+  COMPOSE_PROJECT_NAME=prowes-smoke docker compose down --volumes
+```
+
+Until WES backends are configurable
+([#118](https://github.com/elixir-cloud-aai/prowes/issues/118)), proWES
+sends all runs to a hard-coded WES; the fake WES takes its host name in the
+Compose network, with a certificate of its own certificate authority, which
+proWES trusts instead of the public ones (`REQUESTS_CA_BUNDLE`), so that no
+run reaches the real WES.
 
 ### Dependency updates
 
