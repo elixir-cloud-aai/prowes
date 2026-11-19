@@ -10,17 +10,16 @@ from json import dumps
 from pathlib import Path
 from typing import Any
 
-import bson
 from connexion import App
 from foca.errors import InvalidFieldsProblem
 from foca.testing import Client
 from foca.utils.http import HttpResponse
 from jsonschema import Draft4Validator
-from mongomock.collection import Cursor
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 import pytest
 
+from pro_wes.config_models import ListRuns, PostRuns
 from pro_wes.exceptions import (
     EngineOutcomeUnknown,
     EngineRequestNotSent,
@@ -647,72 +646,71 @@ def test_list_runs_pages(foca_client: Client) -> None:
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "parameter"),
+    ("kwargs", "parameter", "code"),
     [
-        ({"page_size": -1}, "page_size"),
-        ({"page_token": "zzz"}, "page_token"),
-        ({"page_token": "abcdefghijkl"}, "page_token"),
-        ({"page_token": "g" * 24}, "page_token"),
+        ({"page_size": -1}, "page_size", "too-small"),
+        ({"page_size": 0}, "page_size", "too-small"),
+        ({"page_size": 101}, "page_size", "too-large"),
+        # beyond what MongoDB takes (8-byte integers); Connexion doesn't
+        # check the range of `int64`
+        ({"page_size": 2**63 - 1}, "page_size", "too-large"),
+        ({"page_size": 2**63}, "page_size", "too-large"),
+        ({"page_size": 10**20}, "page_size", "too-large"),
+        ({"page_token": "zzz"}, "page_token", "invalid-value"),
+        ({"page_token": "abcdefghijkl"}, "page_token", "invalid-value"),
+        ({"page_token": "g" * 24}, "page_token", "invalid-value"),
     ],
 )
 @pytest.mark.usefixtures("app_context")
-def test_list_runs_invalid_page(kwargs: dict[str, Any], parameter: str) -> None:
-    """Negative page sizes and malformed page tokens are invalid fields.
+def test_list_runs_invalid_page(
+    kwargs: dict[str, Any], parameter: str, code: str
+) -> None:
+    """Page sizes out of range and malformed page tokens are invalid fields.
+
+    Page sizes must be 1 to `custom.list_runs.max_page_size` (100).
 
     Args:
         kwargs: Query parameters.
         parameter: The invalid parameter.
+        code: Code of the field error.
     """
     with pytest.raises(InvalidFieldsProblem) as exc_info:
         WorkflowRuns().list_runs(**kwargs)
-    assert [error.parameter for error in exc_info.value.field_errors] == [parameter]
+    errors = exc_info.value.field_errors
+    assert [(error.parameter, error.code) for error in errors] == [(parameter, code)]
 
 
-@pytest.mark.parametrize("page_size", [2**63 - 1, 2**63, 10**20])
 @pytest.mark.usefixtures("app_context")
-def test_list_runs_huge_page_size(
-    mongodb: MongoClient[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
-    page_size: int,
-) -> None:
-    """Page sizes beyond what MongoDB takes list all runs.
-
-    The in-memory database doesn't encode queries, so the limit of the query
-    is checked to be encodable as BSON, as MongoDB gets it.
+def test_list_runs_max_page_size(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """Pages have up to `custom.list_runs.max_page_size` runs, and no more.
 
     Args:
         mongodb: Database of the test (FOCA's fixture).
-        monkeypatch: Pytest fixture to patch the cursor.
-        page_size: Number of runs per page.
     """
     mongodb[RUN_DB][RUN_COLLECTION].insert_many(
         [{"run_log": {"run_id": f"RUN{i:03}", "state": "QUEUED"}} for i in range(3)]
     )
-    limits: list[int] = []
-    limit = Cursor.limit
+    runs = WorkflowRuns()
+    runs.config = runs.config.model_copy(
+        update={"list_runs": ListRuns(default_page_size=1, max_page_size=2)}
+    )
+    page = runs.list_runs(page_size=2)
+    assert [run["run_id"] for run in page["runs"]] == ["RUN002", "RUN001"]
+    assert page["next_page_token"]
+    with pytest.raises(InvalidFieldsProblem) as exc_info:
+        runs.list_runs(page_size=3)
+    assert exc_info.value.field_errors[0].detail == "Must be at most 2."
+    assert len(runs.list_runs()["runs"]) == 1
 
-    def _limit(cursor: Any, value: int) -> Any:
-        """Record the limit of a query.
 
-        Args:
-            cursor: Cursor of the query.
-            value: Limit.
-
-        Returns:
-            The cursor.
-        """
-        limits.append(value)
-        return limit(cursor, value)
-
-    monkeypatch.setattr(Cursor, "limit", _limit)
-    page = WorkflowRuns().list_runs(page_size=page_size)
-    assert page == {
-        "next_page_token": "",
-        "runs": [
-            {"run_id": f"RUN{i:03}", "state": "QUEUED", "tags": {}} for i in (2, 1, 0)
-        ],
-    }
-    bson.encode({"limit": limits[0]})
+def test_list_runs_page_size_refused(foca_client: Client) -> None:
+    """`GET /runs` answers page sizes out of range with `400`, naming them."""
+    for page_size in (0, 101):
+        response = foca_client.get(f"{BASE_PATH}/runs", params={"page_size": page_size})
+        assert response.status_code == 400
+        assert [error["parameter"] for error in response.json()["errors"]] == [
+            "page_size"
+        ]
 
 
 @pytest.mark.usefixtures("app_context")
@@ -731,7 +729,7 @@ def test_list_runs_unknown_page_token(mongodb: MongoClient[dict[str, Any]]) -> N
     assert WorkflowRuns().list_runs(page_token="0" * 24)["runs"] == []
 
 
-@pytest.mark.parametrize("page_size", [0, 1, 2, 3, 10])
+@pytest.mark.parametrize("page_size", [1, 2, 3, 10])
 @pytest.mark.usefixtures("app_context")
 def test_list_runs_last_page(
     mongodb: MongoClient[dict[str, Any]], page_size: int
@@ -961,6 +959,50 @@ def test_list_runs_unreadable_tags(
     errors = [record for record in caplog.records if record.levelname == "ERROR"]
     assert [record.getMessage() for record in errors] == [
         "Tags of run 'BAD001' can't be listed; returned as {}."
+    ]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_tags_too_large(
+    mongodb: MongoClient[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Stored tags larger than `custom.post_runs.max_tags_size` are empty.
+
+    Runs stored before the limit (or with a larger one) are listed with
+    `{}` as tags, with a warning logged; tags at the limit are listed. The
+    size is that of the stored JSON text, in bytes (UTF-8).
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        caplog: Pytest fixture capturing log records.
+    """
+    at_limit = '{"k": "' + "\u00e9" * 4 + '"}'
+    assert len(at_limit.encode()) == 17
+    over_limit = '{"k": "' + "\u00e9" * 5 + '"}'
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {
+                "run_log": {
+                    "run_id": f"RUN00{i}",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": tags},
+                }
+            }
+            for i, tags in enumerate([at_limit, over_limit])
+        ]
+    )
+    runs = WorkflowRuns()
+    runs.config = runs.config.model_copy(
+        update={"post_runs": PostRuns(max_tags_size=17)}
+    )
+    assert runs.list_runs()["runs"] == [
+        {"run_id": "RUN001", "state": "COMPLETE", "tags": {}},
+        {"run_id": "RUN000", "state": "COMPLETE", "tags": {"k": "\u00e9" * 4}},
+    ]
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert [record.getMessage() for record in warnings] == [
+        "Tags of run 'RUN001' are larger than custom.post_runs.max_tags_size"
+        " (17 bytes); returned as {}."
     ]
 
 

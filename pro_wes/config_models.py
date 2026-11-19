@@ -205,6 +205,11 @@ class PostRuns(BaseModel):
             bytes; runs with larger ones are rejected with `413 Content Too
             Large`. All attachments together are limited by the size of
             request bodies (`server.max_content_length`).
+        max_tags_size: Maximum size of the tags of a run, in bytes: of their
+            JSON text, as stored (UTF-8, after removing credentials in URLs,
+            cf. `url_credentials`); runs with larger tags are rejected with
+            `400 Bad Request`. Stored runs with larger tags (e.g., stored
+            before the limit) are listed by `GET /runs` with empty tags.
         url_credentials: What happens to runs with credentials in the URLs of
             their run requests (`https://user:password@host/...`, in
             `workflow_url` and in the strings of `workflow_params`,
@@ -224,6 +229,7 @@ class PostRuns(BaseModel):
     polling_attempts: int = 100
     max_attachments: NonNegativeInt = 100
     max_attachment_size: PositiveInt = 1048576
+    max_tags_size: PositiveInt = 16384
     url_credentials: Literal["reject", "strip"] = "reject"
 
     @field_validator("id_charset")
@@ -248,19 +254,48 @@ class PostRuns(BaseModel):
         return value
 
 
+MAX_QUERY_LIMIT = 2**62
+"""Largest maximum page size of `GET /runs` (`max_page_size`): MongoDB takes
+8-byte integers only as the limit of a query (the page size plus one)."""
+
+
 class ListRuns(BaseModel):
     """Model for controller config parameters for operation `GET /runs`.
 
     Args:
-        default_page_size: Default page size for response pagination; `0`
-            lists all runs. Not negative, as requests with negative page
-            sizes are refused.
+        default_page_size: Number of runs per page of requests without
+            `page_size`; 1 to `max_page_size`.
+        max_page_size: Largest number of runs per page; requests with larger
+            page sizes (or below 1) are refused with `400 Bad Request`, so
+            that no request lists more runs at once.
 
     Attributes:
-        default_page_size: Default page size for response pagination.
+        default_page_size: Number of runs per page of requests without
+            `page_size`.
+        max_page_size: Largest number of runs per page.
     """
 
-    default_page_size: int = Field(default=5, ge=0)
+    model_config = ConfigDict(extra="forbid")
+
+    default_page_size: PositiveInt = 5
+    max_page_size: Annotated[int, Field(ge=1, le=MAX_QUERY_LIMIT)] = 100
+
+    @model_validator(mode="after")
+    def default_within_max(self) -> Self:
+        """Check that the default page size is at most the maximum.
+
+        Returns:
+            The configuration.
+
+        Raises:
+            ValueError: The default page size is larger than the maximum.
+        """
+        if self.default_page_size > self.max_page_size:
+            raise ValueError(
+                f"default_page_size ({self.default_page_size}) must be at most"
+                f" max_page_size ({self.max_page_size})"
+            )
+        return self
 
 
 class CustomConfig(BaseModel):

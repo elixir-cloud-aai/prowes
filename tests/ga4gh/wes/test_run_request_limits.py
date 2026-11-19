@@ -460,6 +460,91 @@ def test_attachment_names_refused(
     assert "attachment" in response.json()["detail"]
 
 
+# Size of tags
+
+
+def test_tags_at_limit(
+    client_with: Callable[[str], Client],
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Runs with tags as large as `max_tags_size` (bytes, UTF-8) are accepted."""
+    client = client_with("custom:\n  post_runs:\n    max_tags_size: 17\n")
+    tags = '{"k": "' + "é" * 4 + '"}'
+    assert len(tags.encode()) == 17
+    response = _post_run(client, {**RUN_REQUEST, "tags": tags})
+    assert response.status_code == 200
+    assert remote_wes[0]["tags"] == tags
+
+
+def test_tags_too_large(
+    client_with: Callable[[str], Client],
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Runs with tags larger than `max_tags_size` get `400`, naming `tags`.
+
+    The size is that of the JSON text in bytes (UTF-8), not in characters.
+    """
+    client = client_with("custom:\n  post_runs:\n    max_tags_size: 17\n")
+    tags = '{"k": "' + "é" * 5 + '"}'
+    assert len(tags) <= 17 < len(tags.encode())
+    response = _post_run(client, {**RUN_REQUEST, "tags": tags})
+    _assert_refused(response, 400, mongodb, storage, remote_wes)
+    assert response.json()["errors"] == [
+        {
+            "detail": "Must be at most 17 bytes long.",
+            "pointer": "#/tags",
+            "code": "too-long",
+        }
+    ]
+
+
+def test_tags_too_large_by_default(
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """By default, tags may have 16 KiB of JSON text."""
+    prefix = '{"k": "'
+    fitting = prefix + "x" * (16384 - len(prefix) - 2) + '"}'
+    assert _post_run(foca_client, {**RUN_REQUEST, "tags": fitting}).status_code == 200
+    too_large = prefix + "x" * (16385 - len(prefix) - 2) + '"}'
+    response = _post_run(foca_client, {**RUN_REQUEST, "tags": too_large})
+    assert response.status_code == 400
+    assert response.json()["errors"][0]["pointer"] == "#/tags"
+
+
+def test_tags_size_without_credentials(
+    client_with: Callable[[str], Client],
+    mongodb: MongoClient[dict[str, Any]],
+    storage: Path,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """The size of tags is that of the stored text (`url_credentials: strip`).
+
+    Credentials are removed before the size is checked, and the size is that
+    of the JSON text as stored and listed.
+    """
+    stored = '{"s": "https://example.org/x"}'
+    client = client_with(
+        "custom:\n  post_runs:\n    url_credentials: strip\n"
+        f"    max_tags_size: {len(stored)}\n"
+    )
+    sent = '{"s":"https://user:s3cr3t@example.org/x"}'
+    assert len(sent) > len(stored)
+    response = _post_run(client, {**RUN_REQUEST, "tags": sent})
+    assert response.status_code == 200
+    assert remote_wes[0]["tags"] == stored
+
+
 # Credentials in URLs
 
 CREDENTIALED: dict[str, dict[str, str]] = {
