@@ -78,7 +78,7 @@ class RunRequest(BaseModel):
 
     `workflow_engine` and `workflow_engine_version` of WES 1.1.0 are not
     modeled: requests that set them are refused before the model is built
-    (`pro_wes.ga4gh.wes.workflow_runs.ENGINE_FIELDS`, #66).
+    (`pro_wes.ga4gh.wes.versions.ENGINE_FIELDS`, #66).
 
     Args:
         workflow_params: Workflow parameters. Cf.

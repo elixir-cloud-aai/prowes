@@ -1,9 +1,10 @@
 """Tests of the WES versions and adapters (`pro_wes.ga4gh.wes.versions`)."""
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
+from pro_wes.ga4gh.wes import versions
 from pro_wes.ga4gh.wes.versions import (
     ADAPTERS,
     CANONICAL,
@@ -15,6 +16,7 @@ from pro_wes.ga4gh.wes.versions import (
     chain,
     downgrade_run_request,
     incompatibilities,
+    parse_supported,
     reported_version,
     upgrade_run_log,
 )
@@ -61,6 +63,14 @@ def test_parse(value: object, expected: WesVersion | None) -> None:
     assert WesVersion.parse(value) == expected
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"), [("1.0.1", V10), ("v1.1", V11), ("2.0", None), (None, None)]
+)
+def test_parse_supported(value: object, expected: WesVersion | None) -> None:
+    """Only supported versions are parsed."""
+    assert parse_supported(value) == expected
+
+
 def test_version_str_and_order() -> None:
     """Versions are shown as `<major>.<minor>` and ordered."""
     assert str(V10) == "1.0"
@@ -79,6 +89,84 @@ def test_chain() -> None:
     """Chains lead from the canonical version down to a version."""
     assert chain(V11) == []
     assert chain(V10) == list(ADAPTERS)
+
+
+class _Step(Wes11To10):
+    """Adapter of a synthetic version step, recording its calls.
+
+    Attributes:
+        calls: Names of the steps whose methods ran, in order.
+    """
+
+    calls: ClassVar[list[str]] = []
+
+    def __init__(self, newer: WesVersion, older: WesVersion) -> None:
+        """Create the step.
+
+        Args:
+            newer: The newer version.
+            older: The older version.
+        """
+        self.newer = newer
+        self.older = older
+
+    def incompatibilities(self, request: dict[str, Any]) -> list[Incompatibility]:
+        """Record the call; the field of this step is incompatible.
+
+        Args:
+            request: Run request; must have been downgraded by newer steps.
+
+        Returns:
+            The field of this step, if set.
+        """
+        self.calls.append(f"check {self.newer}")
+        field = f"field_{self.newer}"
+        return [Incompatibility(field, "new")] if field in request else []
+
+    def downgrade_run_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Record the call; drop the field of this step.
+
+        Args:
+            request: Run request.
+
+        Returns:
+            The run request, without the field of this step.
+        """
+        self.calls.append(f"down {self.newer}")
+        return {k: v for k, v in request.items() if k != f"field_{self.newer}"}
+
+    def upgrade_run_log(self, run_log: dict[str, Any]) -> dict[str, Any]:
+        """Record the call; mark the run log.
+
+        Args:
+            run_log: Run log.
+
+        Returns:
+            The run log, with the steps applied.
+        """
+        self.calls.append(f"up {self.newer}")
+        return {**run_log, "steps": [*run_log.get("steps", []), str(self.newer)]}
+
+
+def test_chain_of_three_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adapters are chained in order, down and up, across several steps."""
+    v12 = WesVersion(1, 2)
+    steps = (_Step(V11, V10), _Step(v12, V11))
+    monkeypatch.setattr(versions, "ADAPTERS", steps)
+    monkeypatch.setattr(versions, "SUPPORTED", frozenset({V10, V11, v12}))
+    _Step.calls = []
+    request = {**REQUEST, "field_1.1": "x", "field_1.2": "y"}
+    assert chain(V10) == [steps[1], steps[0]]
+    assert chain(V11) == [steps[1]]
+    assert chain(v12) == []
+    assert [item.field for item in incompatibilities(request, V10)] == [
+        "field_1.2",
+        "field_1.1",
+    ]
+    assert [item.field for item in incompatibilities(request, V11)] == ["field_1.2"]
+    assert downgrade_run_request(request, V10) == REQUEST
+    assert upgrade_run_log({}, V10) == {"steps": ["1.1", "1.2"]}
+    assert _Step.calls[:4] == ["check 1.2", "down 1.2", "check 1.1", "down 1.1"]
 
 
 def test_chain_unsupported() -> None:

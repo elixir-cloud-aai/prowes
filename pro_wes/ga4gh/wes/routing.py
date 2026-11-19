@@ -28,10 +28,10 @@ from pro_wes.ga4gh.wes.backends import api_path, get_backend_list
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.versions import (
     OLDEST,
-    SUPPORTED,
     WES_VERSION_LABEL,
     WesVersion,
     incompatibilities,
+    parse_supported,
     reported_version,
 )
 
@@ -59,8 +59,7 @@ def label_version(backend: Backend) -> WesVersion | None:
         The version, if the label is set to a supported one (others stop the
         app on startup, cf. :py:class:`pro_wes.config_models.Wes`).
     """
-    version = WesVersion.parse(backend.labels.get(WES_VERSION_LABEL))
-    return version if version in SUPPORTED else None
+    return parse_supported(backend.labels.get(WES_VERSION_LABEL))
 
 
 class _Probe(NamedTuple):

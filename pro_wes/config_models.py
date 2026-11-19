@@ -17,7 +17,7 @@ from pydantic import (
     model_validator,
 )
 
-from pro_wes.ga4gh.wes.versions import SUPPORTED, WES_VERSION_LABEL, WesVersion
+from pro_wes.ga4gh.wes.versions import SUPPORTED, WES_VERSION_LABEL, parse_supported
 
 DEFAULT_API_PATH = "/ga4gh/wes/v1"
 """Path of the WES API, relative to the URL of a backend, as the WES
@@ -161,7 +161,7 @@ class Wes(BaseModel):
         supported = ", ".join(f'"{version}"' for version in sorted(SUPPORTED))
         for entry in self.backends:
             label = entry.labels.get(WES_VERSION_LABEL)
-            if label is not None and WesVersion.parse(label) not in SUPPORTED:
+            if label is not None and parse_supported(label) is None:
                 raise ValueError(
                     f"Label `{WES_VERSION_LABEL}` of backend entry {entry.id}:"
                     f" {label!r} is none of the supported WES versions"

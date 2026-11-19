@@ -77,9 +77,7 @@ WES instance: the first of `custom.wes.backends` that can run it, in the
 WES version of that WES instance (see [WES
 instances](configuration.md#wes-instances) and [WES
 versions](wes-versions.md)). Without any, it refuses the run with `503
-Service Unavailable`, before anything is stored; if no WES instance can run
-it unchanged, with `400 Bad Request` (or `503`, if one hasn't answered so
-far).
+Service Unavailable`, before anything is stored.
 
 `POST /runs` returns the run's own identifier, by which `GET
 /runs/{run_id}` finds it; the identifier at the WES instance is kept in the

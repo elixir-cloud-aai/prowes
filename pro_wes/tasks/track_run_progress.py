@@ -21,8 +21,8 @@ from pro_wes.ga4gh.wes.models import (
 )
 from pro_wes.ga4gh.wes.versions import (
     OLDEST,
-    SUPPORTED,
     WesVersion,
+    parse_supported,
     upgrade_run_log,
 )
 from pro_wes.utils.db import DbDocumentConnector
@@ -114,8 +114,7 @@ def task__track_run_progress(
             token=None,
         )
 
-        parsed = WesVersion.parse(remote_wes_version)
-        wes_version = parsed if parsed in SUPPORTED else OLDEST
+        wes_version = parse_supported(remote_wes_version) or OLDEST
 
         # fetch run log and upsert database document
         document: DbDocument = _update_run_log(
@@ -221,7 +220,7 @@ def _update_run_log(
     wes_client: WesClient,
     run_id: str,
     timeout: float,
-    wes_version: WesVersion = OLDEST,
+    wes_version: WesVersion,
 ) -> DbDocument:
     """Fetch the run log from the remote WES and store it in the run document.
 

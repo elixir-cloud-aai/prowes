@@ -214,6 +214,19 @@ SUPPORTED: frozenset[WesVersion] = frozenset(
 """Versions that proWES can forward runs to."""
 
 
+def parse_supported(value: object) -> WesVersion | None:
+    """Parse a version leniently, if proWES supports it.
+
+    Args:
+        value: Version (e.g., a label, or stored with a run).
+
+    Returns:
+        The version, if it is one of `SUPPORTED`; otherwise `None`.
+    """
+    version = WesVersion.parse(value)
+    return version if version in SUPPORTED else None
+
+
 def chain(version: WesVersion) -> list[WesAdapter]:
     """Get the adapters between the canonical version and a version.
 
@@ -325,5 +338,4 @@ def reported_version(service_info: Any) -> WesVersion | None:
         and (group.lower(), artifact.lower()) == ("org.ga4gh", "wes")
     ):
         return None
-    version = WesVersion.parse(service_type.get("version"))
-    return version if version in SUPPORTED else None
+    return parse_supported(service_type.get("version"))
