@@ -95,8 +95,9 @@ WES instance didn't report). Fields that are empty or missing in the form
 JSON objects are refused with `400 Bad Request` before the run is stored
 (see [Errors](#errors)). The database keeps the fields as JSON text, as they
 were sent to the WES instance; runs that versions before 0.20.0 stored with
-values other than strings in `tags` or `workflow_engine_parameters` have
-them returned as their JSON text (e.g., `4` as `"4"`). All responses are
+values other than strings in the objects `tags` or
+`workflow_engine_parameters` have those values returned as their JSON text
+(e.g., `{"threads": 4}` as `{"threads": "4"}`). All responses are
 validated against the specification (see
 [Responses](configuration.md#responses)).
 

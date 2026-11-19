@@ -8,6 +8,7 @@ tests validate the run logs of new runs, and of runs as earlier versions
 stored them, against the schema `RunLog` of the served specification.
 """
 
+from json import loads
 from typing import Any
 
 from foca.testing import Client
@@ -186,9 +187,8 @@ def test_new_run_log_conforms(
     assert response.status_code == 200
     stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
     assert stored is not None
-    assert all(
-        isinstance(stored["run_log"]["request"][field], str) for field in expected
-    )
+    stored_request = stored["run_log"]["request"]
+    assert {field: loads(stored_request[field]) for field in expected} == expected
     run = foca_client.get(f"{BASE_PATH}/runs/{response.json()['run_id']}")
     assert run.status_code == 200
     _assert_conforms(run_log_validator, run.json())
@@ -304,3 +304,31 @@ def test_fields_not_json_objects_refused(
     assert response.status_code == 400
     assert mongodb[RUN_DB][RUN_COLLECTION].count_documents({}) == 0
     assert not remote_wes
+
+
+def test_stored_nested_credentials_not_returned(
+    foca_client: Client, mongodb: MongoClient[dict[str, Any]]
+) -> None:
+    """Credentials in legacy values other than strings are removed first.
+
+    That is, before such values are returned as their JSON text, so that
+    none hides in the text of a nested object or array.
+    """
+    _store_run(
+        mongodb,
+        {
+            "workflow_params": '{"input": "value"}',
+            "tags": '{"obj": {"u": "https://user:s3cr3t@example.org/x"}}',
+            "workflow_engine_parameters": (
+                '{"l": ["https://user:s3cr3t@example.org/y"]}'
+            ),
+        },
+    )
+    run = foca_client.get(f"{BASE_PATH}/runs/{STORED_RUN_ID}")
+    assert run.status_code == 200
+    assert "s3cr3t" not in run.text
+    request = run.json()["request"]
+    assert loads(request["tags"]["obj"]) == {"u": "https://example.org/x"}
+    assert loads(request["workflow_engine_parameters"]["l"]) == [
+        "https://example.org/y"
+    ]
