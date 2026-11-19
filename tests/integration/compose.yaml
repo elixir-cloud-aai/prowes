@@ -39,7 +39,7 @@ services:
   prowes-worker:
     <<: *integration
 
-  # Sapporo, the published image pinned by digest (version 2.4.2), at its
+  # Sapporo, the published image pinned by digest, at its
   # defaults, without authentication; not published on the host. The
   # image's Python probes its service info
   sapporo:

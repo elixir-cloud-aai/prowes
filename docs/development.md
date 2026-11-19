@@ -299,8 +299,8 @@ fixed name `prowes-integration` (also if `COMPOSE_PROJECT_NAME` is
 changed), and fetch the workflows over HTTP from the service `workflows`.
 The run that is canceled starts its engine container before the cancel,
 and the test checks that Sapporo stopped it. On failure, the script cancels
-that run and shows the logs of the services; the deployment keeps running, for inspection, and the test
-can run again on it.
+that run and shows the logs of the services; the deployment keeps
+running, for inspection, and the test can run again on it.
 
 Where Sapporo 2.4.2 differs from WES 1.1.0, the test accommodates it:
 

@@ -131,7 +131,7 @@ backend_id() {
 # The state of a run of proWES as Sapporo reports it
 backend_state() {
   local remote
-  remote="$(backend_id "$1")"
+  remote="$(backend_id "$1")" || return 1
   sapporo GET "/runs/${remote}/status" | jq -r .body.state
 }
 
@@ -140,7 +140,7 @@ backend_state() {
 # created)
 engine_container() {
   local remote
-  remote="$(backend_id "$1")"
+  remote="$(backend_id "$1")" || return 1
   # shellcheck disable=SC2016 # expanded by bash in the container
   limited docker compose exec -T sapporo bash -c \
     'cat "${SAPPORO_RUN_DIR}/${1:0:2}/$1/engine.cid" 2> /dev/null || true' \
