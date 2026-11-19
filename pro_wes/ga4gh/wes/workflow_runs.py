@@ -68,6 +68,11 @@ MAX_FILENAME_BYTES = 255
 # Fields of run requests that hold JSON objects (as strings, in forms)
 JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
 
+# JSON fields of run requests that are objects of strings (WES 1.1.0); runs
+# stored by versions before 0.20.0 may have other values, which run logs
+# return as their JSON text (cf. `WorkflowRuns._run_log_response()`)
+STRING_OBJECT_FIELDS = ("workflow_engine_parameters", "tags")
+
 # Fields of WES 1.1.0 run requests that choose the workflow engine; refused
 # until they are forwarded (#66), so that the choice isn't lost
 ENGINE_FIELDS = ("workflow_engine", "workflow_engine_version")
@@ -130,6 +135,21 @@ REMOTE_ERRORS: dict[int, type[Exception]] = {
     401: Unauthorized,
     403: Forbidden,
 }
+
+
+def _json_text(value: Any) -> str:
+    """Get a value of a decoded JSON object as a string.
+
+    Args:
+        value: Decoded JSON value.
+
+    Returns:
+        The value if it is a string, otherwise its JSON text (e.g., `1` for
+        the number 1, `null` for `None`).
+    """
+    if isinstance(value, str):
+        return value
+    return dumps(value, ensure_ascii=False)
 
 
 class WorkflowRuns:
@@ -770,7 +790,10 @@ class WorkflowRuns:
         returned as objects, as in the WES specification (the form of `POST
         /runs` has them as strings), so that the response conforms to the
         specification. Credentials in the URLs of the run request are removed,
-        for runs stored before they were checked.
+        for runs stored before they were checked. Values other than strings
+        of `tags` and `workflow_engine_parameters`, which versions before
+        0.20.0 accepted, are returned as their JSON text (e.g., `1` as
+        `"1"`), as the specification has strings only.
 
         Args:
             run_id: Workflow run identifier.
@@ -804,6 +827,10 @@ class WorkflowRuns:
                 if field in request_data:
                     decoded = loads(request_data[field])
                     sanitize_json(decoded, field, "strip")
+                    if field in STRING_OBJECT_FIELDS:
+                        decoded = {
+                            key: _json_text(value) for key, value in decoded.items()
+                        }
                     request_data[field] = decoded
         except BadRequest as exc:
             logger.error("Run request of run '%s' has malformed URLs.", run_id)

@@ -90,8 +90,15 @@ if the run is cancelable (see [Run states](#run-states)).
 and `workflow_engine_parameters` as JSON objects, as the WES specification
 defines `RunLog` (the form of `POST /runs` has them as JSON-encoded
 strings), and leaves out fields without value (e.g., an `exit_code` that the
-WES instance didn't report). All responses are validated against the
-specification (see [Responses](configuration.md#responses)).
+WES instance didn't report). Fields that are empty or missing in the form
+(`tags`, `workflow_engine_parameters`) are empty objects; fields that aren't
+JSON objects are refused with `400 Bad Request` before the run is stored
+(see [Errors](#errors)). The database keeps the fields as JSON text, as they
+were sent to the WES instance; runs that versions before 0.20.0 stored with
+values other than strings in `tags` or `workflow_engine_parameters` have
+them returned as their JSON text (e.g., `4` as `"4"`). All responses are
+validated against the specification (see
+[Responses](configuration.md#responses)).
 
 ### Run states
 
