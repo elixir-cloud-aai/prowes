@@ -158,7 +158,7 @@ told by the HTTP status of the response, whatever its body (e.g., an
 | `400`, `401` or `403` | The same status (as when a run is forwarded); proWES sends no credentials to WES instances yet, so `401` and `403` mean that the WES instance requires them |
 | Another error status (e.g., `404`: it doesn't know the run, or `500`) | `500`, "The remote WES service answered with an error." |
 | `2xx` without the run identifier (a JSON object `RunId`) | `500`, "The remote WES service sent an invalid response." |
-| Not reached, or its response not read (e.g., connecting or the TLS handshake failed, the response timed out, see `custom.defaults.timeout`, or a `2xx` response is no JSON) | `500`, "Could not reach remote WES service." |
+| Not reached, or its response not read (e.g., connecting or the TLS handshake failed, the response timed out, see `custom.defaults.timeout`, a redirect, which proWES doesn't follow, see [Failed requests to WES instances](operations.md#failed-requests-to-wes-instances), or a `2xx` response is no JSON) | `500`, "Could not reach remote WES service." |
 
 The WES instance may have canceled the run even if proWES couldn't read
 its response; check the state of the run later (`GET /runs/{run_id}`).
