@@ -139,6 +139,26 @@ argument `SETUPTOOLS_SCM_PRETEND_VERSION` report `0.0.0.dev0` (see
 [Image](operations.md#image)): set `config.service_info.service.version`
 for them.
 
+### Authentication
+
+The WES API requires access tokens; the base config trusts no issuer, so
+all requests but `GET /service-info` are rejected (`401`) until
+`config.security.auth` sets the trusted issuers and the audiences of their
+tokens (see [Access control](access-control.md#authentication)), e.g.:
+
+```yaml
+config:
+  security:
+    auth:
+      issuers:
+        - https://login.example.org/oidc/
+      audience:
+        - my-portal-client-id
+```
+
+Authentication of clients needs no secrets; the app's pods must reach the
+issuers over HTTPS (their discovery documents and keys).
+
 ### WES instances
 
 The base config lists no WES instance, so a deployment refuses all runs

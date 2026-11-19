@@ -19,6 +19,7 @@ fills in OpenAPI defaults, e.g., `style` of parameters):
 | --- | --- |
 | `openapi`, `info` (except `info.version`) and `servers` | Those of proWES |
 | `x-openapi-router-controller` of `GET /service-info` | The service info is served by FOCA |
+| `security` (bearer tokens, scheme `bearerAuth`), `security: []` of `GET /service-info` | WES recommends bearer tokens, but declares no security scheme; all operations but the service info require access tokens (see [Access control](access-control.md#authentication)) |
 | Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
 | `400` of the endpoints of a run (`/runs/{run_id}...`); `413` and `503` of `POST /runs`; `409` of `POST /runs/{run_id}/cancel`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
@@ -155,6 +156,11 @@ For example, a run that doesn't exist:
   "detail": "The requested run wasn't found."
 }
 ```
+
+Requests without a valid access token get `401 Unauthorized`, with a
+Bearer challenge (`WWW-Authenticate`); requests for runs of other users, and
+with tokens whose subject can't own runs, get `403 Forbidden` (see [Access
+control](access-control.md)). Only `GET /service-info` needs no token.
 
 Errors of the WES instance when a run is forwarded become `400`, `401`,
 `403` or, for all others, `500` responses of proWES, and the run gets the

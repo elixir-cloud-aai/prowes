@@ -22,6 +22,10 @@ info:
     email: "alexander.kanitz@alumni.ethz.ch"
 servers:
   - url: /ga4gh/wes/v1
+# All operations require an access token (bearer token, validated by FOCA:
+# `x-bearerInfoFunc` of `api.specs` in `config.yaml`), but the service info
+security:
+  - bearerAuth: []
 paths:
   /service-info:
     get:
@@ -29,6 +33,8 @@ paths:
       # here takes precedence over the one added to all operations
       # (`api.specs` in `config.yaml`)
       x-openapi-router-controller: foca.api.service_info
+      # Public
+      security: []
       responses:
         # Replaces the schema of the declared error response (`ErrorResponse`)
         400: &problem
@@ -141,6 +147,11 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         500: *problem
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     # Problem details (RFC 9457), as proWES sends them (FOCA; cf.
     # `pro_wes/exceptions.py` and `exceptions` in `config.yaml`); they

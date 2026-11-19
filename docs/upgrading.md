@@ -8,6 +8,22 @@ at a time and read all sections between your version and the target.
 proWES 0.20.0 upgrades FOCA from 0.12 to 0.22. Operators need to check the
 following.
 
+### Authentication (breaking)
+
+The WES API now requires access tokens (before: it was served without
+authentication, `disable_auth: True`): set the trusted issuers and audiences
+of the deployment in `security.auth` (see [Access
+control](access-control.md#authentication)); without them, all requests but
+`GET /service-info` get `401 Unauthorized`. Clients must send their access
+tokens (`Authorization: Bearer <token>`).
+
+Each new run belongs to the caller that created it, the subject of its
+token namespaced by its issuer, and only that caller lists, reads and
+cancels it. Runs stored before have no owner and can't be read anymore:
+let them finish (or cancel them) before upgrading, or set their `user_id`
+in the database to the owner (`<issuer>|<subject>`, see [Run
+ownership](access-control.md#run-ownership)).
+
 ### MongoDB 4.4 or later
 
 Current PyMongo releases refuse to connect to older servers; Docker Compose

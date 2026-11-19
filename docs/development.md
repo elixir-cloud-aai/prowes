@@ -222,7 +222,10 @@ Celery worker, MongoDB, RabbitMQ), against a fake WES (`fake_wes.py`)
 instead of a real one. It creates runs, which proWES forwards to the fake
 WES, waits until the Celery worker has tracked them to their final state,
 and checks the run list, the run logs, the run status, the cancellation of
-a run and that the fake WES got the runs as sent. It needs Docker Compose,
+a run and that the fake WES got the runs as sent. The fake WES is also the
+identity provider whose access tokens proWES requires: the test checks that
+requests without a valid token are rejected and that users see only their
+own runs. It needs Docker Compose,
 curl and jq. Run it from the repository root:
 
 ```bash
