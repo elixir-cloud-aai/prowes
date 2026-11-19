@@ -23,6 +23,7 @@ fills in OpenAPI defaults, e.g., `style` of parameters):
 | Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
 | `400` of the endpoints of a run (`/runs/{run_id}...`); `413`, `415` and `503` of `POST /runs`; `409` of `POST /runs/{run_id}/cancel`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
+| Descriptions of `401`, `403` and `500` of `POST /runs/{run_id}/cancel` (and of its `400`) | They may also be the answer of the WES instance to the cancellation (see [Run states](#run-states)) |
 
 Statuses that any request can get, whatever its operation, are not declared
 per operation: `404` for unknown paths, `405 Method Not Allowed`, and `413
@@ -141,15 +142,27 @@ unreachable or answers with errors for too long, or tracking takes longer
 than `custom.post_runs.timeout_job`. Such a run may still be running at the
 WES instance, so proWES forwards its cancellation. The stored state stays
 `SYSTEM_ERROR`, as proWES doesn't track the run any longer; check the
-outcome at the WES instance. proWES answers `200` once it has forwarded a
-cancellation, even if the WES instance answers with an error (e.g., the run
-has finished there); passing these errors on is planned
-([#86](https://github.com/elixir-cloud-aai/prowes/issues/86)). proWES
-records which `SYSTEM_ERROR`s it set itself (`system_error_by_prowes` of
-the stored run); runs stored by earlier versions don't have that record,
-and their cancellations are refused, as are those of runs that failed
-before they were forwarded (e.g., the WES instance refused the run
-request).
+outcome at the WES instance. proWES records which `SYSTEM_ERROR`s it set
+itself (`system_error_by_prowes` of the stored run); runs stored by earlier
+versions don't have that record, and their cancellations are refused, as
+are those of runs that failed before they were forwarded (e.g., the WES
+instance refused the run request).
+
+proWES answers `200` with the run identifier only once the WES instance has
+accepted the cancellation. If it refuses it or can't be reached, proWES
+answers with an error, and the stored state stays as it is. Errors are
+told by the HTTP status of the response, whatever its body (e.g., an
+`ErrorResponse` of WES, problem details, or an error page of a proxy):
+
+| WES instance | proWES |
+| --- | --- |
+| `400`, `401` or `403` | The same status (as when a run is forwarded); proWES sends no credentials to WES instances yet, so `401` and `403` mean that the WES instance requires them |
+| Another error status (e.g., `404`: it doesn't know the run, or `500`) | `500`, "The remote WES service answered with an error." |
+| `2xx` without the run identifier (a JSON object `RunId`) | `500`, "The remote WES service sent an invalid response." |
+| Not reached, or its response not read (e.g., connecting or the TLS handshake failed, the response timed out, see `custom.defaults.timeout`, a redirect, which proWES doesn't follow, see [Failed requests to WES instances](operations.md#failed-requests-to-wes-instances), or a `2xx` response is no JSON) | `500`, "Could not reach remote WES service." |
+
+The WES instance may have canceled the run even if proWES couldn't read
+its response; check the state of the run later (`GET /runs/{run_id}`).
 
 ## Errors
 
