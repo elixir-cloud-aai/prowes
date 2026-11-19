@@ -490,15 +490,42 @@ class ErrorResponse(BaseModel):
     status_code: int
 
 
+class RunSummary(RunStatus):
+    """Summary of a workflow run, as listed by `GET /runs` (WES 1.1.0).
+
+    Args:
+        run_id: Workflow run identifier.
+        state: Workflow run state.
+        start_time: When the run started executing, in ISO 8601 format.
+        end_time: When the run stopped executing, in ISO 8601 format.
+        tags: Key-value tags added by the client when it created the run.
+
+    Attributes:
+        run_id: Workflow run identifier.
+        state: Workflow run state.
+        start_time: When the run started executing, in ISO 8601 format.
+        end_time: When the run stopped executing, in ISO 8601 format.
+        tags: Key-value tags added by the client when it created the run.
+    """
+
+    start_time: str | None = None
+    end_time: str | None = None
+    tags: dict[str, str]
+
+
 class RunListResponse(BaseModel):
     """List of workflow runs that the service has processed or is processing.
 
+    Items are `RunSummary` or `RunStatus` (WES 1.0.1 instances), as WES 1.1.0
+    allows (`anyOf`).
+
     Args:
-        runs: List of runs, indicating the run identifier and status for each.
+        runs: List of runs, with the run identifier and state of each, and
+            the summary fields where the WES instance returns them.
         next_page_token: Token to receive the next page of results.
     """
 
-    runs: list[RunStatus] | None = []
+    runs: list[RunSummary | RunStatus] | None = []
     next_page_token: str | None = None
 
 
