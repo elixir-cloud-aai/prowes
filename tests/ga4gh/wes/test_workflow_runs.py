@@ -29,6 +29,7 @@ from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
+from tests.conftest import OWNER, TokenClient
 
 BASE_PATH = "/ga4gh/wes/v1"
 REMOTE_RUN_ID = "REMOTE1"
@@ -486,12 +487,13 @@ def test_post_run_incomplete_update(
 def test_post_run_timeout_job(
     add_overlay: Callable[[str], None],
     queued: list[dict[str, Any]],
+    token: str,
 ) -> None:
     """With `timeout_job`, the tracking task gets a soft time limit."""
     from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
 
     add_overlay("custom:\n  post_runs:\n    timeout_job: 60\n")
-    with Client(init_app()) as client:
+    with TokenClient(init_app(), token) as client:
         assert _post_run(client, RUN_REQUEST).status_code == 200
     assert queued[0]["soft_time_limit"] == 60
 
@@ -697,7 +699,7 @@ def test_get_run_log_without_request(
 ) -> None:
     """Run logs without run request are returned as stored."""
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "NOREQ1", "state": "QUEUED"}}
+        {"user_id": OWNER, "run_log": {"run_id": "NOREQ1", "state": "QUEUED"}}
     )
     response = foca_client.get(f"{BASE_PATH}/runs/NOREQ1")
     assert response.status_code == 200
@@ -740,6 +742,7 @@ def test_cancel_run_forwarded(
     """Cancellations are forwarded with the remote run identifier."""
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
         {
+            "user_id": OWNER,
             "run_log": {"run_id": "CANCEL", "state": "RUNNING"},
             "wes_endpoint": {
                 "host": "https://wes.example.org",
@@ -807,6 +810,7 @@ def test_cancel_run_not_cancelable(
     """Finished runs and runs being canceled get `409`, without contacting the WES."""
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
         {
+            "user_id": OWNER,
             "run_log": {"run_id": "DONE01", "state": state.value},
             "wes_endpoint": REMOTE_ENDPOINT,
         }
@@ -832,7 +836,7 @@ def test_cancel_run_unknown_without_remote_run(
 ) -> None:
     """Runs of unknown state without remote run (not forwarded yet) get `409`."""
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "NOSTAT", **run_log}}
+        {"user_id": OWNER, "run_log": {"run_id": "NOSTAT", **run_log}}
     )
     monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
     response = foca_client.post(f"{BASE_PATH}/runs/NOSTAT/cancel")
@@ -862,7 +866,11 @@ def test_cancel_run_cancelable(
     run (e.g., not tracked yet, or reported as `UNKNOWN` by the WES).
     """
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "ACTIVE", **run_log}, "wes_endpoint": REMOTE_ENDPOINT}
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "ACTIVE", **run_log},
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
     )
     canceled: list[str] = []
     monkeypatch.setattr(
@@ -887,6 +895,7 @@ def test_cancel_run_system_error_by_prowes(
     """
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
         {
+            "user_id": OWNER,
             "run_log": {"run_id": "LOST01", "state": "SYSTEM_ERROR"},
             "system_error_by_prowes": True,
             "wes_endpoint": REMOTE_ENDPOINT,
@@ -937,7 +946,11 @@ def test_cancel_run_system_error_refused(
     run (e.g., the run request failed).
     """
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "FAILED", "state": "SYSTEM_ERROR"}, **document}
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "FAILED", "state": "SYSTEM_ERROR"},
+            **document,
+        }
     )
     monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
     response = foca_client.post(f"{BASE_PATH}/runs/FAILED/cancel")
@@ -974,6 +987,7 @@ def test_cancel_run_without_remote_run(
 ) -> None:
     """Cancelable runs without remote run get `500`, without contacting the WES."""
     document: dict[str, Any] = {
+        "user_id": OWNER,
         "run_log": {"run_id": "NOREMO", "state": "RUNNING"},
         **endpoint,
     }

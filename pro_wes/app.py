@@ -15,6 +15,7 @@ from foca.api.service_info import get_service_info
 from pro_wes.config_models import CustomConfig
 from pro_wes.ga4gh.wes.backends import check_backends
 from pro_wes.ga4gh.wes.models import ServiceInfo
+from pro_wes.security import check_auth
 
 
 def init_app() -> App:
@@ -23,7 +24,8 @@ def init_app() -> App:
     Creates the storage directory of the runs, checks that it is writable,
     checks that the service info (config section `service_info`) has the
     fields of the WES specification, and that no configured WES instance
-    (`custom.wes.backends`) is proWES itself.
+    (`custom.wes.backends`) is proWES itself; warns if no token issuer is
+    trusted (`security.auth.issuers`).
 
     Returns:
         FOCA application.
@@ -73,6 +75,8 @@ def _setup_first_start(app: App) -> None:
         ServiceInfo(**get_service_info())
         # runs would be forwarded to proWES itself
         check_backends()
+        # without trusted issuers, all tokens are rejected
+        check_auth()
 
 
 def main() -> None:

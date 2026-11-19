@@ -45,7 +45,7 @@ deployments on Kubernetes and for development, respectively.
 !!! note "Work in progress"
     proWES is being aligned with
     [proTES](https://protes.readthedocs.io/), the gateway for the GA4GH Task
-    Execution Service: authentication of clients and WES instances, FOCA's
+    Execution Service: authentication at WES instances, FOCA's
     gateway plugins for routing and processing runs, and WES 1.1.0. Until
     then, runs are forwarded to the first of the configured WES instances
     (see [WES instances](configuration.md#wes-instances)).

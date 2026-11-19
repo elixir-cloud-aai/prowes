@@ -26,6 +26,16 @@ hostName: ""
 # accepts CWL v1.0 runs only. Set the WES instances that runs are forwarded
 # to: the base config has none, so runs are refused until then
 config: {}
+#   # Trusted token issuers and the audiences of their tokens (e.g., the
+#   # client IDs of the front ends): the WES API requires access tokens of
+#   # them, and rejects all requests but the service info without (see
+#   # docs/access-control.md)
+#   security:
+#     auth:
+#       issuers:
+#         - https://login.example.org/oidc/
+#       audience:
+#         - my-portal-client-id
 #   # WES instances and service registries, in order; new runs go to the
 #   # first (see docs/configuration.md, WES instances)
 #   custom:

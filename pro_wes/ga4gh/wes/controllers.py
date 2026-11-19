@@ -2,6 +2,10 @@
 
 `GET /service-info` is served by FOCA (`foca.api.service_info`; cf.
 `pro_wes.ga4gh.wes.service_info`).
+
+The operations on runs get the owner of the caller (`user_id`, cf.
+:py:func:`pro_wes.security.current_owner`), which replaces any `user_id`
+of the request: callers create, list, read and cancel only their own runs.
 """
 
 import logging
@@ -12,8 +16,29 @@ from foca.utils.logging import log_traffic
 
 from pro_wes.exceptions import TasksNotServed
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
+from pro_wes.security import current_owner
 
 logger = logging.getLogger(__name__)
+
+
+def _set_owner(kwargs: dict[str, Any]) -> None:
+    """Set the owner of the caller as `user_id` of the keyword arguments.
+
+    Args:
+        kwargs: Keyword arguments of a controller, changed in place: `user_id`
+            is the owner of the caller (cf.
+            :py:func:`pro_wes.security.current_owner`), replacing any value
+            of the request; without one (authentication disabled), it is
+            removed, so that runs have no owner.
+
+    Raises:
+        pro_wes.exceptions.Forbidden: The caller's token has no subject that
+            can own runs.
+    """
+    kwargs.pop("user_id", None)
+    owner = current_owner()
+    if owner is not None:
+        kwargs["user_id"] = owner
 
 
 @log_traffic
@@ -29,8 +54,13 @@ def RunWorkflow(*args: Any, **kwargs: Any) -> dict[str, str]:
     Returns:
         Response object according to WES API schema `RunId`. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+
+    Raises:
+        pro_wes.exceptions.Forbidden: The caller's token has no subject
+            that can own runs (cf. :py:func:`pro_wes.security.current_owner`).
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.run_workflow(
         request=request,
         **kwargs,
@@ -51,8 +81,13 @@ def ListRuns(*args: Any, **kwargs: Any) -> dict[str, Any]:
     Returns:
         Response object according to WES API schema `RunListResponse`. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+
+    Raises:
+        pro_wes.exceptions.Forbidden: The caller's token has no subject
+            that can own runs (cf. :py:func:`pro_wes.security.current_owner`).
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.list_runs(**kwargs)
     return response
 
@@ -73,12 +108,14 @@ def GetRunLog(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.get_run_log(run_id=run_id, **kwargs)
     return response
 
@@ -99,12 +136,14 @@ def GetRunStatus(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.get_run_status(run_id=run_id, **kwargs)
     return response
 
@@ -125,12 +164,14 @@ def CancelRun(run_id: str, *args: Any, **kwargs: Any) -> dict[str, str]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.cancel_run(run_id=run_id, **kwargs)
     return response
 

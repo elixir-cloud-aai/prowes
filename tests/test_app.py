@@ -136,8 +136,7 @@ def test_module_runs_main(
 ) -> None:
     """`python -m pro_wes.app` runs the app with Flask's development server.
 
-    By default on the loopback interface only, as the WES API is served
-    without authentication.
+    By default on the loopback interface only.
     """
     # Run as by `-m`, i.e., without the module imported by the tests
     monkeypatch.delitem(sys.modules, "pro_wes.app")

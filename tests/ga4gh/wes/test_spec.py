@@ -134,6 +134,10 @@ ALLOWED_DEVIATIONS: dict[str, Callable[[Location, Any], bool]] = {
         loc == ("paths", "/runs/{run_id}/cancel", "post", "responses", 409)
     ),
     "501 of the task endpoints": _is_task_501,
+    "access tokens (bearer tokens), but for the service info": lambda loc, _: (
+        loc in {("security",), ("paths", "/service-info", "get", "security")}
+        or loc[:2] == ("components", "securitySchemes")
+    ),
     "400 of the endpoints of a run": lambda loc, _: (
         len(loc) == 5
         and loc[0] == "paths"

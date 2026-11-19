@@ -19,8 +19,10 @@ helm install prowes deployment -n prowes \
   --set broker.existingSecret=prowes-broker
 ```
 
-proWES serves the WES API without authentication for now: limit access to
-it in front of the app.
+The WES API requires access tokens: set the trusted issuers and the
+audiences of their tokens in `config.security.auth` (see
+[Authentication](https://prowes.readthedocs.io/en/latest/deployment/#authentication));
+without them, all requests but `GET /service-info` are rejected.
 
 For the size limit of request bodies at the Ingress (10 MiB by default) and
 rate limits (off by default), see [Body size and rate

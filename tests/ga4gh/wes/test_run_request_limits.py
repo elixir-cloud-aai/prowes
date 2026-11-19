@@ -22,6 +22,7 @@ from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import RunId
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
+from tests.conftest import TokenClient
 
 BASE_PATH = "/ga4gh/wes/v1"
 BOUNDARY = "prowes-limits-boundary"
@@ -90,12 +91,13 @@ def _post_run(
 
 @pytest.fixture
 def client_with(
-    add_overlay: Callable[[str], None],
+    add_overlay: Callable[[str], None], token: str
 ) -> Iterator[Callable[[str], Client]]:
     """Get a function that creates a test client of the app with an overlay.
 
     Args:
         add_overlay: Function that merges config over the test overlay.
+        token: Access token that the clients send.
 
     Yields:
         Function taking the YAML text of an overlay, returning a client of
@@ -115,7 +117,7 @@ def client_with(
                 Client of the app.
             """
             add_overlay(text)
-            return stack.enter_context(Client(init_app()))
+            return stack.enter_context(TokenClient(init_app(), token))
 
         yield _client
 
