@@ -9,11 +9,13 @@ created them.
 from typing import Any
 
 from connexion import App
-from foca.testing import Client
+from foca.testing import Client, request_context
+from foca.testing.client import Response
 from foca.testing.issuer import Issuer
 from pymongo import MongoClient
 import pytest
 
+from pro_wes.ga4gh.wes import controllers
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import RunId
 from pro_wes.tasks.track_run_progress import task__track_run_progress
@@ -54,7 +56,7 @@ def forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _assert_unauthorized(response: Any) -> None:
+def _assert_unauthorized(response: Response) -> None:
     """Check a rejection for lack of a valid token.
 
     Args:
@@ -150,15 +152,30 @@ def test_runs_of_owner_only(
 
 
 @pytest.mark.usefixtures("forwarded")
-def test_owner_not_from_request(
-    foca_client: Client, issuer: Issuer, mongodb: MongoClient[dict[str, Any]]
+def test_user_id_of_request_refused(
+    foca_client: Client, mongodb: MongoClient[dict[str, Any]]
 ) -> None:
-    """A `user_id` of the request doesn't change the owner (it is refused)."""
+    """Requests can't name the owner: a `user_id` is refused (`400`)."""
     response = foca_client.get(f"{BASE_PATH}/runs", params={"user_id": "bob"})
     assert response.status_code == 400
     response = foca_client.post(
         f"{BASE_PATH}/runs", data={**RUN_REQUEST, "user_id": "bob"}
     )
-    assert response.status_code in {200, 400}
-    for stored in mongodb[RUN_DB][RUN_COLLECTION].find({}):
-        assert stored["user_id"] == OWNER
+    assert response.status_code == 400
+    assert mongodb[RUN_DB][RUN_COLLECTION].count_documents({}) == 0
+
+
+@pytest.mark.parametrize("token_info", [{"claims": {"sub": USER}}, None])
+def test_set_owner_replaces_user_id(
+    foca_app: App, issuer: Issuer, token_info: dict[str, Any] | None
+) -> None:
+    """The owner of the caller replaces any `user_id`, or removes it."""
+    if token_info is not None:
+        token_info["claims"]["iss"] = issuer.url
+    kwargs: dict[str, Any] = {"user_id": "bob", "page_size": 1}
+    with request_context(token_info=token_info, app=foca_app):
+        controllers._set_owner(kwargs)
+    expected: dict[str, Any] = {"page_size": 1}
+    if token_info is not None:
+        expected["user_id"] = OWNER
+    assert kwargs == expected

@@ -12,7 +12,7 @@ the fixture `foca_client` (and `TokenClient`) sends the access token of
 `USER` with every request, unless a request has an `Authorization` header.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 import os
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,7 @@ from typing import Any
 from connexion import App
 from foca.database import register_mongodb
 from foca.testing import Client
-from foca.testing.client import HeaderTypes, Response, _header_items
+from foca.testing.client import HeaderTypes, Response
 from foca.testing.issuer import Issuer
 import mongomock
 from pymongo import MongoClient
@@ -107,7 +107,7 @@ class TokenClient(Client):
         Returns:
             Response.
         """
-        items = _header_items(headers)
+        items = list(headers.items() if isinstance(headers, Mapping) else headers or [])
         names = {name.lower() for name, _ in items}
         if "authorization" not in names:
             items.append(("Authorization", f"Bearer {self.token}"))

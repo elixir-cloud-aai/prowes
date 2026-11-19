@@ -23,7 +23,8 @@ info:
 servers:
   - url: /ga4gh/wes/v1
 # All operations require an access token (bearer token, validated by FOCA:
-# `x-bearerInfoFunc` of `api.specs` in `config.yaml`), but the service info
+# `x-bearerInfoFunc` of `api.specs` in `config.yaml`), except for the service
+# info, which is public (`security: []` below)
 security:
   - bearerAuth: []
 paths:
@@ -33,7 +34,7 @@ paths:
       # here takes precedence over the one added to all operations
       # (`api.specs` in `config.yaml`)
       x-openapi-router-controller: foca.api.service_info
-      # Public
+      # Public: no access token required
       security: []
       responses:
         # Replaces the schema of the declared error response (`ErrorResponse`)

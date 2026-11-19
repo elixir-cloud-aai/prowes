@@ -895,6 +895,7 @@ def test_cancel_run_system_error_by_prowes(
     """
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
         {
+            "user_id": OWNER,
             "run_log": {"run_id": "LOST01", "state": "SYSTEM_ERROR"},
             "system_error_by_prowes": True,
             "wes_endpoint": REMOTE_ENDPOINT,
@@ -945,7 +946,11 @@ def test_cancel_run_system_error_refused(
     run (e.g., the run request failed).
     """
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "FAILED", "state": "SYSTEM_ERROR"}, **document}
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "FAILED", "state": "SYSTEM_ERROR"},
+            **document,
+        }
     )
     monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
     response = foca_client.post(f"{BASE_PATH}/runs/FAILED/cancel")

@@ -5,7 +5,8 @@
 # worker polls it every second (instead of every 3 seconds), so that the
 # smoke test sees state changes quickly. The fake WES is also the identity
 # provider whose access tokens proWES requires (`security.auth`), reached
-# over HTTPS as the WES API
+# over HTTPS as the WES API (`ISSUER` and `AUDIENCE` in `fake_wes.py`, which
+# must match)
 security:
   auth:
     issuers:

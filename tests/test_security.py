@@ -1,5 +1,6 @@
 """Unit tests of the owners of runs and the checks of authentication."""
 
+from collections.abc import Callable
 import logging
 from typing import Any
 
@@ -7,6 +8,7 @@ from connexion import App
 from foca import get_config
 from foca.models.config import AuthConfig, IssuerConfig
 from foca.testing import request_context
+from foca.testing.issuer import Issuer
 import pytest
 
 from pro_wes.exceptions import Forbidden
@@ -62,7 +64,7 @@ def test_owner_of_namespaced_subject_with_separator() -> None:
     assert owner == f"{ISSUER}|a|b"
 
 
-def test_current_owner(foca_app: App, issuer: Any) -> None:
+def test_current_owner(foca_app: App, issuer: Issuer) -> None:
     """The owner is the namespaced subject of the request's token."""
     claims = {"iss": issuer.url, "sub": USER}
     with request_context(token_info={"claims": claims}, app=foca_app):
@@ -76,22 +78,21 @@ def test_current_owner_without_token(foca_app: App) -> None:
 
 
 @pytest.mark.parametrize(
-    "claims",
+    "make_claims",
     [
-        {"sub": "alice"},
-        {"iss": "https://untrusted.example.org/", "sub": "alice"},
-        {"iss": "ISSUER", "sub": ""},
-        {"iss": "ISSUER", "sub": 42},
-        {"iss": "ISSUER"},
+        lambda _url: {"sub": "alice"},
+        lambda _url: {"iss": "https://untrusted.example.org/", "sub": "alice"},
+        lambda url: {"iss": url, "sub": ""},
+        lambda url: {"iss": url, "sub": 42},
+        lambda url: {"iss": url},
     ],
+    ids=["no issuer", "untrusted issuer", "empty subject", "number", "no subject"],
 )
 def test_current_owner_refused(
-    foca_app: App, issuer: Any, claims: dict[str, Any]
+    foca_app: App, issuer: Issuer, make_claims: Callable[[str], dict[str, Any]]
 ) -> None:
     """Tokens without a subject that can be namespaced are refused (`403`)."""
-    claims = {
-        key: issuer.url if value == "ISSUER" else value for key, value in claims.items()
-    }
+    claims = make_claims(issuer.url)
     with (
         request_context(token_info={"claims": claims}, app=foca_app),
         pytest.raises(Forbidden),
@@ -108,6 +109,16 @@ def test_check_auth_without_issuers(
         with caplog.at_level(logging.WARNING, logger="pro_wes.security"):
             check_auth()
     assert "No trusted token issuers" in caplog.text
+
+
+def test_init_app_checks_auth(app_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The app checks the authentication settings on startup."""
+    from pro_wes import app  # noqa: PLC0415 (after the client patch)
+
+    calls: list[None] = []
+    monkeypatch.setattr(app, "check_auth", lambda: calls.append(None))
+    app.init_app()
+    assert calls == [None]
 
 
 def test_check_auth_with_issuers(

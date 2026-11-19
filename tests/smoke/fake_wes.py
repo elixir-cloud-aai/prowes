@@ -68,8 +68,11 @@ HTTP_PORT = 8080
 HTTPS_PORT = 443
 RUN_SECONDS = 2.0
 # Identity provider: issuer (over HTTPS, at the service name), audience of
-# its tokens, lifetime of tokens in seconds, and its signing key (new for
-# each start, so tokens of an earlier start are rejected)
+# its tokens (both as trusted by proWES, `security.auth` in `config.yaml`),
+# lifetime of tokens in seconds, and its signing key (new for each start, so
+# tokens of an earlier start are rejected). Its token endpoint issues tokens
+# to anyone who reaches it: never publish the fake WES outside the Compose
+# network of the smoke test
 ISSUER = "https://fake-wes/oidc/"
 IDP_PATH = "/oidc/"
 AUDIENCE = "prowes-smoke"

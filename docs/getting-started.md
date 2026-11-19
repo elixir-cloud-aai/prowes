@@ -48,6 +48,10 @@ services:
       - ./wes.yaml:/overlay/wes.yaml:ro
 ```
 
+Docker Compose reads `docker-compose.override.yaml` automatically (unless
+files are given with `-f`). The Celery worker needs no overlay: it tracks
+each run at the WES instance stored with it.
+
 Requests other than `GET /service-info` need an access token of a trusted
 identity provider (see [Access control](access-control.md)): add its issuer
 and your client's audience to the overlay, e.g.,
@@ -62,9 +66,7 @@ security:
 ```
 
 and send the token with each request (`-H "Authorization: Bearer
-<token>"`). Docker Compose reads `docker-compose.override.yaml`
-automatically (unless files are given with `-f`). The Celery worker needs no overlay: it tracks
-each run at the WES instance stored with it.
+<token>"`).
 
 The image reports version `0.0.0.dev0` unless you set
 `SETUPTOOLS_SCM_PRETEND_VERSION` on the host (e.g.,

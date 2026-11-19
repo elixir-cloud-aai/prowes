@@ -108,8 +108,9 @@ def GetRunLog(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
@@ -135,8 +136,9 @@ def GetRunStatus(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
@@ -162,8 +164,9 @@ def CancelRun(run_id: str, *args: Any, **kwargs: Any) -> dict[str, str]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
