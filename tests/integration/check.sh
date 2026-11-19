@@ -17,7 +17,8 @@
 # are long: each polls up to `FINAL_WAIT` times (default 300), about once a
 # second. Every request has a limit of 60 seconds (for the whole Compose call
 # only where `timeout` of GNU coreutils exists). Tokens go to curl on its
-# standard input, so that they don't show up in the process list.
+# standard input, so that they don't show up in the process list. On
+# failure, it cancels the sleeping run and shows the logs of the services.
 set -euo pipefail
 
 api="${1:-http://localhost:8090/ga4gh/wes/v1}"
@@ -27,8 +28,25 @@ final_wait="${FINAL_WAIT:-300}"
 # The workflows, as the engine containers fetch them (service `workflows`)
 workflows=http://workflows:8000
 body="$(mktemp)"
-trap 'rm -f "${body}"' EXIT
 token=""
+# The run that sleeps, once created: canceled on failure (best effort), so
+# that its engine container doesn't keep running into the next test run
+running=""
+on_exit() {
+  local status=$?
+  rm -f "${body}"
+  if [ "${status}" -ne 0 ]; then
+    if [ -n "${running}" ]; then
+      printf 'Authorization: Bearer %s\n' "${token}" \
+        | curl --silent --output /dev/null --max-time 60 --header @- \
+          -X POST "${api}/runs/${running}/cancel" || true
+    fi
+    echo "Integration test failed; logs of the services:"
+    docker compose logs --tail 100 || true
+  fi
+  exit "${status}"
+}
+trap on_exit EXIT
 
 # Run a command with a limit of 60 seconds where `timeout` exists
 limited() {
@@ -70,7 +88,8 @@ check() {
     args+=(--form-string "${field}")
   done
   actual="$(printf 'Authorization: Bearer %s\n' "${token}" \
-    | curl "${args[@]}" "${api}${path}")"
+    | curl "${args[@]}" "${api}${path}")" \
+    || { echo "::error::${method} ${path}: request failed"; return 1; }
   if [ "${actual}" != "${status}" ] \
       || ! jq -e "${filter}" "${body}" > /dev/null; then
     echo "::error::${method} ${path}: status ${actual}, expected ${status} and ${filter}"
@@ -79,13 +98,16 @@ check() {
   fi
 }
 
-# Wait until a run has a state
+# Wait until a run has a state; fails at once if it ends in another one
 await_state() {
   local state=""
   for _ in $(seq "${final_wait}"); do
     check GET "/runs/$1/status" 200 '.state != null'
     state="$(jq -r .state "${body}")"
     [ "${state}" = "$2" ] && return
+    case "${state}" in
+      COMPLETE | EXECUTOR_ERROR | SYSTEM_ERROR | CANCELED | PREEMPTED) break ;;
+    esac
     sleep 1
   done
   echo "::error::run $1 is ${state}, not $2"
@@ -96,23 +118,46 @@ await_state() {
 
 # The identifier of a run of proWES at Sapporo, from proWES's database
 backend_id() {
-  limited docker compose exec -T mongodb mongosh --quiet runStore --eval \
-    "print(db.runs.findOne({'run_log.run_id': '$1'}).wes_endpoint.run_id)"
+  local remote
+  remote="$(limited docker compose exec -T mongodb mongosh --quiet runStore \
+    --eval "print(db.runs.findOne({'run_log.run_id': '$1'}).wes_endpoint.run_id)")"
+  if [ -z "${remote}" ]; then
+    echo "::error::run $1 has no identifier at Sapporo" >&2
+    return 1
+  fi
+  echo "${remote}"
 }
 
 # The state of a run of proWES as Sapporo reports it
 backend_state() {
-  sapporo GET "/runs/$(backend_id "$1")/status" | jq -r .body.state
+  local remote
+  remote="$(backend_id "$1")"
+  sapporo GET "/runs/${remote}/status" | jq -r .body.state
+}
+
+# The container of the workflow engine of a run of proWES at Sapporo (the
+# file `engine.cid` of its run directory, empty until the container is
+# created)
+engine_container() {
+  local remote
+  remote="$(backend_id "$1")"
+  # shellcheck disable=SC2016 # expanded by bash in the container
+  limited docker compose exec -T sapporo bash -c \
+    'cat "${SAPPORO_RUN_DIR}/${1:0:2}/$1/engine.cid" 2> /dev/null || true' \
+    bash "${remote}"
+}
+
+# Whether a container runs
+container_running() {
+  [ "$(docker inspect --format '{{.State.Running}}' "$1" 2> /dev/null)" = true ]
 }
 
 # Create a run of a workflow of `workflows/` with parameters; the identifier
-# is in `${id}`. The tag is unique to this test run, so that its runs are
-# told from those of earlier test runs on the same deployment
-tag="{\"integration\": \"$(date +%s)-${RANDOM}\"}"
+# is in `${id}`
 create() {
   check POST /runs 200 '.run_id | length > 0' \
     "workflow_params=$2" 'workflow_type=CWL' 'workflow_type_version=v1.0' \
-    "workflow_url=${workflows}/$1" "tags=${tag}"
+    "workflow_url=${workflows}/$1"
   id="$(jq -r .run_id "${body}")"
 }
 
@@ -173,17 +218,25 @@ echo "proWES: a run that is canceled while it runs"
 create sleep.cwl '{"seconds": 300}'
 running="${id}"
 await_state "${running}" RUNNING
+# Sapporo reports the run as running before it starts the engine's
+# container: cancel once the container runs, so that the test shows that
+# Sapporo stops it
+engine=""
+for _ in $(seq "${final_wait}"); do
+  engine="$(engine_container "${running}")"
+  [ -n "${engine}" ] && container_running "${engine}" && break
+  sleep 1
+done
+if [ -z "${engine}" ] || ! container_running "${engine}"; then
+  echo "::error::the engine of run ${running} doesn't run at Sapporo"
+  exit 1
+fi
 check POST "/runs/${running}/cancel" 200 ".run_id == \"${running}\""
 await_state "${running}" CANCELED
 [ "$(backend_state "${running}")" = CANCELED ] \
   || { echo "::error::run ${running} isn't canceled at Sapporo"; exit 1; }
-# Sapporo stopped the engine's container (the only containers in the
-# Compose network that Compose didn't start)
-engines="$(docker ps --filter network=prowes-integration \
-  --format '{{.Label "com.docker.compose.service"}} {{.Names}}' \
-  | awk 'NF == 1')"
-if [ -n "${engines}" ]; then
-  echo "::error::engine containers still running: ${engines}"
+if container_running "${engine}"; then
+  echo "::error::the engine of run ${running} still runs (container ${engine})"
   exit 1
 fi
 check GET '/runs?page_size=100' 200 \

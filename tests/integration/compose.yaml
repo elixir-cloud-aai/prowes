@@ -10,11 +10,12 @@
 #
 # Relative paths are resolved against the directory of the first file, i.e.,
 # the repository root. Sapporo runs each workflow engine in a container on
-# the host, through the Docker socket: its run directory
-# (`SAPPORO_RUN_DIR`, default `/tmp/prowes-integration/sapporo`) has the same
-# path in its container and on the host, and the engine containers join the
-# Compose network (named `prowes-integration`), so that they fetch the
-# workflows (`workflows/`) from the service `workflows`
+# the host, through the Docker socket: its run directory (`SAPPORO_RUN_DIR`,
+# default `.integration/sapporo` of the working directory, i.e., the
+# repository root, ignored by Git) has the same path in its container and on
+# the host, and the engine containers join the Compose network (named
+# `prowes-integration`), so that they fetch the workflows (`workflows/`)
+# from the service `workflows`
 
 # Settings of the app and the Celery worker
 x-integration: &integration
@@ -48,10 +49,10 @@ services:
     environment:
       SAPPORO_HOST: 0.0.0.0
       SAPPORO_PORT: "1122"
-      SAPPORO_RUN_DIR: ${SAPPORO_RUN_DIR:-/tmp/prowes-integration/sapporo}
+      SAPPORO_RUN_DIR: ${SAPPORO_RUN_DIR:-${PWD}/.integration/sapporo}
       SAPPORO_EXTRA_DOCKER_ARGS: --network=prowes-integration
     volumes:
-      - ${SAPPORO_RUN_DIR:-/tmp/prowes-integration/sapporo}:${SAPPORO_RUN_DIR:-/tmp/prowes-integration/sapporo}
+      - ${SAPPORO_RUN_DIR:-${PWD}/.integration/sapporo}:${SAPPORO_RUN_DIR:-${PWD}/.integration/sapporo}
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:1122/service-info', timeout=4)"]

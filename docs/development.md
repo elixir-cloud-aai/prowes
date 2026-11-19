@@ -258,8 +258,9 @@ and no run leaves the Compose network.
 The integration test
 ([`tests/integration/`](https://github.com/elixir-cloud-aai/prowes/tree/dev/tests/integration))
 runs proWES as the smoke test does, but against
-[Sapporo](https://github.com/sapporo-wes/sapporo-service) 2.4.2, a real WES
-implementation (image pinned by digest), instead of the fake WES, which
+[Sapporo](https://github.com/sapporo-wes/sapporo-service), a real WES
+implementation (the image of `tests/integration/compose.yaml`, pinned by
+digest and updated by Dependabot), instead of the fake WES, which
 stays the identity provider. It creates runs of the CWL workflows of
 `tests/integration/workflows/`, which proWES forwards to Sapporo: one that
 completes (its run log, with the engine's output, and the run list), one
@@ -283,14 +284,25 @@ The first run pulls the images of Sapporo and cwltool, so the waits are
 long (each up to `FINAL_WAIT` polls, about one a second, by default 300).
 As in the smoke test, the image is `prowes:smoke` and proWES is published
 on `127.0.0.1:8090`, so stop the smoke test's deployment first. Sapporo
-keeps its runs in `SAPPORO_RUN_DIR` (default
-`/tmp/prowes-integration/sapporo`), at the same path in its container and on
-the host, so that the engine containers it starts find them; the files
-belong to root. The engine containers join the Compose network, which
-therefore has the fixed name `prowes-integration`, and fetch the workflows
-over HTTP from the service `workflows`.
+keeps its runs in `SAPPORO_RUN_DIR` (default `.integration/sapporo` of the
+repository root, ignored by Git), at the same path in its container and on
+the host, so that the engine containers it starts find them. The files
+belong to root and stay after `docker compose down`; remove them without
+root with a container, from the repository root:
 
-Where Sapporo differs from WES 1.1.0, the test accommodates it:
+```bash
+docker run --rm -v "${PWD}/.integration:/runs" alpine:3.22 rm -rf /runs/sapporo
+```
+
+The engine containers join the Compose network, which therefore has the
+fixed name `prowes-integration` (also if `COMPOSE_PROJECT_NAME` is
+changed), and fetch the workflows over HTTP from the service `workflows`.
+The run that is canceled starts its engine container before the cancel,
+and the test checks that Sapporo stopped it. On failure, the script cancels
+that run and shows the logs of the services; the deployment keeps running, for inspection, and the test
+can run again on it.
+
+Where Sapporo 2.4.2 differs from WES 1.1.0, the test accommodates it:
 
 - Sapporo requires the field `workflow_engine` in run requests, which
   proWES doesn't forward yet

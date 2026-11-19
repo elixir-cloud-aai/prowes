@@ -1,11 +1,11 @@
 # Everything that must pass on pull requests and pushes to `dev`: the pull
 # request title, lint and build, the docs, test, the Helm chart (lint, tests
-# and an installation on kind), run the app with Docker
-# Compose (against a fake WES and against Sapporo), and, on pushes, push the
-# Docker image. Forks, which have none of
-# the secrets, run the same checks without the push. The gate `passed` ("CI
-# passed") is the only required check. No `paths:` filters, so that the gate
-# always reports; skip jobs with `if:` instead (and allow the skip in the gate).
+# and an installation on kind), run the app with Docker Compose (against a
+# fake WES and against Sapporo), and, on pushes, push the Docker image.
+# Forks, which have none of the secrets, run the same checks without the
+# push. The gate `passed` ("CI passed") is the only required check. No
+# `paths:` filters, so that the gate always reports; skip jobs with `if:`
+# instead (and allow the skip in the gate).
 # Runs also when a pull request is edited, so that the title check follows
 # the title; all jobs run then, as a run that skipped the tests would report
 # "CI passed" for the commit
@@ -381,7 +381,9 @@ jobs:
 
   # Pushes the image on pushes to `dev` (unchanged from the former
   # `main.yml`; push, scan and publish by digest follow with their own
-  # issue). Skipped on pull requests and in forks, which have no secrets
+  # issue). Skipped on pull requests and in forks, which have no secrets.
+  # Doesn't wait for `integration`, whose images come from third parties'
+  # registries (the gate still needs it)
   push:
     name: Push image
     runs-on: ubuntu-latest

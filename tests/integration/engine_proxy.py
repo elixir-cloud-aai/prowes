@@ -21,6 +21,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # Sapporo, at its service name and port in Docker Compose
@@ -71,13 +72,17 @@ class Handler(BaseHTTPRequestHandler):
     def _forward(self, method: str) -> None:
         """Forward the request, and send Sapporo's response.
 
+        Request bodies are read by their `Content-Length` (proWES sends no
+        chunked bodies).
+
         Args:
             method: HTTP method of the request.
         """
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else None
         content_type = self.headers.get("Content-Type", "")
-        if method == "POST" and self.path.rstrip("/") == "/runs" and body:
+        path = urllib.parse.urlsplit(self.path).path.rstrip("/")
+        if method == "POST" and path == "/runs" and body:
             body = add_engine(content_type, body)
         request = urllib.request.Request(  # noqa: S310 (fixed http URL)
             UPSTREAM + self.path, data=body, method=method
