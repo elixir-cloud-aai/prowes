@@ -11,14 +11,32 @@ of the request: callers create, list, read and cancel only their own runs.
 import logging
 from typing import Any, NoReturn
 
+# Flask's request too: `check_run_request_body` runs before Connexion's
+# handling of the request
 from connexion import request
+from flask import request as flask_request
+from foca import get_config
+from foca.security.auth import validate_token
 from foca.utils.logging import log_traffic
 
-from pro_wes.exceptions import TasksNotServed
+from pro_wes.exceptions import (
+    MissingBoundary,
+    TasksNotServed,
+    UnsupportedMediaType,
+    UrlEncodedAttachment,
+)
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.security import current_owner
 
 logger = logging.getLogger(__name__)
+
+# Media types of run requests: those that Connexion reads as forms (cf.
+# `FORM_CONTENT_TYPES` of `connexion.utils`); WES declares
+# `multipart/form-data` only, but forms without attachments are accepted
+# URL-encoded, too
+RUN_REQUEST_MEDIA_TYPES = frozenset(
+    {"multipart/form-data", "application/x-www-form-urlencoded"}
+)
 
 
 def _set_owner(kwargs: dict[str, Any]) -> None:
@@ -58,7 +76,16 @@ def RunWorkflow(*args: Any, **kwargs: Any) -> dict[str, str]:
     Raises:
         pro_wes.exceptions.Forbidden: The caller's token has no subject
             that can own runs (cf. :py:func:`pro_wes.security.current_owner`).
+        pro_wes.exceptions.UrlEncodedAttachment: The run request is
+            URL-encoded with workflow attachments (`400`).
     """
+    # URL-encoded forms have no files: attachments would be lost. Checked
+    # here, after the token, as Werkzeug reads such bodies without limits
+    if (
+        flask_request.mimetype == "application/x-www-form-urlencoded"
+        and "workflow_attachment" in flask_request.form
+    ):
+        raise UrlEncodedAttachment
     workflow_run = WorkflowRuns()
     _set_owner(kwargs)
     response = workflow_run.run_workflow(
@@ -66,6 +93,15 @@ def RunWorkflow(*args: Any, **kwargs: Any) -> dict[str, str]:
         **kwargs,
     )
     return response
+
+
+# Name of the Flask endpoint of `POST /runs` within its blueprint, as
+# Connexion 2 names it: module and name of the controller, with dots
+# replaced (cf. `check_run_request_body`; `test_run_workflow_endpoint`
+# checks it against the routes of the app)
+RUN_WORKFLOW_ENDPOINT = f"{RunWorkflow.__module__}.{RunWorkflow.__name__}".replace(
+    ".", "_"
+)
 
 
 @log_traffic
@@ -210,3 +246,77 @@ def GetTask(run_id: str, task_id: str, *args: Any, **kwargs: Any) -> NoReturn:
         pro_wes.exceptions.TasksNotServed: Always (`501 Not Implemented`).
     """
     raise TasksNotServed
+
+
+def check_run_request_body() -> None:
+    """Refuse run requests whose body Connexion can't read as a form.
+
+    Called before each request (`before_request` of the Flask app, cf.
+    `pro_wes.app.init_app`), so before Connexion's validation, which fails
+    with an `AttributeError` (`500`) on bodies that aren't forms. Decided by
+    the headers only; the body isn't read. Other requests are left to the
+    operations, and so are run requests without a token where one is
+    required: Connexion refuses them with `401` before it reads the body, so
+    that clients learn about the body only once they are authenticated.
+
+    Raises:
+        pro_wes.exceptions.UnsupportedMediaType: The run request isn't a
+            form (`415`), e.g., JSON, or has no media type.
+        pro_wes.exceptions.MissingBoundary: The run request is
+            `multipart/form-data` without a boundary (`400`).
+        werkzeug.exceptions.Unauthorized: The run request, which would be
+            refused, has an invalid token (`401`; as FOCA's validation
+            raises it, so that the token is validated once).
+    """
+    endpoint = flask_request.endpoint or ""
+    if flask_request.method != "POST" or endpoint.rpartition(".")[2] != (
+        RUN_WORKFLOW_ENDPOINT
+    ):
+        return
+    problem = _run_request_body_problem()
+    if problem is not None and _authenticated():
+        raise problem
+
+
+def _run_request_body_problem() -> Exception | None:
+    """Tell why Connexion can't read the body of a run request as a form.
+
+    From the headers only, so that the body isn't read.
+
+    Returns:
+        The error to raise, or `None` if the body is a form that Connexion
+        reads.
+    """
+    if flask_request.mimetype not in RUN_REQUEST_MEDIA_TYPES:
+        return UnsupportedMediaType()
+    if (
+        flask_request.mimetype == "multipart/form-data"
+        and not flask_request.mimetype_params.get("boundary")
+    ):
+        return MissingBoundary()
+    return None
+
+
+def _authenticated() -> bool:
+    """Tell whether the request passes Connexion's token validation.
+
+    Only called for run requests that are refused, so that the token of
+    other requests is validated once, by Connexion.
+
+    Returns:
+        `True` if no token is required (`disable_auth` of the API
+        specification) or the request has a valid bearer token (cf.
+        `foca.security.auth.validate_token`), `False` if it has no bearer
+        token (Connexion refuses it).
+
+    Raises:
+        werkzeug.exceptions.Unauthorized: The bearer token is invalid; the
+            error of FOCA's validation, as Connexion would answer it.
+    """
+    if all(spec.disable_auth for spec in get_config().api.specs):
+        return True
+    parts = flask_request.headers.get("Authorization", "").split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return False
+    validate_token(parts[1].strip())
+    return True

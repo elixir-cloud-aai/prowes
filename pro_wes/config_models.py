@@ -252,13 +252,15 @@ class ListRuns(BaseModel):
     """Model for controller config parameters for operation `GET /runs`.
 
     Args:
-        default_page_size: Default page size for response pagination.
+        default_page_size: Default page size for response pagination; `0`
+            lists all runs. Not negative, as requests with negative page
+            sizes are refused.
 
     Attributes:
         default_page_size: Default page size for response pagination.
     """
 
-    default_page_size: int = 5
+    default_page_size: int = Field(default=5, ge=0)
 
 
 class CustomConfig(BaseModel):

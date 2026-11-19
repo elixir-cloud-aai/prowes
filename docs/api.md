@@ -22,7 +22,7 @@ fills in OpenAPI defaults, e.g., `style` of parameters):
 | `security` (bearer tokens, scheme `bearerAuth`), `security: []` of `GET /service-info` | WES recommends bearer tokens, but declares no security scheme; all operations but the service info require access tokens (see [Access control](access-control.md#authentication)) |
 | Schemas `Service` and `ServiceType` | The schemas of the GA4GH service info 1.0.0, which WES references on GitHub |
 | Schema `ProblemDetails`, used by all error responses instead of `ErrorResponse` (`msg`, `status_code`) | Errors are problem details (see [Errors](#errors)); `ErrorResponse` stays in the specification, unused |
-| `400` of the endpoints of a run (`/runs/{run_id}...`); `413` and `503` of `POST /runs`; `409` of `POST /runs/{run_id}/cancel`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
+| `400` of the endpoints of a run (`/runs/{run_id}...`); `413`, `415` and `503` of `POST /runs`; `409` of `POST /runs/{run_id}/cancel`; `501` of `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` | proWES extensions: statuses that proWES answers with (`400` for unknown or invalid parameters, which all operations reject), but WES doesn't declare (clients generated from the published WES specification don't know them) |
 
 Statuses that any request can get, whatever its operation, are not declared
 per operation: `404` for unknown paths, `405 Method Not Allowed`, and `413
@@ -39,7 +39,7 @@ those declared.
 | --- | --- |
 | `GET /service-info` | The service info, served by FOCA from the configuration (see [Service info](configuration.md#service-info)) |
 | `POST /runs` | Start a run: forwards it to a WES instance (see [Runs](#runs)) |
-| `GET /runs` | List runs, newest first, with `page_size` and `page_token`; `next_page_token` is empty on the last page |
+| `GET /runs` | List runs, newest first, with `page_size` and `page_token`; `next_page_token` is empty on the last page. `page_size` defaults to `custom.list_runs.default_page_size` (not negative; the app doesn't start otherwise), `0` lists all runs; negative sizes and malformed page tokens (not 24 hexadecimal characters, as the `next_page_token` of proWES) get `400 Bad Request` |
 | `GET /runs/{run_id}` | The run log of a run |
 | `GET /runs/{run_id}/status` | The state of a run |
 | `POST /runs/{run_id}/cancel` | Cancel a run, if it is cancelable (see [Run states](#run-states)) |
@@ -174,6 +174,9 @@ Requests without a valid access token get `401 Unauthorized`, with a
 Bearer challenge (`WWW-Authenticate`); requests for runs of other users, and
 with tokens whose subject can't own runs, get `403 Forbidden` (see [Access
 control](access-control.md)). Only `GET /service-info` needs no token.
+The token is checked first: run requests without a valid token get `401`
+whatever their body, so `400` and `415` for bodies that aren't readable
+forms are answered to authenticated clients only.
 
 Errors of the WES instance when a run is forwarded become `400`, `401`,
 `403` or, for all others, `500` responses of proWES, and the run gets the
@@ -186,8 +189,9 @@ stored nor forwarded):
 
 | Status | Cause |
 | --- | --- |
-| `400 Bad Request` | The form is invalid (e.g., a missing field, a workflow engine or its version is chosen (`workflow_engine`, `workflow_engine_version`; not supported yet), `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
+| `400 Bad Request` | The form is invalid (e.g., a `multipart/form-data` body without a boundary, a URL-encoded body with `workflow_attachment` (URL-encoded forms can't carry files), a missing field, a workflow engine or its version is chosen (`workflow_engine`, `workflow_engine_version`; not supported yet), `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
 | `413 Content Too Large` | The request body is larger than `server.max_content_length` (see [Request size limit](configuration.md#request-size-limit)), the run has more workflow attachments than `custom.post_runs.max_attachments`, or an attachment is larger than `custom.post_runs.max_attachment_size` |
+| `415 Unsupported Media Type` | The body isn't a form: run requests are `multipart/form-data` (as in WES), or `application/x-www-form-urlencoded` if they have no workflow attachments; other media types (e.g., JSON) and bodies without a media type are refused |
 | `503 Service Unavailable` | No WES instance is available: none is configured (`custom.wes.backends`), or its registries list none (yet) (see [WES instances](configuration.md#wes-instances)) |
 
 The `detail` of each names the cause; credentials of URLs are never echoed.

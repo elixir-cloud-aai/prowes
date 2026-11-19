@@ -14,6 +14,7 @@ from foca.api.service_info import get_service_info
 
 from pro_wes.config_models import CustomConfig
 from pro_wes.ga4gh.wes.backends import check_backends
+from pro_wes.ga4gh.wes.controllers import check_run_request_body
 from pro_wes.ga4gh.wes.models import ServiceInfo
 from pro_wes.security import check_auth
 
@@ -25,7 +26,9 @@ def init_app() -> App:
     checks that the service info (config section `service_info`) has the
     fields of the WES specification, and that no configured WES instance
     (`custom.wes.backends`) is proWES itself; warns if no token issuer is
-    trusted (`security.auth.issuers`).
+    trusted (`security.auth.issuers`). Run requests that aren't forms are
+    refused before Connexion validates them
+    (:py:func:`pro_wes.ga4gh.wes.controllers.check_run_request_body`).
 
     Returns:
         FOCA application.
@@ -42,6 +45,8 @@ def init_app() -> App:
         custom_config_model="pro_wes.config_models.CustomConfig",
     )
     app = foca.create_app()
+    # Before Connexion's validation, which fails on bodies that aren't forms
+    app.app.before_request(check_run_request_body)
     _setup_first_start(app=app)
     return app
 

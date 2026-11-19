@@ -215,6 +215,8 @@ custom:
     # Runs with credentials in URLs (`https://user:password@host/...`):
     # `reject` (`400 Bad Request`) or `strip` (remove the credentials)
     url_credentials: reject
+  # `GET /runs`: runs per page if the request sets no `page_size` (`0`: all
+  # runs; not negative)
   list_runs:
     default_page_size: 5
   # WES instances that runs are forwarded to, in order: WES instances
