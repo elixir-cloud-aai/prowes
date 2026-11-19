@@ -106,6 +106,31 @@ def _page_token_id(page_token: str) -> ObjectId:
         ) from None
 
 
+def _decode_stored_json(value: str, field: str) -> Any:
+    """Decode a JSON field of a stored run request, without credentials.
+
+    Credentials in the URLs of the decoded value are removed, for runs stored
+    by earlier versions, which didn't check them.
+
+    Args:
+        value: JSON-encoded value of the field, as stored.
+        field: Name of the field of the run request, for error messages.
+
+    Returns:
+        Decoded value.
+
+    Raises:
+        pro_wes.exceptions.BadRequest: A URL in the value is malformed, or a
+            key without its credentials collides with another key.
+        RecursionError: The value is too deeply nested to decode.
+        TypeError: The value is not a string.
+        ValueError: The value is not valid JSON.
+    """
+    decoded = loads(value)
+    sanitize_json(decoded, field, "strip")
+    return decoded
+
+
 class Upload(NamedTuple):
     """Workflow attachment of a run request, checked and read.
 
@@ -731,8 +756,8 @@ class WorkflowRuns:
         come from the run request, as an object of strings: values that
         earlier versions stored without checking them (other than strings)
         are JSON-encoded, and credentials in URLs are removed. Tags that
-        can't be read (e.g., with malformed URLs) are left out, with an
-        error logged, rather than failing the whole list.
+        can't be read (e.g., with malformed URLs) are returned as `{}`, with
+        an error logged, rather than failing the whole list.
 
         Args:
             run_log: Run log, as stored (projected to the fields needed).
@@ -748,20 +773,19 @@ class WorkflowRuns:
         for field in ("start_time", "end_time"):
             if engine_log.get(field) is not None:
                 summary[field] = engine_log[field]
-        summary["tags"] = {}
+        tags: Any = {}
         stored_tags = (run_log.get("request") or {}).get("tags")
-        if stored_tags in (None, ""):
-            return summary
-        try:
-            tags = loads(stored_tags)
+        if stored_tags not in (None, ""):
+            try:
+                tags = _decode_stored_json(stored_tags, "tags")
+            except (BadRequest, RecursionError, TypeError, ValueError):
+                tags = None
             if not isinstance(tags, dict):
-                raise TypeError("not an object")
-            sanitize_json(tags, "tags", "strip")
-        except (BadRequest, RecursionError, TypeError, ValueError):
-            logger.error(
-                "Tags of run '%s' can't be listed; left out.", summary["run_id"]
-            )
-            return summary
+                logger.error(
+                    "Tags of run '%s' can't be listed; returned as {}.",
+                    summary["run_id"],
+                )
+                tags = {}
         summary["tags"] = {
             key: value if isinstance(value, str) else dumps(value)
             for key, value in tags.items()
@@ -809,9 +833,9 @@ class WorkflowRuns:
                 request_data["workflow_url"] = stripped
             for field in JSON_FIELDS:
                 if field in request_data:
-                    decoded = loads(request_data[field])
-                    sanitize_json(decoded, field, "strip")
-                    request_data[field] = decoded
+                    request_data[field] = _decode_stored_json(
+                        request_data[field], field
+                    )
         except BadRequest as exc:
             logger.error("Run request of run '%s' has malformed URLs.", run_id)
             raise InternalServerError from exc

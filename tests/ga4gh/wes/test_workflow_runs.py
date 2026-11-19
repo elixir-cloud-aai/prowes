@@ -877,11 +877,8 @@ def test_list_runs_summaries(
             '{"source": "https://user:secret@example.org/data"}',
             {"source": "https://example.org/data"},
         ),
-        # what can't be listed is left out, rather than failing the list
-        ('{"source": "https://[malformed/data"}', {}),
-        ("not JSON", {}),
-        ('["not", "an", "object"]', {}),
         (None, {}),
+        ("", {}),
     ],
 )
 @pytest.mark.usefixtures("app_context")
@@ -906,6 +903,57 @@ def test_list_runs_stored_tags(
     )
     assert WorkflowRuns().list_runs()["runs"] == [
         {"run_id": "OLD001", "state": "COMPLETE", "tags": expected}
+    ]
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        '{"source": "https://[malformed/data"}',
+        "not JSON",
+        '["not", "an", "object"]',
+        "[" * 100_000 + "]" * 100_000,
+        {"stored": "as object"},
+    ],
+)
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_unreadable_tags(
+    mongodb: MongoClient[dict[str, Any]], caplog: pytest.LogCaptureFixture, tags: Any
+) -> None:
+    """Tags that can't be listed are empty, with an error logged.
+
+    The other runs of the list are listed as usual.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        caplog: Pytest fixture capturing log records.
+        tags: Tags, as stored.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {
+                "run_log": {
+                    "run_id": "BAD001",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": tags},
+                }
+            },
+            {
+                "run_log": {
+                    "run_id": "GOOD01",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": '{"project": "demo"}'},
+                }
+            },
+        ]
+    )
+    assert WorkflowRuns().list_runs()["runs"] == [
+        {"run_id": "GOOD01", "state": "COMPLETE", "tags": {"project": "demo"}},
+        {"run_id": "BAD001", "state": "COMPLETE", "tags": {}},
+    ]
+    errors = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert [record.getMessage() for record in errors] == [
+        "Tags of run 'BAD001' can't be listed; returned as {}."
     ]
 
 

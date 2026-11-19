@@ -56,7 +56,7 @@ What proWES does with the additions of WES 1.1.0 so far:
 | Task endpoints, `task_logs_url` of run logs | Not served yet (see above); run logs have `task_logs` (deprecated in WES 1.1.0), as `Log` objects: the `id` and `tes_uri` of `TaskLog` are not kept yet |
 | `system_logs` of logs | Stored from the run logs of the WES instance and returned in `run_log` and `task_logs` |
 | State `PREEMPTED` | Tracked as a final state and returned as is (see [Run states](#run-states)) |
-| `RunSummary` in `GET /runs` | Runs are listed as `RunSummary` (identifier, state, start and end time, tags), which WES 2.0.0 requires (see [Run lists](#run-lists)) |
+| `RunSummary` in `GET /runs` | Runs are listed as `RunSummary` (identifier, state, start and end time, tags), which WES 2.0.0 will require, as the description of `RunListResponse` in WES 1.1.0 announces (see [Run lists](#run-lists)) |
 | `workflow_engine_versions` of the service info | Versions of each engine as objects (`{"cwltool": {"workflow_engine_version": ["3.1"]}}`), see [Service info](configuration.md#service-info) |
 
 The WES instances that runs are forwarded to may serve WES 1.0.1 or 1.1.0;
