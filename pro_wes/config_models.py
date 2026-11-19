@@ -275,8 +275,6 @@ class ListRuns(BaseModel):
         max_page_size: Largest number of runs per page.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     default_page_size: PositiveInt = 5
     max_page_size: Annotated[int, Field(ge=1, le=MAX_QUERY_LIMIT)] = 100
 

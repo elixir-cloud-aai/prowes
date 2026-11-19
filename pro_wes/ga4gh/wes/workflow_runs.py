@@ -133,6 +133,23 @@ def _decode_stored_json(value: str, field: str) -> Any:
     return decoded
 
 
+def _tags_too_large(tags: Any, max_tags_size: int) -> bool:
+    """Check whether tags are larger than allowed.
+
+    The size is that of the JSON text of the tags, as stored, in bytes
+    (UTF-8; cf. `custom.post_runs.max_tags_size`).
+
+    Args:
+        tags: Tags of a run request, as stored (JSON text; others, e.g.,
+            `None`, have no size).
+        max_tags_size: Maximum size, in bytes.
+
+    Returns:
+        Whether the tags are JSON text larger than `max_tags_size`.
+    """
+    return isinstance(tags, str) and len(tags.encode()) > max_tags_size
+
+
 class Upload(NamedTuple):
     """Workflow attachment of a run request, checked and read.
 
@@ -769,8 +786,8 @@ class WorkflowRuns:
     @staticmethod
     def _validate_run_request(
         form_data: ImmutableMultiDict[str, Any],
-        url_credentials: UrlCredentialsMode = "reject",
-        max_tags_size: int | None = None,
+        url_credentials: UrlCredentialsMode,
+        max_tags_size: int,
     ) -> RunRequest:
         """Convert run request form input to `RunRequest` model.
 
@@ -786,7 +803,7 @@ class WorkflowRuns:
             url_credentials: Whether runs with credentials in URLs are
                 rejected (`reject`), or the credentials removed (`strip`).
             max_tags_size: Maximum size of the JSON text of the tags, as
-                stored, in bytes (UTF-8); `None` for no limit.
+                stored, in bytes (UTF-8).
 
         Returns:
             The run request, without credentials in URLs.
@@ -825,8 +842,7 @@ class WorkflowRuns:
             decoded = loads(value)
             if sanitize_json(decoded, field, url_credentials):
                 updates[field] = dumps(decoded)
-        tags = updates.get("tags", model_instance.tags) or ""
-        if max_tags_size is not None and len(tags.encode()) > max_tags_size:
+        if _tags_too_large(updates.get("tags", model_instance.tags), max_tags_size):
             raise InvalidFieldsProblem(
                 [
                     FieldError(
@@ -839,9 +855,7 @@ class WorkflowRuns:
         return model_instance.model_copy(update=updates)
 
     @staticmethod
-    def _run_summary(
-        run_log: dict[str, Any], max_tags_size: int | None = None
-    ) -> dict[str, Any]:
+    def _run_summary(run_log: dict[str, Any], max_tags_size: int) -> dict[str, Any]:
         """Get the summary of a run for `GET /runs` from its stored run log.
 
         Start and end time come from the engine log of the run (`run_log`),
@@ -857,7 +871,7 @@ class WorkflowRuns:
         Args:
             run_log: Run log, as stored (projected to the fields needed).
             max_tags_size: Maximum size of the JSON text of the tags, as
-                stored, in bytes (UTF-8); `None` for no limit.
+                stored, in bytes (UTF-8).
 
         Returns:
             Response object according to WES API schema `RunSummary`.
@@ -872,11 +886,7 @@ class WorkflowRuns:
                 summary[field] = engine_log[field]
         tags: dict[str, str] | None = {}
         stored_tags = (run_log.get("request") or {}).get("tags")
-        if (
-            max_tags_size is not None
-            and isinstance(stored_tags, str)
-            and len(stored_tags.encode()) > max_tags_size
-        ):
+        if _tags_too_large(stored_tags, max_tags_size):
             logger.warning(
                 "Tags of run '%s' are larger than custom.post_runs.max_tags_size"
                 " (%d bytes); returned as {}.",

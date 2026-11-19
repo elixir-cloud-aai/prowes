@@ -180,7 +180,8 @@ Request`, and so does `page_size=0`, which listed all runs before. Clients
 that list all runs at once must follow `next_page_token` instead, page by
 page. A `custom.list_runs.default_page_size` of `0`, or above
 `max_page_size`, now stops the app on startup: set a page size from 1 to
-`max_page_size` (default: 5). Runs stored before with tags larger than
+`max_page_size` (default: 5; set it too if you set `max_page_size`
+below 5). Runs stored before with tags larger than
 `custom.post_runs.max_tags_size` are listed with `{}` as tags, and a
 warning is logged; their run logs keep the tags, and no migration is
 needed. Raise `max_tags_size` to list them with their tags.

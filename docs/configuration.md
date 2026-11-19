@@ -262,7 +262,12 @@ makes a worker load, decode and serialise all runs of a caller at once:
 Clients get the other runs page by page, with `next_page_token` (see [Run
 lists](api.md#run-lists)). With the size of tags (`max_tags_size`, see
 [Run requests](#run-requests)), the limits bound the size of each list: by
-default, 100 runs with at most 16 KiB of tags each.
+default, 100 runs with at most 16 KiB of tags each, as stored. Responses
+escape characters other than ASCII (e.g., `é` as `\u00e9`), so tags may
+take up to about three times their stored size in a list.
+
+Setting only `max_page_size` below 5 needs `default_page_size` too (at most
+`max_page_size`), or the app doesn't start.
 
 ### Rate limits
 

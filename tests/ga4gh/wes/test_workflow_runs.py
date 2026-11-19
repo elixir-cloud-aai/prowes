@@ -703,14 +703,29 @@ def test_list_runs_max_page_size(mongodb: MongoClient[dict[str, Any]]) -> None:
     assert len(runs.list_runs()["runs"]) == 1
 
 
-def test_list_runs_page_size_refused(foca_client: Client) -> None:
-    """`GET /runs` answers page sizes out of range with `400`, naming them."""
-    for page_size in (0, 101):
-        response = foca_client.get(f"{BASE_PATH}/runs", params={"page_size": page_size})
-        assert response.status_code == 400
-        assert [error["parameter"] for error in response.json()["errors"]] == [
-            "page_size"
-        ]
+@pytest.mark.parametrize(
+    ("page_size", "detail", "code"),
+    [
+        (0, "Must be at least 1.", "too-small"),
+        (101, "Must be at most 100.", "too-large"),
+    ],
+)
+def test_list_runs_page_size_refused(
+    foca_client: Client, page_size: int, detail: str, code: str
+) -> None:
+    """`GET /runs` answers page sizes out of range with `400`, naming them.
+
+    Args:
+        foca_client: Test client of the app.
+        page_size: Page size out of range (1 to 100 by default).
+        detail: Expected detail of the field error.
+        code: Expected code of the field error.
+    """
+    response = foca_client.get(f"{BASE_PATH}/runs", params={"page_size": page_size})
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {"detail": detail, "parameter": "page_size", "code": code}
+    ]
 
 
 @pytest.mark.usefixtures("app_context")
@@ -952,7 +967,13 @@ def test_list_runs_unreadable_tags(
             },
         ]
     )
-    assert WorkflowRuns().list_runs()["runs"] == [
+    # tags of any size (e.g., deeply nested ones, larger than the default
+    # limit) are decoded
+    runs = WorkflowRuns()
+    runs.config = runs.config.model_copy(
+        update={"post_runs": PostRuns(max_tags_size=10**6)}
+    )
+    assert runs.list_runs()["runs"] == [
         {"run_id": "GOOD01", "state": "COMPLETE", "tags": {"project": "demo"}},
         {"run_id": "BAD001", "state": "COMPLETE", "tags": {}},
     ]

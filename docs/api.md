@@ -40,7 +40,7 @@ those declared.
 | --- | --- |
 | `GET /service-info` | The service info, served by FOCA from the configuration (see [Service info](configuration.md#service-info)) |
 | `POST /runs` | Start a run: forwards it to a WES instance (see [Runs](#runs)) |
-| `GET /runs` | List runs, newest first, as `RunSummary` (see [Run lists](#run-lists)), with `page_size` and `page_token`; `next_page_token` is empty on the last page. `page_size` defaults to `custom.list_runs.default_page_size` (5), and may be 1 to `custom.list_runs.max_page_size` (100); other sizes (also `0`, which listed all runs in earlier versions) and malformed page tokens (not 24 hexadecimal characters, as the `next_page_token` of proWES) get `400 Bad Request` (see [Run lists](#run-lists)) |
+| `GET /runs` | List runs, newest first, as `RunSummary` (see [Run lists](#run-lists)), with `page_size` and `page_token`; `next_page_token` is empty on the last page. `page_size` defaults to `custom.list_runs.default_page_size` (5), and may be 1 to `custom.list_runs.max_page_size` (100); other sizes and malformed page tokens (not 24 hexadecimal characters, as the `next_page_token` of proWES) get `400 Bad Request` |
 | `GET /runs/{run_id}` | The run log of a run |
 | `GET /runs/{run_id}/status` | The state of a run |
 | `POST /runs/{run_id}/cancel` | Cancel a run, if it is cancelable (see [Run states](#run-states)) |
@@ -144,9 +144,11 @@ preferred number of runs, and has services return at most that many:
 proWES refuses page sizes above the maximum with `400 Bad Request`, as
 cloud-registry does with its page sizes, rather than returning fewer, so
 that clients learn the limit; it refuses `0`, as a page of at most 0 runs
-lists none, rather than listing all runs. Tags of stored runs larger than
-the limit (e.g., stored before it) are listed as `{}`, with a warning
-logged; run logs keep them.
+lists none, rather than listing all runs. The served specification keeps
+the description of `page_size` of WES: the maximum is configured, so it
+isn't declared there. Tags of stored runs larger than the limit (e.g.,
+stored before it) are listed as `{}`, with a warning logged for each run
+listed; run logs keep them.
 
 ### Run states
 
