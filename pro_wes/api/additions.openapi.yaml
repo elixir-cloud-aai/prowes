@@ -142,9 +142,31 @@ paths:
   /runs/{run_id}/cancel:
     post:
       responses:
-        400: *invalid_parameters
-        401: *problem
-        403: *problem
+        # Refusals of the WES instance are passed on (cf. `cancel_run`)
+        400:
+          description: >-
+            proWES extension: the request has unknown or invalid parameters,
+            or the WES instance answered the cancellation with 400.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        401:
+          description: >-
+            The request is unauthorized, or the WES instance answered the
+            cancellation with 401.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        403:
+          description: >-
+            The requester is not authorized to perform this action, or the
+            WES instance answered the cancellation with 403.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         404: *problem
         # proWES extension: runs that aren't cancelable (cf. `cancel_run`)
         # aren't canceled at the WES instance
@@ -158,7 +180,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
-        500: *problem
+        500:
+          description: >-
+            An unexpected error occurred, or the WES instance refused the
+            cancellation (another error), sent an invalid response or
+            couldn't be reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 components:
   securitySchemes:
     bearerAuth:

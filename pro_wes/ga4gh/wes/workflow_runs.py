@@ -27,6 +27,8 @@ from pro_wes.config_models import CustomConfig
 from pro_wes.exceptions import (
     AttachmentTooLarge,
     BadRequest,
+    EngineInvalidResponse,
+    EngineRefused,
     EngineUnavailable,
     Forbidden,
     IdsUnavailableProblem,
@@ -144,6 +146,15 @@ class Upload(NamedTuple):
     filename: str
     name: str
     content: bytes
+
+
+# Errors of WES instances that proWES answers with as its own, by status, when
+# a run is forwarded or canceled; others become `500`
+REMOTE_ERRORS: dict[int, type[Exception]] = {
+    400: BadRequest,
+    401: Unauthorized,
+    403: Forbidden,
+}
 
 
 class WorkflowRuns:
@@ -264,13 +275,7 @@ class WorkflowRuns:
             raise
         if isinstance(response, ErrorResponse):
             db_connector.set_system_error()
-            if response.status_code == 400:
-                raise BadRequest
-            if response.status_code == 401:
-                raise Unauthorized
-            if response.status_code == 403:
-                raise Forbidden
-            raise InternalServerError
+            raise REMOTE_ERRORS.get(response.status_code, InternalServerError)
         updated_document_stored: DbDocument = db_connector.upsert_fields_in_root_object(
             root="wes_endpoint",
             run_id=response.run_id,
@@ -489,23 +494,35 @@ class WorkflowRuns:
         runs of unknown state or that proWES itself set to `SYSTEM_ERROR`
         (e.g., it lost track of them) that have a remote run, are canceled at
         the WES instance; others (e.g., finished runs) are refused without
-        contacting it. The stored state is left as it is.
+        contacting it. The stored state is left as it is, also if the WES
+        instance refuses the cancellation or can't be reached.
 
         Args:
             run_id: Workflow run identifier.
             **kwargs: Additional keyword arguments passed along with request.
 
         Returns:
-            Workflow run identifier.
+            Workflow run identifier, once the WES instance has accepted the
+            cancellation.
 
         Raises:
             pro_wes.exceptions.Forbidden: The requester is not allowed to access the
-                resource.
+                resource, or the WES instance answered with `403`.
             pro_wes.exceptions.RunNotFound: The requested workflow run is not available.
             pro_wes.exceptions.RunNotCancelable: The workflow run is not in a
                 cancelable state.
             pro_wes.exceptions.WesEndpointProblem: The workflow run has no remote
                 run to cancel.
+            pro_wes.exceptions.BadRequest: The WES instance answered with
+                `400`.
+            pro_wes.exceptions.Unauthorized: The WES instance answered with
+                `401`.
+            pro_wes.exceptions.EngineRefused: The WES instance answered with
+                another error (e.g., `404`, `500`).
+            pro_wes.exceptions.EngineInvalidResponse: The WES instance sent
+                an invalid response.
+            pro_wes.exceptions.EngineUnavailable: The WES instance couldn't
+                be reached, or its response not read.
         """
         # retrieve workflow run
         document = self.db_client.find_one(
@@ -573,10 +590,31 @@ class WorkflowRuns:
             # the client's token is never passed on
             token=None,
         )
-        wes_client.cancel_run(
-            run_id=wes_endpoint["run_id"],
-            timeout=self.config.defaults.timeout,
-        )
+        try:
+            response = wes_client.cancel_run(
+                run_id=wes_endpoint["run_id"],
+                timeout=self.config.defaults.timeout,
+            )
+        except ValueError as exc:
+            # raised by the client for successful responses that are no
+            # `RunId`; its other `ValueError` (an invalid timeout) can't
+            # occur, as the timeout comes from the validated configuration
+            logger.error(
+                "WES instance at %s sent an invalid response to the"
+                " cancellation of run '%s'.",
+                wes_client.url,
+                run_id,
+            )
+            raise EngineInvalidResponse from exc
+        if isinstance(response, ErrorResponse):
+            logger.error(
+                "WES instance at %s answered the cancellation of run '%s'"
+                " with status %s.",
+                wes_client.url,
+                run_id,
+                response.status_code,
+            )
+            raise REMOTE_ERRORS.get(response.status_code, EngineRefused)
 
         return {"run_id": run_id}
 

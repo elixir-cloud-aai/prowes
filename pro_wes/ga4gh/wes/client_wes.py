@@ -418,16 +418,28 @@ class WesClient:
                 default the client's (`custom.defaults.timeout`).
 
         Returns:
-            WES API schema `RunId`. Cf.
+            WES API schema `RunId` if the WES instance accepted the
+            cancellation (a `2xx` status), else `ErrorResponse` with the
+            HTTP status of the response, whatever its body (e.g., problem
+            details, or no JSON). Cf.
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
-            pro_wes.exceptions.EngineUnavailable: The request failed.
-            ValueError: The response does not conform to any of the expected
-                schemas.
+            pro_wes.exceptions.EngineUnavailable: The request failed, or a
+                response of `2xx` status is no JSON.
+            ValueError: A response of `2xx` status is no `RunId`.
         """
-        body = self._request("POST", f"/runs/{run_id}/cancel", timeout=timeout)
-        return _validate(body, RunId)
+        response = self._send("POST", f"/runs/{run_id}/cancel", timeout=timeout)
+        if not 200 <= response.status < 300:
+            return ErrorResponse(
+                msg=f"WES instance answered with status {response.status}",
+                status_code=response.status,
+            )
+        try:
+            return RunId(**_json(response))
+        except (TypeError, ValidationError):
+            # the body isn't logged (it may be large)
+            raise ValueError("invalid response: no run identifier") from None
 
     def set_token(
         self,
@@ -485,7 +497,38 @@ class WesClient:
             content_type: Type of the body, if any.
 
         Returns:
-            Parsed JSON body of the response.
+            Parsed JSON body of the response, whatever its status.
+
+        Raises:
+            pro_wes.exceptions.EngineRequestNotSent: The WES instance
+                certainly didn't get the request (cf. `_send()`).
+            pro_wes.exceptions.EngineOutcomeUnknown: The WES instance may
+                have got the request (cf. `_send()`), or its response is no
+                JSON.
+            pydantic.ValidationError: The timeout is invalid (cf. `_send()`).
+        """
+        return _json(self._send(method, path, timeout, data, content_type))
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        timeout: float | None = None,
+        data: bytes | None = None,
+        content_type: str | None = None,
+    ) -> HttpResponse:
+        """Send a request to the WES API.
+
+        Args:
+            method: HTTP method.
+            path: Path of the endpoint, relative to the WES API.
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's.
+            data: Body, if any.
+            content_type: Type of the body, if any.
+
+        Returns:
+            Response, of any status but a redirect.
 
         Raises:
             pro_wes.exceptions.EngineRequestNotSent: The WES instance
@@ -495,8 +538,7 @@ class WesClient:
                 read).
             pro_wes.exceptions.EngineOutcomeUnknown: The WES instance may
                 have got the request (e.g., the response timed out, or is
-                larger than `custom.wes.max_response_size`, a redirect, or
-                no JSON).
+                larger than `custom.wes.max_response_size`, or a redirect).
             pydantic.ValidationError: The timeout is not positive, finite and
                 at most `pro_wes.config_models.MAX_TIMEOUT` (a `ValueError`;
                 nothing is sent).
@@ -537,9 +579,24 @@ class WesClient:
                 " are not followed",
                 reason="redirect",
             )
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise EngineOutcomeUnknown(
-                "external workflow engine sent no JSON", reason="invalid_json"
-            ) from exc
+        return response
+
+
+def _json(response: HttpResponse) -> Any:
+    """Parse the body of a response of a WES instance as JSON.
+
+    Args:
+        response: Response of the WES instance.
+
+    Returns:
+        Parsed body.
+
+    Raises:
+        pro_wes.exceptions.EngineOutcomeUnknown: The body is no JSON.
+    """
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise EngineOutcomeUnknown(
+            "external workflow engine sent no JSON", reason="invalid_json"
+        ) from exc

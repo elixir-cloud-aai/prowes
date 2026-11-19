@@ -26,8 +26,10 @@ from pymongo.errors import PyMongoError
 __all__ = [
     "AttachmentTooLarge",
     "BadRequest",
+    "EngineInvalidResponse",
     "EngineOutcomeUnknown",
     "EngineProblem",
+    "EngineRefused",
     "EngineRequestNotSent",
     "EngineUnavailable",
     "Forbidden",
@@ -106,6 +108,21 @@ class EngineOutcomeUnknown(EngineUnavailable):
         """
         super().__init__(description)
         self.reason = reason or "connection_lost"
+
+
+class EngineRefused(EngineProblem):
+    """The external workflow engine answered a request with an error.
+
+    E.g., the remote run is unknown there, or has finished; errors that
+    proWES passes on as its own (`400`, `401`, `403`) are raised as those.
+    """
+
+
+class EngineInvalidResponse(EngineProblem):
+    """The external workflow engine sent an invalid response.
+
+    E.g., a successful response that doesn't conform to the expected schema.
+    """
 
 
 class NoBackendAvailable(ServiceUnavailable):
@@ -345,6 +362,16 @@ exceptions = {
     EngineUnavailable: {
         "title": "Internal server error",
         "detail": "Could not reach remote WES service.",
+        "status": 500,
+    },
+    EngineRefused: {
+        "title": "Internal server error",
+        "detail": "The remote WES service answered with an error.",
+        "status": 500,
+    },
+    EngineInvalidResponse: {
+        "title": "Internal server error",
+        "detail": "The remote WES service sent an invalid response.",
         "status": 500,
     },
     InternalServerError: {
