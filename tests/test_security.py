@@ -58,6 +58,16 @@ def test_owner_of_bare_subject_with_separator() -> None:
     assert owner_of(subject="ls|alice", issuer=ISSUER, conf=conf) is None
 
 
+def test_owner_of_namespace_with_separator() -> None:
+    """Issuers with `|` in their namespace could collide with others: no owner.
+
+    FOCA 0.22 refuses `|` in `namespace`, but not in issuers, which are the
+    namespace by default.
+    """
+    issuer = "https://login.example.org/|x"
+    assert owner_of(subject="alice", issuer=issuer, conf=_conf(issuer)) is None
+
+
 def test_owner_of_namespaced_subject_with_separator() -> None:
     """Namespaced subjects may contain `|`: the namespace tells them apart."""
     owner = owner_of(subject="a|b", issuer=ISSUER, conf=_conf(ISSUER))

@@ -83,6 +83,7 @@ def test_no_token(foca_client: Client, method: str, path: str) -> None:
         pytest.param({"aud": "other-app"}, id="other audience"),
         pytest.param({"typ": "JWT"}, id="no access token"),
         pytest.param({"iss": "https://untrusted.example.org/"}, id="other issuer"),
+        pytest.param({"sub": None}, id="no subject"),
     ],
 )
 def test_invalid_token(

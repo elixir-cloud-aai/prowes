@@ -38,14 +38,16 @@ def owner_of(subject: str, issuer: str, conf: AuthConfig) -> str | None:
         conf: Authentication settings.
 
     Returns:
-        The owner; `None` if the issuer is not trusted, or the subject is
-        bare and contains `|`, so that it could collide with a namespaced
-        subject.
+        The owner; `None` if the issuer is not trusted, its namespace (e.g.,
+        the issuer itself) contains `|`, or the subject is bare and contains
+        `|`, so that owners of different issuers could collide.
     """
     settings = conf.get_issuer_configs().get(issuer)
     if settings is None:
         return None
     namespace = issuer if settings.namespace is None else settings.namespace
+    if NAMESPACE_SEPARATOR in namespace:
+        return None
     if not namespace:
         return None if NAMESPACE_SEPARATOR in subject else subject
     return f"{namespace}{NAMESPACE_SEPARATOR}{subject}"
