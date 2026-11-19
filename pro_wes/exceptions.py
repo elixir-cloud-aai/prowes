@@ -168,10 +168,11 @@ class MalformedUrl(BadRequest):
 
 
 class UnsupportedMediaType(BadRequest):
-    """A run request isn't a form (`multipart/form-data`).
+    """A run request isn't a form (`multipart/form-data` or URL-encoded).
 
-    `415 Unsupported Media Type` (`exceptions`); FOCA has no error class for
-    it, so it derives from the closest client-side one.
+    Mapped to `415 Unsupported Media Type` in `exceptions` below; FOCA has
+    no error class for it, so it derives from the closest client-side one
+    (like `TasksNotServed`).
     """
 
 
@@ -265,7 +266,7 @@ exceptions = {
     },
     UnsupportedMediaType: {
         "title": "Unsupported media type",
-        "detail": "Run requests must be sent as multipart/form-data.",
+        "detail": "Run requests must be forms (multipart/form-data).",
         "status": 415,
     },
     MissingBoundary: {

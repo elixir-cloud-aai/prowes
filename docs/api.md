@@ -38,7 +38,7 @@ those declared.
 | --- | --- |
 | `GET /service-info` | The service info, served by FOCA from the configuration (see [Service info](configuration.md#service-info)) |
 | `POST /runs` | Start a run: forwards it to a WES instance (see [Runs](#runs)) |
-| `GET /runs` | List runs, newest first, with `page_size` and `page_token`; `next_page_token` is empty on the last page. `page_size` defaults to `custom.list_runs.default_page_size`, `0` lists all runs; negative sizes and page tokens other than a `next_page_token` of proWES get `400 Bad Request` |
+| `GET /runs` | List runs, newest first, with `page_size` and `page_token`; `next_page_token` is empty on the last page. `page_size` defaults to `custom.list_runs.default_page_size`, `0` lists all runs; negative sizes and malformed page tokens (not 24 hexadecimal characters, as the `next_page_token` of proWES) get `400 Bad Request` |
 | `GET /runs/{run_id}` | The run log of a run |
 | `GET /runs/{run_id}/status` | The state of a run |
 | `POST /runs/{run_id}/cancel` | Cancel a run, if it is cancelable (see [Run states](#run-states)) |
@@ -180,7 +180,7 @@ stored nor forwarded):
 
 | Status | Cause |
 | --- | --- |
-| `400 Bad Request` | The form is invalid (e.g., a missing field, a workflow engine or its version is chosen (`workflow_engine`, `workflow_engine_version`; not supported yet), `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)); a `multipart/form-data` body without a boundary |
+| `400 Bad Request` | The form is invalid (e.g., a `multipart/form-data` body without a boundary, a missing field, a workflow engine or its version is chosen (`workflow_engine`, `workflow_engine_version`; not supported yet), `workflow_params` that is no JSON object or has an object with duplicate keys, `tags` or `workflow_engine_parameters` with values other than strings), the workflow type or version isn't supported, a URL has credentials (`custom.post_runs.url_credentials: reject`) or is malformed, or a workflow attachment has no file name, a safe file name longer than 255 bytes, or the same safe file name as another one (see [Run requests](configuration.md#run-requests)) |
 | `413 Content Too Large` | The request body is larger than `server.max_content_length` (see [Request size limit](configuration.md#request-size-limit)), the run has more workflow attachments than `custom.post_runs.max_attachments`, or an attachment is larger than `custom.post_runs.max_attachment_size` |
 | `415 Unsupported Media Type` | The body isn't a form: run requests are `multipart/form-data` (as in WES), or `application/x-www-form-urlencoded` if they have no workflow attachments; other media types (e.g., JSON) and bodies without a media type are refused |
 | `503 Service Unavailable` | No WES instance is available: none is configured (`custom.wes.backends`), or its registries list none (yet) (see [WES instances](configuration.md#wes-instances)) |

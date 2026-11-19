@@ -70,6 +70,11 @@ JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
 # until they are forwarded (#66), so that the choice isn't lost
 ENGINE_FIELDS = ("workflow_engine", "workflow_engine_version")
 
+# Largest number of runs per page that is passed to MongoDB as the limit of
+# a query (plus one, cf. `list_runs`); MongoDB takes 8-byte integers only,
+# and Connexion doesn't check the range of `page_size` (`int64`)
+MAX_QUERY_LIMIT = 2**62
+
 
 def _page_token_id(page_token: str) -> ObjectId:
     """Get the database identifier of the last run of a page.
@@ -321,8 +326,9 @@ class WorkflowRuns:
             filter_dict["_id"] = {"$lt": _page_token_id(page_token)}
 
         # get resources, and one more if a page size is set, to tell
-        # whether older runs are left (`limit(0)`: no limit)
-        limit = page_size
+        # whether older runs are left (`limit(0)`: no limit); larger page
+        # sizes than MongoDB takes (8-byte integers) can't have more runs
+        limit = min(page_size, MAX_QUERY_LIMIT)
         resources = list(
             self.db_client.find(
                 filter=filter_dict,

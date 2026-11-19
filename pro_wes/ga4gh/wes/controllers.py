@@ -47,6 +47,15 @@ def RunWorkflow(*args: Any, **kwargs: Any) -> dict[str, str]:
     return response
 
 
+# Name of the Flask endpoint of `POST /runs` within its blueprint, as
+# Connexion 2 names it: module and name of the controller, with dots
+# replaced (cf. `check_run_request_body`; `test_run_workflow_endpoint`
+# checks it against the routes of the app)
+RUN_WORKFLOW_ENDPOINT = f"{RunWorkflow.__module__}.{RunWorkflow.__name__}".replace(
+    ".", "_"
+)
+
+
 @log_traffic
 def ListRuns(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """Return list of workflow runs.
@@ -196,7 +205,7 @@ def check_run_request_body() -> None:
     """
     endpoint = flask_request.endpoint or ""
     if flask_request.method != "POST" or endpoint.rpartition(".")[2] != (
-        _RUN_WORKFLOW_ENDPOINT
+        RUN_WORKFLOW_ENDPOINT
     ):
         return
     if flask_request.mimetype not in RUN_REQUEST_MEDIA_TYPES:
@@ -206,10 +215,3 @@ def check_run_request_body() -> None:
         and not flask_request.mimetype_params.get("boundary")
     ):
         raise MissingBoundary
-
-
-# Name of the Flask endpoint of `POST /runs` within its blueprint, as
-# Connexion names it: module and name of the controller, dots replaced
-_RUN_WORKFLOW_ENDPOINT = f"{RunWorkflow.__module__}.{RunWorkflow.__name__}".replace(
-    ".", "_"
-)

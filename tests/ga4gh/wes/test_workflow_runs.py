@@ -9,9 +9,11 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import bson
 from connexion import App
 from foca.errors import InvalidFieldsProblem
 from foca.testing import Client
+from mongomock.collection import Cursor
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 import pytest
@@ -654,6 +656,51 @@ def test_list_runs_invalid_page(kwargs: dict[str, Any], parameter: str) -> None:
     with pytest.raises(InvalidFieldsProblem) as exc_info:
         WorkflowRuns().list_runs(**kwargs)
     assert [error.parameter for error in exc_info.value.field_errors] == [parameter]
+
+
+@pytest.mark.parametrize("page_size", [2**63 - 1, 2**63, 10**20])
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_huge_page_size(
+    mongodb: MongoClient[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    page_size: int,
+) -> None:
+    """Page sizes beyond what MongoDB takes list all runs.
+
+    The in-memory database doesn't encode queries, so the limit of the query
+    is checked to be encodable as BSON, as MongoDB gets it.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        monkeypatch: Pytest fixture to patch the cursor.
+        page_size: Number of runs per page.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "RUN001", "state": "QUEUED"}}
+    )
+    limits: list[int] = []
+    limit = Cursor.limit
+
+    def _limit(cursor: Any, value: int) -> Any:
+        """Record the limit of a query.
+
+        Args:
+            cursor: Cursor of the query.
+            value: Limit.
+
+        Returns:
+            The cursor.
+        """
+        limits.append(value)
+        return limit(cursor, value)
+
+    monkeypatch.setattr(Cursor, "limit", _limit)
+    page = WorkflowRuns().list_runs(page_size=page_size)
+    assert page == {
+        "next_page_token": "",
+        "runs": [{"run_id": "RUN001", "state": "QUEUED"}],
+    }
+    bson.encode({"limit": limits[0]})
 
 
 @pytest.mark.usefixtures("app_context")
