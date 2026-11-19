@@ -8,11 +8,12 @@
 # `prowes:smoke`, so that the test leaves the image of other local
 # deployments (`prowes:local`) alone
 #
-# proWES sends runs to the WES instance of the config overlay
-# (`custom.wes.backends`): the fake WES, at its service name `fake-wes` (also
-# `HOSTS` in `fake_wes.py`), with a certificate of its own certificate
-# authority, which proWES trusts instead of the public ones
-# (`REQUESTS_CA_BUNDLE`), so that no run leaves the Compose network
+# proWES sends runs to the WES instances of the config overlay
+# (`custom.wes.backends`): the fake WES of WES 1.0.1, at its service name
+# `fake-wes`, and the one of WES 1.1.0, `fake-wes-11` (also `HOSTS` in
+# `fake_wes.py`), with a certificate of their own certificate authority,
+# which proWES trusts instead of the public ones (`REQUESTS_CA_BUNDLE`), so
+# that no run leaves the Compose network
 
 # Settings of the app and the Celery worker
 x-smoke: &smoke
@@ -25,6 +26,8 @@ x-smoke: &smoke
     - smoke-certs-data:/certs:ro
   depends_on:
     fake-wes:
+      condition: service_healthy
+    fake-wes-11:
       condition: service_healthy
 
 services:
@@ -53,8 +56,8 @@ services:
 
   # The fake WES, in the app's image (built for the other services), with
   # the image's health check probing its service info over plain HTTP (more
-  # often)
-  fake-wes:
+  # often); of WES 1.0.1, and the identity provider of the smoke test
+  fake-wes: &fake-wes
     image: prowes:smoke
     pull_policy: never
     command: ["python", "/smoke/fake_wes.py", "serve", "/certs"]
@@ -69,6 +72,13 @@ services:
     healthcheck:
       interval: 5s
       start_period: 5s
+
+  # The fake WES of WES 1.1.0
+  fake-wes-11:
+    <<: *fake-wes
+    environment:
+      HEALTHCHECK_URL: http://localhost:8080/ga4gh/wes/v1/service-info
+      FAKE_WES_VERSION: "1.1.0"
 
 volumes:
   smoke-certs-data:

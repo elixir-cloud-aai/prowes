@@ -10,8 +10,9 @@ entries of proWES; expanding them, discovery (`GET /services` and `GET
 /verifications` of each registry, with FOCA's guarded HTTP client) and its
 caches are FOCA's.
 
-Without plugins (#121), runs go to the first backend of the list
-(:py:func:`select_backend`).
+New runs go to the first backend of the list that can run them, by its WES
+version (:py:func:`pro_wes.ga4gh.wes.routing.select_backend`), until plugins
+choose them (#121).
 
 The API type is registered when this module is imported, which the app
 (`pro_wes.app`) and the controllers do before any backend list is used; it
@@ -31,7 +32,6 @@ from pro_wes.config_models import (
     WesRegistryEntry,
     WesServiceEntry,
 )
-from pro_wes.exceptions import NoBackendAvailable
 
 WES_API = "wes"
 """API of the backends (cf. `foca.plugins.backends.API_TYPES`)."""
@@ -143,27 +143,3 @@ def api_path(backend: Backend, backend_list: WesBackendList) -> str:
     if isinstance(entry, WesServiceEntry):
         return entry.api_path
     return DEFAULT_API_PATH
-
-
-def select_backend() -> tuple[str, str]:
-    """Choose the WES instance that a new run is forwarded to.
-
-    The first backend of the list (configured WES instances, and those
-    discovered in registries, in the order of `custom.wes.backends`). Must
-    be called in an app context.
-
-    Returns:
-        Base URL of the WES instance and the path of its WES API.
-
-    Raises:
-        pro_wes.exceptions.NoBackendAvailable: The list has no backend, e.g.,
-            none is configured, or the registries list none (yet).
-    """
-    backend_list = get_backend_list()
-    backends = backend_list.expand()
-    if not backends:
-        raise NoBackendAvailable(
-            "No WES instance available; configure `custom.wes.backends`"
-        )
-    backend = backends[0]
-    return backend.url, api_path(backend, backend_list)

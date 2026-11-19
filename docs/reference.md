@@ -31,6 +31,10 @@ HTTP API, see [API](api.md) and the Swagger UI of a deployment.
 
 ::: pro_wes.ga4gh.wes.backends
 
+::: pro_wes.ga4gh.wes.routing
+
+::: pro_wes.ga4gh.wes.versions
+
 ::: pro_wes.ga4gh.wes.client_wes
 
 ## Run tracking

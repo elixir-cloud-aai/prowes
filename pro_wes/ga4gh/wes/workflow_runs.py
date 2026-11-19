@@ -42,7 +42,6 @@ from pro_wes.exceptions import (
     WesEndpointProblem,
     WorkflowEngineNotSupported,
 )
-from pro_wes.ga4gh.wes.backends import select_backend
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
     STORED_CONTEXT,
@@ -54,6 +53,8 @@ from pro_wes.ga4gh.wes.models import (
     State,
     WesEndpoint,
 )
+from pro_wes.ga4gh.wes.routing import select_backend
+from pro_wes.ga4gh.wes.versions import ENGINE_FIELDS, downgrade_run_request
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
@@ -73,9 +74,9 @@ JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
 # return as their JSON text (cf. `_string_values()`)
 STRING_OBJECT_FIELDS = ("workflow_engine_parameters", "tags")
 
-# Fields of WES 1.1.0 run requests that choose the workflow engine; refused
-# until they are forwarded (#66), so that the choice isn't lost
-ENGINE_FIELDS = ("workflow_engine", "workflow_engine_version")
+# The fields of WES 1.1.0 run requests that choose the workflow engine
+# (`ENGINE_FIELDS`) are refused until they are forwarded (#66), so that the
+# choice isn't lost
 
 
 def _page_token_id(page_token: str) -> ObjectId:
@@ -231,7 +232,10 @@ class WorkflowRuns:
 
         Raises:
             pro_wes.exceptions.NoBackendAvailable: No WES instance is
-                available (`custom.wes.backends`); nothing is stored.
+                available (`custom.wes.backends`), or none that can run the
+                request and some didn't answer so far; nothing is stored.
+            foca.errors.InvalidFieldsProblem: No WES instance can run the
+                request unchanged (by its WES version); nothing is stored.
         """
         document: DbDocument = DbDocument()
         controller_config = self.config.post_runs
@@ -250,10 +254,14 @@ class WorkflowRuns:
         # check and read workflow attachments, before anything is stored
         uploads = self._read_attachments()
 
-        # choose and attach the WES instance (`custom.wes.backends`), before
-        # anything is stored
-        host, base_path = select_backend()
-        document.wes_endpoint = WesEndpoint(host=host, base_path=base_path)
+        # choose and attach the WES instance (`custom.wes.backends`) that can
+        # run the request, by its WES version, before anything is stored
+        backend = select_backend(document.run_log.request.model_dump())
+        document.wes_endpoint = WesEndpoint(
+            host=backend.url,
+            base_path=backend.api_path,
+            wes_version=str(backend.version),
+        )
 
         # get and attach workflow run owner
         document.user_id = kwargs.get("user_id")
@@ -310,8 +318,11 @@ class WorkflowRuns:
             url,
         )
         try:
+            # in the WES version of the WES instance
             response = wes_client.post_run(
-                form_data=document.run_log.request.model_dump(),
+                form_data=downgrade_run_request(
+                    document.run_log.request.model_dump(), backend.version
+                ),
                 timeout=controller_config.timeout_post,
             )
         except EngineUnavailable:

@@ -60,10 +60,10 @@ What proWES does with the additions of WES 1.1.0 so far:
 | `RunSummary` in `GET /runs` | Runs are listed as `RunSummary` (identifier, state, start and end time, tags), which WES 2.0.0 will require, as the description of `RunListResponse` in WES 1.1.0 announces (see [Run lists](#run-lists)) |
 | `workflow_engine_versions` of the service info | Versions of each engine as objects (`{"cwltool": {"workflow_engine_version": ["3.1"]}}`), see [Service info](configuration.md#service-info) |
 
-The WES instances that runs are forwarded to may serve WES 1.0.1 or 1.1.0;
-proWES sends them only fields of both versions. Routing by the WES version
-of each instance follows with
-[#122](https://github.com/elixir-cloud-aai/prowes/issues/122).
+The WES instances that runs are forwarded to may serve WES 1.0 (1.0.0,
+1.0.1) or 1.1.0: proWES forwards each run in the version of its WES
+instance, to one that can run it unchanged, and serves their responses in
+WES 1.1.0 (see [WES versions](wes-versions.md)).
 
 ## Runs
 
@@ -73,9 +73,11 @@ requests](configuration.md#run-requests)), stores the run in its database,
 writes its workflow attachments to the storage of the runs
 (`custom.post_runs.storage_path`, see
 [Configuration](configuration.md#settings)) and forwards the request to a
-WES instance: the first of `custom.wes.backends` (see [WES
-instances](configuration.md#wes-instances)). Without any, it refuses the
-run with `503 Service Unavailable`, before anything is stored.
+WES instance: the first of `custom.wes.backends` that can run it, in the
+WES version of that WES instance (see [WES
+instances](configuration.md#wes-instances) and [WES
+versions](wes-versions.md)). Without any, it refuses the run with `503
+Service Unavailable`, before anything is stored.
 
 `POST /runs` returns the run's own identifier, by which `GET
 /runs/{run_id}` finds it; the identifier at the WES instance is kept in the

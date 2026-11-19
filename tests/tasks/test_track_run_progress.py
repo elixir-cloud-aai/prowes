@@ -11,6 +11,8 @@ import pytest
 from pro_wes.exceptions import EngineProblem, EngineUnavailable
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import ErrorResponse, RunStatus, State
+from pro_wes.ga4gh.wes.versions import WesVersion
+from pro_wes.tasks import track_run_progress
 from pro_wes.tasks.track_run_progress import (
     _stored_state_is_finished,
     task__track_run_progress,
@@ -168,6 +170,58 @@ def test_track_run_until_finished(monkeypatch: pytest.MonkeyPatch) -> None:
     assert document["run_log"]["task_logs"][0]["cmd"] == ["echo"]
     assert document["run_log"]["run_id"] == RUN_ID
     assert "request" not in document["run_log"]
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [("1.0", "1.0"), ("1.1", "1.1"), (None, "1.0"), ("9.9", "1.0")],
+)
+def test_track_run_upgrades_run_logs(
+    foca_app: App,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str | None,
+    expected: str,
+) -> None:
+    """Run logs are converted from the WES version stored with the run.
+
+    Runs without a supported version (e.g., stored by earlier versions)
+    take the oldest one.
+    """
+    endpoint = {
+        "host": TASK_KWARGS["remote_host"],
+        "base_path": TASK_KWARGS["remote_base_path"],
+        "run_id": REMOTE_RUN_ID,
+    }
+    if version is not None:
+        endpoint["wes_version"] = version
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    upgraded: list[str] = []
+
+    def _upgrade(run_log: dict[str, Any], wes_version: WesVersion) -> dict[str, Any]:
+        """Record the conversion of a run log.
+
+        Args:
+            run_log: Run log of the remote WES.
+            wes_version: Its WES version.
+
+        Returns:
+            The run log, with other outputs.
+        """
+        upgraded.append(str(wes_version))
+        return {**run_log, "outputs": {"upgraded": True}}
+
+    monkeypatch.setattr(track_run_progress, "upgrade_run_log", _upgrade)
+    with foca_app.app.app_context():
+        get_collection(RUN_DB, RUN_COLLECTION).insert_one(
+            {
+                "task_id": TASK_ID,
+                "run_log": {"run_id": RUN_ID, "state": "UNKNOWN"},
+                "wes_endpoint": endpoint,
+            }
+        )
+        _track()
+        assert _stored()["run_log"]["outputs"] == {"upgraded": True}
+    assert upgraded == [expected, expected]
 
 
 @pytest.mark.usefixtures("run")

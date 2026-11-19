@@ -16,9 +16,10 @@ import pytest
 from pro_wes.app import init_app
 from pro_wes.config_models import DEFAULT_API_PATH, Wes, WesServiceEntry
 from pro_wes.exceptions import NoBackendAvailable
-from pro_wes.ga4gh.wes.backends import WES_API, select_backend
+from pro_wes.ga4gh.wes.backends import WES_API
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import RunId
+from pro_wes.ga4gh.wes.routing import select_backend
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
@@ -33,6 +34,16 @@ RUN_REQUEST: dict[str, str] = {
     "workflow_type_version": "v1.0",
     "workflow_url": "https://example.org/workflow.cwl",
 }
+
+
+def _selected() -> tuple[str, str]:
+    """Get the WES instance that a new run is forwarded to.
+
+    Returns:
+        Its base URL and the path of its WES API.
+    """
+    backend = select_backend(RUN_REQUEST)
+    return backend.url, backend.api_path
 
 
 @pytest.fixture(autouse=True)
@@ -293,7 +304,7 @@ def test_init_app_allows_parent_of_own_url(
     add_overlay(f"server:\n  public_url: {BACKEND_URL}/prowes\n")
     app = init_app()
     with app.app.app_context():
-        assert select_backend() == (BACKEND_URL, BASE_PATH)
+        assert _selected() == (BACKEND_URL, BASE_PATH)
 
 
 def test_select_backend_first(add_overlay: Callable[[str], None]) -> None:
@@ -306,7 +317,7 @@ def test_select_backend_first(add_overlay: Callable[[str], None]) -> None:
     )
     app = init_app()
     with app.app.app_context():
-        assert select_backend() == ("https://first.example.org", "/api")
+        assert _selected() == ("https://first.example.org", "/api")
 
 
 def test_select_backend_none(add_overlay: Callable[[str], None]) -> None:
@@ -314,7 +325,7 @@ def test_select_backend_none(add_overlay: Callable[[str], None]) -> None:
     add_overlay("custom:\n  wes:\n    backends: []\n")
     app = init_app()
     with app.app.app_context(), pytest.raises(NoBackendAvailable):
-        select_backend()
+        _selected()
 
 
 @pytest.mark.parametrize(
@@ -331,7 +342,7 @@ def test_select_backend_discovered(
     add_overlay(_registry_overlay(first=first))
     app = init_app()
     with app.app.app_context():
-        assert select_backend() == expected
+        assert _selected() == expected
     assert registry_documents == [
         f"{REGISTRY_URL}/verifications",
         f"{REGISTRY_URL}/services",
@@ -363,7 +374,7 @@ def test_select_backend_registry_empty(
     monkeypatch.setattr(registry, "fetch_json", _unreachable)
     app = init_app()
     with app.app.app_context(), pytest.raises(NoBackendAvailable):
-        select_backend()
+        _selected()
 
 
 def test_post_run_without_backend(

@@ -19,6 +19,12 @@ from pro_wes.ga4gh.wes.models import (
     RunStatus,
     State,
 )
+from pro_wes.ga4gh.wes.versions import (
+    OLDEST,
+    WesVersion,
+    parse_supported,
+    upgrade_run_log,
+)
 from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
@@ -42,7 +48,12 @@ def task__track_run_progress(
 
     The collection of the runs is taken from FOCA when the task runs, as
     FOCA replaces the MongoDB client of the worker after each fork (cf.
-    :py:func:`foca.get_collection`).
+    :py:func:`foca.get_collection`). Run logs of the remote service are
+    converted from the WES version that the run was forwarded in, as stored
+    with the run (`wes_endpoint.wes_version`; the oldest supported version
+    for runs stored without one, e.g., by earlier versions), so that the
+    task's arguments are the same as before, and workers of earlier versions
+    can track runs of later ones (e.g., in a rolling update).
 
     Args:
         self: The bound task (`bind=True`).
@@ -103,12 +114,15 @@ def task__track_run_progress(
             token=None,
         )
 
+        wes_version = _stored_wes_version(db_client=db_client)
+
         # fetch run log and upsert database document
         document: DbDocument = _update_run_log(
             db_client=db_client,
             wes_client=wes_client,
             run_id=remote_run_id,
             timeout=controller_config.timeout_post,
+            wes_version=wes_version,
         )
 
         # track workflow run progress, from the state stored last (so that a
@@ -154,6 +168,7 @@ def task__track_run_progress(
             wes_client=wes_client,
             run_id=remote_run_id,
             timeout=controller_config.timeout_post,
+            wes_version=wes_version,
         )
     except SoftTimeLimitExceeded:
         # tracking took longer than `custom.post_runs.timeout_job`; runs whose
@@ -166,6 +181,25 @@ def task__track_run_progress(
 
     logger.info("[%s] Processing completed.", task_id)
     return task_id
+
+
+def _stored_wes_version(db_client: DbDocumentConnector) -> WesVersion:
+    """Get the WES version that a run was forwarded in, as stored.
+
+    Args:
+        db_client: Connector to the run document.
+
+    Returns:
+        The stored version; the oldest supported one if the run, or its
+            version, is missing or not supported.
+    """
+    document = db_client.collection.find_one(
+        filter={"task_id": db_client.task_id},
+        projection={"wes_endpoint.wes_version": True, "_id": False},
+    )
+    endpoint = (document or {}).get("wes_endpoint")
+    value = endpoint.get("wes_version") if isinstance(endpoint, dict) else None
+    return parse_supported(value) or OLDEST
 
 
 def _stored_state_is_finished(db_client: DbDocumentConnector) -> bool:
@@ -205,6 +239,7 @@ def _update_run_log(
     wes_client: WesClient,
     run_id: str,
     timeout: float,
+    wes_version: WesVersion,
 ) -> DbDocument:
     """Fetch the run log from the remote WES and store it in the run document.
 
@@ -221,6 +256,8 @@ def _update_run_log(
         wes_client: Client of the remote WES.
         run_id: Workflow run identifier on remote WES service.
         timeout: Timeout of the request, in seconds.
+        wes_version: WES version of the remote WES; the run log is converted
+            from it to the WES version of proWES.
 
     Returns:
         Run document, updated if any field was stored.
@@ -235,6 +272,7 @@ def _update_run_log(
             exc,
         )
         return db_client.get_document()
+    response = upgrade_run_log(response, wes_version)
     fields: dict[str, Any] = {}
     for key, adapter in RUN_LOG_FIELDS.items():
         if key not in response:
