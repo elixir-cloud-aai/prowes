@@ -319,7 +319,8 @@ def test_run_request_unsupported_media_type(
     response = foca_client.post(f"{BASE_PATH}/runs", content=content, headers=headers)
     assert_declared_error(served_spec, "post", "/runs", response, 415)
     assert response.json()["detail"] == (
-        "Run requests must be forms (multipart/form-data)."
+        "Run requests must be forms (multipart/form-data, or URL-encoded"
+        " without attachments)."
     )
 
 
@@ -380,7 +381,11 @@ def test_run_request_without_boundary(
 def test_run_request_wrong_boundary(
     foca_client: Client, served_spec: dict[str, Any]
 ) -> None:
-    """Multipart run requests with another boundary get `400`, as declared."""
+    """Multipart run requests with another boundary get `400`, as declared.
+
+    Connexion's own `400` (empty form), not that of the check of run
+    request bodies; a guard against `500`s.
+    """
     response = foca_client.post(
         f"{BASE_PATH}/runs",
         content=_multipart(RUN_REQUEST),

@@ -7,6 +7,8 @@
 import logging
 from typing import Any, NoReturn
 
+# Flask's request too: `check_run_request_body` runs before Connexion's
+# handling of the request
 from connexion import request
 from flask import request as flask_request
 from foca.utils.logging import log_traffic

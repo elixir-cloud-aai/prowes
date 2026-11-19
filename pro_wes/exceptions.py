@@ -266,7 +266,10 @@ exceptions = {
     },
     UnsupportedMediaType: {
         "title": "Unsupported media type",
-        "detail": "Run requests must be forms (multipart/form-data).",
+        "detail": (
+            "Run requests must be forms (multipart/form-data, or URL-encoded"
+            " without attachments)."
+        ),
         "status": 415,
     },
     MissingBoundary: {
