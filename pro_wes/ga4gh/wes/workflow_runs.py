@@ -108,6 +108,31 @@ def _page_token_id(page_token: str) -> ObjectId:
         ) from None
 
 
+def _decode_stored_json(value: str, field: str) -> Any:
+    """Decode a JSON field of a stored run request, without credentials.
+
+    Credentials in the URLs of the decoded value are removed, for runs stored
+    by earlier versions, which didn't check them.
+
+    Args:
+        value: JSON-encoded value of the field, as stored.
+        field: Name of the field of the run request, for error messages.
+
+    Returns:
+        Decoded value.
+
+    Raises:
+        pro_wes.exceptions.BadRequest: A URL in the value is malformed, or a
+            key without its credentials collides with another key.
+        RecursionError: The value is too deeply nested to decode.
+        TypeError: The value is not a string.
+        ValueError: The value is not valid JSON.
+    """
+    decoded = loads(value)
+    sanitize_json(decoded, field, "strip")
+    return decoded
+
+
 class Upload(NamedTuple):
     """Workflow attachment of a run request, checked and read.
 
@@ -340,6 +365,9 @@ class WorkflowRuns:
                 projection={
                     "run_log.run_id": True,
                     "run_log.state": True,
+                    "run_log.request.tags": True,
+                    "run_log.run_log.start_time": True,
+                    "run_log.run_log.end_time": True,
                 },
             )
             .sort("_id", -1)
@@ -352,14 +380,10 @@ class WorkflowRuns:
             resources = resources[:limit]
             next_page_token = str(resources[-1]["_id"])
 
-        # format response
-        for run in resources:
-            run["run_id"] = run["run_log"]["run_id"]
-            run["state"] = run["run_log"]["state"]
-            del run["run_log"]
-            del run["_id"]
+        # format response: `RunSummary`, which WES 2.0.0 requires
+        runs = [self._run_summary(run_log=run["run_log"]) for run in resources]
 
-        return {"next_page_token": next_page_token, "runs": resources}
+        return {"next_page_token": next_page_token, "runs": runs}
 
     def get_run_log(
         self,
@@ -762,6 +786,51 @@ class WorkflowRuns:
         return model_instance.model_copy(update=updates)
 
     @staticmethod
+    def _run_summary(run_log: dict[str, Any]) -> dict[str, Any]:
+        """Get the summary of a run for `GET /runs` from its stored run log.
+
+        Start and end time come from the engine log of the run (`run_log`),
+        and are left out while the WES instance hasn't reported them. Tags
+        come from the run request, as an object of strings: values that
+        earlier versions stored without checking them (other than strings)
+        are JSON-encoded, and credentials in URLs are removed. Tags that
+        can't be read (e.g., with malformed URLs) are returned as `{}`, with
+        an error logged, rather than failing the whole list.
+
+        Args:
+            run_log: Run log, as stored (projected to the fields needed).
+
+        Returns:
+            Response object according to WES API schema `RunSummary`.
+        """
+        summary: dict[str, Any] = {
+            "run_id": run_log["run_id"],
+            "state": run_log["state"],
+        }
+        engine_log = run_log.get("run_log") or {}
+        for field in ("start_time", "end_time"):
+            if engine_log.get(field) is not None:
+                summary[field] = engine_log[field]
+        tags: Any = {}
+        stored_tags = (run_log.get("request") or {}).get("tags")
+        if stored_tags not in (None, ""):
+            try:
+                tags = _decode_stored_json(stored_tags, "tags")
+            except (BadRequest, RecursionError, TypeError, ValueError):
+                tags = None
+            if not isinstance(tags, dict):
+                logger.error(
+                    "Tags of run '%s' can't be listed; returned as {}.",
+                    summary["run_id"],
+                )
+                tags = {}
+        summary["tags"] = {
+            key: value if isinstance(value, str) else dumps(value)
+            for key, value in tags.items()
+        }
+        return summary
+
+    @staticmethod
     def _run_log_response(run_id: str, run_log: dict[str, Any]) -> dict[str, Any]:
         """Get the response to `GET /runs/{run_id}` from a stored run log.
 
@@ -802,9 +871,9 @@ class WorkflowRuns:
                 request_data["workflow_url"] = stripped
             for field in JSON_FIELDS:
                 if field in request_data:
-                    decoded = loads(request_data[field])
-                    sanitize_json(decoded, field, "strip")
-                    request_data[field] = decoded
+                    request_data[field] = _decode_stored_json(
+                        request_data[field], field
+                    )
         except BadRequest as exc:
             logger.error("Run request of run '%s' has malformed URLs.", run_id)
             raise InternalServerError from exc
