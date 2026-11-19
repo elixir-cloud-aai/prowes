@@ -14,6 +14,7 @@ from foca.api.service_info import get_service_info
 
 from pro_wes.config_models import CustomConfig
 from pro_wes.ga4gh.wes.backends import check_backends
+from pro_wes.ga4gh.wes.controllers import check_run_request_body
 from pro_wes.ga4gh.wes.models import ServiceInfo
 
 
@@ -23,7 +24,9 @@ def init_app() -> App:
     Creates the storage directory of the runs, checks that it is writable,
     checks that the service info (config section `service_info`) has the
     fields of the WES specification, and that no configured WES instance
-    (`custom.wes.backends`) is proWES itself.
+    (`custom.wes.backends`) is proWES itself. Run requests that aren't
+    forms are refused before Connexion validates them
+    (:py:func:`pro_wes.ga4gh.wes.controllers.check_run_request_body`).
 
     Returns:
         FOCA application.
@@ -40,6 +43,8 @@ def init_app() -> App:
         custom_config_model="pro_wes.config_models.CustomConfig",
     )
     app = foca.create_app()
+    # Before Connexion's validation, which fails on bodies that aren't forms
+    app.app.before_request(check_run_request_body)
     _setup_first_start(app=app)
     return app
 

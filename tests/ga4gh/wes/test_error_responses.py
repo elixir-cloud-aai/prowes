@@ -291,6 +291,94 @@ def test_invalid_run_request(foca_client: Client, served_spec: dict[str, Any]) -
     assert_declared_error(served_spec, "post", "/runs", response, 400)
 
 
+@pytest.mark.parametrize(
+    ("content", "headers"),
+    [
+        (b'{"workflow_url": "x"}', {"Content-Type": "application/json"}),
+        (b"workflow_url=x", {"Content-Type": "text/plain"}),
+        (b"workflow_url=x", {}),
+        (b"", {}),
+    ],
+    ids=["json", "text", "no-media-type", "no-body"],
+)
+def test_run_request_unsupported_media_type(
+    content: bytes,
+    headers: dict[str, str],
+    foca_client: Client,
+    served_spec: dict[str, Any],
+) -> None:
+    """Run requests that aren't forms get `415`, as declared.
+
+    Args:
+        content: Body of the request.
+        headers: Headers of the request.
+        foca_client: Test client of the app.
+        served_spec: Served specification.
+    """
+    response = foca_client.post(f"{BASE_PATH}/runs", content=content, headers=headers)
+    assert_declared_error(served_spec, "post", "/runs", response, 415)
+    assert response.json()["detail"] == (
+        "Run requests must be sent as multipart/form-data."
+    )
+
+
+def test_run_request_without_boundary(
+    foca_client: Client, served_spec: dict[str, Any]
+) -> None:
+    """Multipart run requests without a boundary get `400`, as declared."""
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=_multipart(RUN_REQUEST),
+        headers={"Content-Type": "multipart/form-data"},
+    )
+    assert_declared_error(served_spec, "post", "/runs", response, 400)
+    assert response.json()["detail"] == (
+        "The multipart/form-data body has no boundary."
+    )
+
+
+def test_run_request_wrong_boundary(
+    foca_client: Client, served_spec: dict[str, Any]
+) -> None:
+    """Multipart run requests with another boundary get `400`, as declared."""
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=_multipart(RUN_REQUEST),
+        headers={"Content-Type": "multipart/form-data; boundary=other"},
+    )
+    assert_declared_error(served_spec, "post", "/runs", response, 400)
+
+
+@pytest.mark.parametrize(
+    ("params", "parameter"),
+    [
+        ({"page_token": "zzz"}, "page_token"),
+        ({"page_token": "0" * 23}, "page_token"),
+        ({"page_size": "-1"}, "page_size"),
+    ],
+    ids=["malformed-token", "short-token", "negative-size"],
+)
+def test_invalid_page(
+    params: dict[str, str],
+    parameter: str,
+    foca_client: Client,
+    served_spec: dict[str, Any],
+) -> None:
+    """Malformed page tokens and negative page sizes get `400`, as declared.
+
+    Args:
+        params: Query parameters.
+        parameter: The invalid parameter.
+        foca_client: Test client of the app.
+        served_spec: Served specification.
+    """
+    response = foca_client.get(f"{BASE_PATH}/runs", params=params)
+    assert_declared_error(served_spec, "get", "/runs", response, 400)
+    errors = response.json()["errors"]
+    assert [error["parameter"] for error in errors] == [parameter]
+    assert params[parameter] not in response.json()["detail"]
+
+
 def test_run_request_too_large(
     client_with: Callable[[str], Client], served_spec: dict[str, Any]
 ) -> None:

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from connexion import App
+from foca.errors import InvalidFieldsProblem
 from foca.testing import Client
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
@@ -162,6 +163,20 @@ def test_post_run(
             "task_id": stored["task_id"],
         }
     ]
+
+
+@pytest.mark.usefixtures("queued")
+def test_post_run_url_encoded(
+    foca_client: Client, remote_wes: list[dict[str, str]]
+) -> None:
+    """URL-encoded run requests, without attachments, are forwarded, too."""
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        data=RUN_REQUEST,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    assert remote_wes[0]["workflow_url"] == RUN_REQUEST["workflow_url"]
 
 
 def test_post_run_unsupported_workflow_type(
@@ -619,7 +634,45 @@ def test_list_runs_pages(foca_client: Client) -> None:
     assert second["next_page_token"] == ""
 
 
-@pytest.mark.parametrize("page_size", [-2, 0, 1, 2, 3, 10])
+@pytest.mark.parametrize(
+    ("kwargs", "parameter"),
+    [
+        ({"page_size": -1}, "page_size"),
+        ({"page_token": "zzz"}, "page_token"),
+        ({"page_token": "abcdefghijkl"}, "page_token"),
+        ({"page_token": "g" * 24}, "page_token"),
+    ],
+)
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_invalid_page(kwargs: dict[str, Any], parameter: str) -> None:
+    """Negative page sizes and malformed page tokens are invalid fields.
+
+    Args:
+        kwargs: Query parameters.
+        parameter: The invalid parameter.
+    """
+    with pytest.raises(InvalidFieldsProblem) as exc_info:
+        WorkflowRuns().list_runs(**kwargs)
+    assert [error.parameter for error in exc_info.value.field_errors] == [parameter]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_unknown_page_token(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """Well-formed page tokens of no run list the runs older than them.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "RUN001", "state": "QUEUED"}}
+    )
+    assert WorkflowRuns().list_runs(page_token="f" * 24)["runs"] == [
+        {"run_id": "RUN001", "state": "QUEUED"}
+    ]
+    assert WorkflowRuns().list_runs(page_token="0" * 24)["runs"] == []
+
+
+@pytest.mark.parametrize("page_size", [0, 1, 2, 3, 10])
 @pytest.mark.usefixtures("app_context")
 def test_list_runs_last_page(
     mongodb: MongoClient[dict[str, Any]], page_size: int

@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from bson.errors import InvalidId
 from bson.objectid import ObjectId
 from celery import uuid
 
@@ -12,6 +13,7 @@ from celery import uuid
 # from Flask, until they are read in `controllers.py` (#117)
 from flask import request  # ast-grep-ignore: framework-free-tasks
 from foca import get_collection, get_custom_config
+from foca.errors import FieldError, InvalidFieldsProblem
 from foca.utils.misc import generate_id
 from pydantic import ValidationError
 from pymongo.collection import Collection
@@ -67,6 +69,36 @@ JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
 # Fields of WES 1.1.0 run requests that choose the workflow engine; refused
 # until they are forwarded (#66), so that the choice isn't lost
 ENGINE_FIELDS = ("workflow_engine", "workflow_engine_version")
+
+
+def _page_token_id(page_token: str) -> ObjectId:
+    """Get the database identifier of the last run of a page.
+
+    Page tokens are the identifiers of the last run of the page before
+    (`next_page_token` of `GET /runs`).
+
+    Args:
+        page_token: Page token of the request.
+
+    Returns:
+        Identifier.
+
+    Raises:
+        foca.errors.InvalidFieldsProblem: The page token is malformed
+            (`400`); the token is not echoed.
+    """
+    try:
+        return ObjectId(page_token)
+    except InvalidId:
+        raise InvalidFieldsProblem(
+            [
+                FieldError(
+                    detail="Must be a next_page_token returned by GET /runs.",
+                    code="invalid-value",
+                    parameter="page_token",
+                )
+            ]
+        ) from None
 
 
 class Upload(NamedTuple):
@@ -260,24 +292,37 @@ class WorkflowRuns:
         Returns:
             Response object according to WES API schema `RunListResponse`. Cf.
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+
+        Raises:
+            foca.errors.InvalidFieldsProblem: The page size is negative, or
+                the page token is malformed (`400`).
         """
         # set query params
         page_size: int = kwargs.get(
             "page_size", self.config.list_runs.default_page_size
         )
         page_token = kwargs.get("page_token", "")
+        if page_size < 0:
+            raise InvalidFieldsProblem(
+                [
+                    FieldError(
+                        detail="Must be at least 0.",
+                        code="too-small",
+                        parameter="page_size",
+                    )
+                ]
+            )
 
         # set filters
         filter_dict = {}
         if "user_id" in kwargs:
             filter_dict["user_id"] = kwargs["user_id"]
         if page_token != "":
-            filter_dict["_id"] = {"$lt": ObjectId(page_token)}
+            filter_dict["_id"] = {"$lt": _page_token_id(page_token)}
 
         # get resources, and one more if a page size is set, to tell
-        # whether older runs are left (`limit(0)`: no limit; MongoDB reads
-        # a negative limit as its absolute value, in a single batch)
-        limit = abs(page_size)
+        # whether older runs are left (`limit(0)`: no limit)
+        limit = page_size
         resources = list(
             self.db_client.find(
                 filter=filter_dict,
