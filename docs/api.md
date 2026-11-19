@@ -40,7 +40,7 @@ those declared.
 | --- | --- |
 | `GET /service-info` | The service info, served by FOCA from the configuration (see [Service info](configuration.md#service-info)) |
 | `POST /runs` | Start a run: forwards it to a WES instance (see [Runs](#runs)) |
-| `GET /runs` | List runs, newest first, with `page_size` and `page_token`; `next_page_token` is empty on the last page. `page_size` defaults to `custom.list_runs.default_page_size` (not negative; the app doesn't start otherwise), `0` lists all runs; negative sizes and malformed page tokens (not 24 hexadecimal characters, as the `next_page_token` of proWES) get `400 Bad Request` |
+| `GET /runs` | List runs, newest first, as `RunSummary` (see [Run lists](#run-lists)), with `page_size` and `page_token`; `next_page_token` is empty on the last page. `page_size` defaults to `custom.list_runs.default_page_size` (not negative; the app doesn't start otherwise), `0` lists all runs; negative sizes and malformed page tokens (not 24 hexadecimal characters, as the `next_page_token` of proWES) get `400 Bad Request` |
 | `GET /runs/{run_id}` | The run log of a run |
 | `GET /runs/{run_id}/status` | The state of a run |
 | `POST /runs/{run_id}/cancel` | Cancel a run, if it is cancelable (see [Run states](#run-states)) |
@@ -57,7 +57,7 @@ What proWES does with the additions of WES 1.1.0 so far:
 | Task endpoints, `task_logs_url` of run logs | Not served yet (see above); run logs have `task_logs` (deprecated in WES 1.1.0), as `Log` objects: the `id` and `tes_uri` of `TaskLog` are not kept yet |
 | `system_logs` of logs | Stored from the run logs of the WES instance and returned in `run_log` and `task_logs` |
 | State `PREEMPTED` | Tracked as a final state and returned as is (see [Run states](#run-states)) |
-| `RunSummary` in `GET /runs` | Runs are listed as `RunStatus` (identifier and state), which WES 1.1.0 still allows ([#125](https://github.com/elixir-cloud-aai/prowes/issues/125)) |
+| `RunSummary` in `GET /runs` | Runs are listed as `RunSummary` (identifier, state, start and end time, tags), which WES 2.0.0 will require, as the description of `RunListResponse` in WES 1.1.0 announces (see [Run lists](#run-lists)) |
 | `workflow_engine_versions` of the service info | Versions of each engine as objects (`{"cwltool": {"workflow_engine_version": ["3.1"]}}`), see [Service info](configuration.md#service-info) |
 
 The WES instances that runs are forwarded to may serve WES 1.0.1 or 1.1.0;
@@ -100,6 +100,41 @@ values other than strings in the objects `tags` or
 (e.g., `{"threads": 4}` as `{"threads": "4"}`). All responses are
 validated against the specification (see
 [Responses](configuration.md#responses)).
+
+### Run lists
+
+`GET /runs` lists the runs of the caller (see [Run
+ownership](access-control.md#run-ownership)) as `RunSummary` objects, from
+the database:
+
+| Field | proWES |
+| --- | --- |
+| `run_id` | Identifier of the run at proWES |
+| `state` | State of the run (see [Run states](#run-states)) |
+| `start_time` | `start_time` of the engine log (`run_log`) that the WES instance reported, as is; left out until it is reported |
+| `end_time` | `end_time` of the engine log, as is; left out until it is reported (e.g., while the run is running) |
+| `tags` | `tags` of the run request, as an object (`{}` without tags) |
+
+```json
+{
+  "runs": [
+    {
+      "run_id": "Q7HXBD",
+      "state": "COMPLETE",
+      "start_time": "2026-11-19T10:00:00Z",
+      "end_time": "2026-11-19T11:00:00Z",
+      "tags": {"project": "demo"}
+    }
+  ],
+  "next_page_token": ""
+}
+```
+
+The tags of runs stored by earlier versions are returned as WES defines
+them, objects of strings: other values (numbers, booleans, `null`, objects
+and arrays) as JSON (e.g., `"1"`, `"true"`), and URLs without credentials.
+Tags that can't be read (e.g., with malformed URLs) are returned as `{}`,
+and an error is logged, so that one run doesn't fail the whole list.
 
 ### Run states
 

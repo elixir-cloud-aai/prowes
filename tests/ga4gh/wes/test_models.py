@@ -18,6 +18,8 @@ from pro_wes.ga4gh.wes.models import (
     RunListResponse,
     RunLog,
     RunRequest,
+    RunStatus,
+    RunSummary,
     State,
     WorkflowEngineVersion,
 )
@@ -113,6 +115,35 @@ def test_run_log_state_values() -> None:
     assert RunLog().model_dump()["state"] == "UNKNOWN"
     assert RunLog(state=State.RUNNING).model_dump()["state"] == "RUNNING"
     assert DbDocument().model_dump()["run_log"]["state"] == "UNKNOWN"
+
+
+def test_run_list_response_keeps_summaries() -> None:
+    """Run lists keep `RunSummary` items, and accept `RunStatus` items.
+
+    WES 1.1.0 allows both (`anyOf`); WES 1.0.1 instances list `RunStatus`.
+    """
+    response = RunListResponse.model_validate(
+        {
+            "runs": [
+                {
+                    "run_id": "DONE01",
+                    "state": "COMPLETE",
+                    "start_time": "2026-11-19T10:00:00Z",
+                    "end_time": "2026-11-19T11:00:00Z",
+                    "tags": {"project": "demo"},
+                },
+                {"run_id": "OLD001", "state": "RUNNING"},
+            ],
+            "next_page_token": "",
+        }
+    )
+    assert response.runs is not None
+    summary, status = response.runs
+    assert isinstance(summary, RunSummary)
+    assert summary.tags == {"project": "demo"}
+    assert summary.start_time == "2026-11-19T10:00:00Z"
+    assert summary.end_time == "2026-11-19T11:00:00Z"
+    assert type(status) is RunStatus
 
 
 def test_optional_fields_default_to_none() -> None:
