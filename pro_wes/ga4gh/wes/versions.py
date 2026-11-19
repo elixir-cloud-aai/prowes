@@ -23,7 +23,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Self
 
-_VERSION = re.compile(r"v?(\d+)\.(\d+)(?:[.\-+].*)?", re.IGNORECASE)
+# at most 9 digits per component, far below the limit of `int()`
+_VERSION = re.compile(r"v?(\d{1,9})\.(\d{1,9})(?:[.\-+].*)?", re.IGNORECASE)
 
 ENGINE_FIELDS = ("workflow_engine", "workflow_engine_version")
 """Fields of run requests of WES 1.1 that choose the workflow engine."""

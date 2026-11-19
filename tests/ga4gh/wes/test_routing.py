@@ -67,18 +67,23 @@ class FakeServiceInfos:
         answers: Status and body of the service info of each URL, or the
             exception that reading it raises; URLs without one fail.
         reads: URLs read, in order.
+        timeouts: Timeouts of the reads, in order.
     """
 
     def __init__(self) -> None:
         """Create the fake, without answers."""
         self.answers: dict[str, tuple[int, Any] | Exception] = {}
         self.reads: list[str] = []
+        self.timeouts: list[float] = []
 
-    def __call__(self, backend: Backend) -> tuple[int, Any]:
+    def __call__(
+        self, backend: Backend, timeout: float = routing.PROBE_TIMEOUT
+    ) -> tuple[int, Any]:
         """Read the service info of a WES instance.
 
         Args:
             backend: Backend.
+            timeout: Timeout of the read, in seconds.
 
         Returns:
             Status and body.
@@ -87,6 +92,7 @@ class FakeServiceInfos:
             Exception: Reading it fails.
         """
         self.reads.append(backend.url)
+        self.timeouts.append(timeout)
         answer = self.answers.get(
             backend.url, EngineRequestNotSent("not reachable", reason="connect_error")
         )
@@ -408,17 +414,18 @@ def test_eligible_deadline(
     first, second = _backend(URL_10), _backend(URL_11)
     reads = service_infos.reads
 
-    def _slow(backend: Backend) -> tuple[int, Any]:
+    def _slow(backend: Backend, timeout: float) -> tuple[int, Any]:
         """Read a service info, taking the whole time.
 
         Args:
             backend: Backend.
+            timeout: Timeout of the read, in seconds.
 
         Returns:
             Its status and service info.
         """
-        clock[0] += routing.PROBE_TIMEOUT
-        return service_infos(backend)
+        clock[0] += timeout
+        return service_infos(backend, timeout)
 
     with foca_app.app.app_context():
         # `first` was read once, and its version has expired since
@@ -428,6 +435,34 @@ def test_eligible_deadline(
         assert eligible_backends(ENGINE_REQUEST, [first, second]) == [second]
     # `second` first; then the deadline has passed for `first`
     assert reads == [URL_10, URL_11]
+
+
+def test_eligible_remaining_time(
+    foca_app: App,
+    service_infos: FakeServiceInfos,
+    clock: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each read gets the time left of `PROBE_TIMEOUT` for all of them."""
+
+    def _three_seconds(backend: Backend, timeout: float) -> tuple[int, Any]:
+        """Read a service info in three seconds.
+
+        Args:
+            backend: Backend.
+            timeout: Timeout of the read, in seconds.
+
+        Returns:
+            Its status and service info.
+        """
+        clock[0] += 3
+        return service_infos(backend, timeout)
+
+    monkeypatch.setattr(routing, "read_service_info", _three_seconds)
+    backends = [_backend(URL_10), _backend(URL_11)]
+    with foca_app.app.app_context():
+        assert eligible_backends(ENGINE_REQUEST, backends) == [backends[1]]
+    assert service_infos.timeouts == [routing.PROBE_TIMEOUT, routing.PROBE_TIMEOUT - 3]
 
 
 def test_select_first_eligible(

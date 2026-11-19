@@ -51,6 +51,10 @@ RUN_LOG_10: dict[str, Any] = {
         ("1.1.0-rc1", V11),
         (1.0, V10),
         ("1", None),
+        # beyond Python's limit of digits for `int()`: no version
+        ("1" * 5000 + ".0", None),
+        ("1.123456789", WesVersion(1, 123456789)),
+        ("1.1234567890", None),
         ("", None),
         ("one", None),
         (None, None),

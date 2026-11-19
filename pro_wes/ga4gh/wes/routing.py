@@ -93,7 +93,9 @@ class BackendVersions:
         """Remove all cached versions."""
         self._cache.clear()
 
-    def get(self, backend: Backend, probe: bool = True) -> WesVersion:
+    def get(
+        self, backend: Backend, probe: bool = True, timeout: float = PROBE_TIMEOUT
+    ) -> WesVersion:
         """Get the WES version of a WES instance.
 
         Never raises: runs can be forwarded to WES instances of unknown
@@ -103,6 +105,7 @@ class BackendVersions:
             backend: Backend.
             probe: Whether to read the service info of the WES instance if no
                 version is cached, or the cached one expired.
+            timeout: Time that reading the service info may take, in seconds.
 
         Returns:
             The version of the label `wes.version` of the backend, else that
@@ -114,7 +117,7 @@ class BackendVersions:
             return version
         cached = self._cache.get(backend.url)
         if probe and (cached is None or time.monotonic() >= cached.expires_at):
-            cached = self._probe(backend)
+            cached = self._probe(backend, timeout=timeout)
             self._cache[backend.url] = cached
         return (cached.version if cached is not None else None) or OLDEST
 
@@ -146,7 +149,7 @@ class BackendVersions:
         cached = self._cache.get(backend.url)
         return cached is not None and cached.version is not None
 
-    def _probe(self, backend: Backend) -> _Probe:
+    def _probe(self, backend: Backend, timeout: float = PROBE_TIMEOUT) -> _Probe:
         """Read the WES version of a WES instance from its service info.
 
         The service info is read without credentials (it is public in the WES
@@ -160,12 +163,13 @@ class BackendVersions:
 
         Args:
             backend: Backend.
+            timeout: Time that reading the service info may take, in seconds.
 
         Returns:
             What the service info says, and when to read it again.
         """
         try:
-            status, service_info = read_service_info(backend)
+            status, service_info = read_service_info(backend, timeout=timeout)
             if not (
                 (200 <= status < 300 and isinstance(service_info, dict))
                 or status in PROBE_REFUSED
@@ -211,13 +215,16 @@ class BackendVersions:
 backend_versions = BackendVersions()
 
 
-def read_service_info(backend: Backend) -> tuple[int, Any]:
+def read_service_info(
+    backend: Backend, timeout: float = PROBE_TIMEOUT
+) -> tuple[int, Any]:
     """Read the service info of a WES instance, without credentials.
 
     Must be called in an app context.
 
     Args:
         backend: Backend.
+        timeout: Time that reading the service info may take, in seconds.
 
     Returns:
         Status and JSON body of the response (`None` if it is no JSON).
@@ -228,20 +235,23 @@ def read_service_info(backend: Backend) -> tuple[int, Any]:
     client = WesClient(
         host=backend.url, base_path=api_path(backend, get_backend_list())
     )
-    return client.read_service_info(timeout=PROBE_TIMEOUT)
+    return client.read_service_info(timeout=timeout)
 
 
-def backend_version(backend: Backend, probe: bool = True) -> WesVersion:
+def backend_version(
+    backend: Backend, probe: bool = True, timeout: float = PROBE_TIMEOUT
+) -> WesVersion:
     """Get the WES version of a WES instance (cf. :py:class:`BackendVersions`).
 
     Args:
         backend: Backend.
         probe: Whether its service info may be read now.
+        timeout: Time that reading the service info may take, in seconds.
 
     Returns:
         The version; the oldest supported one if it is unknown.
     """
-    return backend_versions.get(backend, probe=probe)
+    return backend_versions.get(backend, probe=probe, timeout=timeout)
 
 
 def eligible_backends(request: Any, backends: list[Backend]) -> list[Backend]:
@@ -266,7 +276,9 @@ def eligible_backends(request: Any, backends: list[Backend]) -> list[Backend]:
         return list(backends)
     deadline = time.monotonic() + PROBE_TIMEOUT
     for backend in sorted(backends, key=backend_versions.was_read):
-        backend_version(backend, probe=time.monotonic() < deadline)
+        # each read within the time left
+        remaining = deadline - time.monotonic()
+        backend_version(backend, probe=remaining > 0, timeout=remaining)
     return [
         backend
         for backend in backends
