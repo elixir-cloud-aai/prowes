@@ -263,7 +263,7 @@ class WesClient:
 
         Validated against WES 1.1.0 (`ServiceInfo`): the service info of WES
         1.0.x instances (e.g., `workflow_engine_versions` as strings) is
-        invalid until versions are read per instance (#122).
+        invalid; their versions are read with :py:meth:`read_service_info`.
 
         Args:
             timeout: Timeout of the request as a whole, in seconds; by
@@ -280,6 +280,30 @@ class WesClient:
         """
         body = self._request("GET", "/service-info", timeout=timeout)
         return _validate(body, ServiceInfo)
+
+    def read_service_info(self, timeout: float | None = None) -> tuple[int, Any]:
+        """Read the service info of the WES instance, as it is.
+
+        Not validated, as WES instances of other WES versions serve other
+        forms (cf. :py:mod:`pro_wes.ga4gh.wes.routing`).
+
+        Args:
+            timeout: Timeout of the request as a whole, in seconds; by
+                default the client's (`custom.defaults.timeout`).
+
+        Returns:
+            Status of the response (any but a redirect), and its parsed JSON
+            body (`None` if it is no JSON).
+
+        Raises:
+            pro_wes.exceptions.EngineUnavailable: The request failed.
+        """
+        response = self._send("GET", "/service-info", timeout=timeout)
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        return response.status, body
 
     def post_run(
         self,

@@ -17,6 +17,8 @@ from pydantic import (
     model_validator,
 )
 
+from pro_wes.ga4gh.wes.versions import SUPPORTED, WES_VERSION_LABEL, WesVersion
+
 DEFAULT_API_PATH = "/ga4gh/wes/v1"
 """Path of the WES API, relative to the URL of a backend, as the WES
 specification has it; that of the API of proWES too."""
@@ -128,17 +130,44 @@ class Wes(BaseModel):
         max_response_size: Maximum size of each response of a WES instance,
             in bytes (by default FOCA's, 16 MiB); larger responses fail the
             request.
+        version_cache_ttl: Seconds that the WES version of a WES instance,
+            as read from its service info, is cached (cf.
+            :py:mod:`pro_wes.ga4gh.wes.routing`).
 
     Attributes:
         backends: WES instances that runs may be forwarded to, in order.
         max_response_size: Maximum size of each response of a WES instance,
             in bytes.
+        version_cache_ttl: Seconds that the WES version of a WES instance,
+            as read from its service info, is cached.
     """
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     backends: list[WesBackendEntry] = []
     max_response_size: PositiveInt = MAX_RESPONSE_SIZE
+    version_cache_ttl: PositiveInt = 3600
+
+    @model_validator(mode="after")
+    def known_versions(self) -> Self:
+        """Refuse labels `wes.version` of versions that proWES doesn't support.
+
+        Returns:
+            The configuration.
+
+        Raises:
+            ValueError: The label of an entry is set to another version.
+        """
+        supported = ", ".join(f'"{version}"' for version in sorted(SUPPORTED))
+        for entry in self.backends:
+            label = entry.labels.get(WES_VERSION_LABEL)
+            if label is not None and WesVersion.parse(label) not in SUPPORTED:
+                raise ValueError(
+                    f"Label `{WES_VERSION_LABEL}` of backend entry {entry.id}:"
+                    f" {label!r} is none of the supported WES versions"
+                    f" ({supported})"
+                )
+        return self
 
     @model_validator(mode="after")
     def unique_ids(self) -> Self:

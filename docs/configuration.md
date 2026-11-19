@@ -29,6 +29,7 @@ The settings that deployments usually change:
 | `custom.list_runs.default_page_size`, `custom.list_runs.max_page_size` | `5`, `100` | Runs per page of `GET /runs` without `page_size`, and at most, see [Run lists](#run-lists) |
 | `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds, for each request as a whole; required, a positive number |
 | `custom.wes.max_response_size` | `16777216` (16 MiB) | Maximum size of each response of a WES instance, in bytes; larger responses fail the request, see [WES instances](#wes-instances) |
+| `custom.wes.version_cache_ttl` | `3600` | Seconds that the WES version of a WES instance, as read from its service info, is cached, see [WES versions](#wes-versions) |
 
 ## WES instances
 
@@ -58,8 +59,10 @@ custom:
         api_path: /api/wes/v1
 ```
 
-New runs go to the first WES instance of the list: the first configured one,
-or the first verified WES instance of a registry entry that comes first.
+New runs go to the first WES instance of the list that can run them, by
+its WES version (see [WES versions](#wes-versions)): the first configured
+one, or the first verified WES instance of a registry entry that comes
+first.
 Until FOCA's gateway plugins choose and order the WES instances
 ([#121](https://github.com/elixir-cloud-aai/prowes/issues/121)), later
 entries are used only if the ones before them yield none (e.g., a registry
@@ -75,7 +78,7 @@ Settings of a WES instance:
 | `api_path` | `/ga4gh/wes/v1` | Path of the WES API, relative to `url`; `/` if it is at `url` itself |
 | `id` | the normalized URL | Identifier; entries with the same identifier are rejected |
 | `url_schemes` | `[https]` | Allowed schemes of `url`; add `http` for local tests only |
-| `labels`, `location` | none | Labels and location, for plugins ([#121](https://github.com/elixir-cloud-aai/prowes/issues/121)) |
+| `labels`, `location` | none | Labels and location, for plugins ([#121](https://github.com/elixir-cloud-aai/prowes/issues/121)); the label `wes.version` states the WES version (see [WES versions](#wes-versions)) |
 | `auth` | `none` | Credentials for the WES instance: only `none` for now; credentials per WES instance come with authentication ([#120](https://github.com/elixir-cloud-aai/prowes/issues/120)) |
 
 URLs are normalized (e.g., lowercase host, without default port and trailing
@@ -157,6 +160,44 @@ registry for the first run, then every `refresh_interval` seconds (default
 internal URLs (they also need `registry_allow_private_addresses`). The
 settings are those of FOCA's registry entries; `auth` must be `none`, as for
 WES instances.
+
+### WES versions
+
+proWES serves WES 1.1.0, and forwards runs to WES instances of WES 1.0
+(1.0.0, 1.0.1) and 1.1 (1.1.0; see [WES versions](wes-versions.md)). It
+needs to know which one each WES instance implements: the label
+`wes.version` of its entry (e.g., `"1.0"` or `"1.1.0"`; other versions make
+the app refuse to start) wins; otherwise, proWES reads `GET
+<url>/ga4gh/wes/v1/service-info` (or below its `api_path`), without
+credentials (the service info is public in the WES specification), within 5
+seconds, and caches the result per process for
+`custom.wes.version_cache_ttl` seconds (default: 3600; failures and answers
+without a supported version for 60 seconds). It reads `type.version`
+leniently (e.g., `1.0.1`, `v1.1.0`), if `type.group` is `org.ga4gh` and
+`type.artifact` is `wes`. A WES instance that reports no version that proWES
+supports (e.g., one that refuses anonymous reads with `401` or `403`, logged
+with a hint), or never answered, counts as WES 1.0, with a warning in the
+logs; one that stops answering keeps the version read before.
+
+The service info is read when a run needs the version: for the WES instance
+that a run goes to, and, for the first run with fields that WES 1.0 can't
+express, from all WES instances of the list without a label, also from
+those that the run doesn't go to.
+
+```yaml
+custom:
+  wes:
+    backends:
+      - type: ga4gh-wes
+        url: https://wes.example.org
+        labels:
+          wes.version: "1.1"
+```
+
+The label of a registry entry applies to all WES instances that it
+discovers. To tell the versions in a registry apart, use one entry per
+version, with its `versions` and label (`versions: ["1.1"]` and
+`wes.version: "1.1"`).
 
 ## Environment variables and overlays
 

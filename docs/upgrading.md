@@ -81,6 +81,19 @@ the client is no longer passed on, also not for runs stored before the
 upgrade. With authentication off, as in earlier versions, there was none to
 pass on; WES instances must accept requests without credentials.
 
+### WES versions
+
+proWES reads the WES version of each WES instance (the label `wes.version`
+of its entry, or its service info, `GET /service-info` of its WES API,
+without credentials) and forwards each run in that version, to a WES
+instance that can run it unchanged (see [WES versions](wes-versions.md) and
+[WES versions](configuration.md#wes-versions)). WES instances that don't
+serve their service info anonymously, or report no version, count as WES
+1.0, with a warning in the logs: set their label `wes.version`, e.g.,
+`"1.1"`. Labels of other versions stop the app on startup. Runs stored
+before the upgrade are tracked as runs of WES 1.0, whose run logs are valid
+in WES 1.1.0.
+
 ### Requests to WES instances (breaking)
 
 Requests to WES instances go through FOCA's guarded HTTP client (see [WES

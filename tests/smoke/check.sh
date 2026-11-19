@@ -181,11 +181,20 @@ if [ "${status}" != 413 ] || ! jq -e '.status == 413 and (.detail | test("reques
   cat "${body}"
   exit 1
 fi
-# The fake WES got each run once, with all fields as sent to proWES (the
-# held one with its tags, so it was held until canceled), and both are
-# finished there
+# proWES read the WES versions of the fake WES instances that runs went to
+# (WES 1.0.1), from their service infos
+if ! docker compose logs prowes | grep -q "WES version of WES instance https://fake-wes: 1.0"; then
+  echo "::error::proWES didn't read the WES version of the fake WES"
+  exit 1
+fi
+# The fake WES (WES 1.0.1, which rejects fields of WES 1.1.0) got each run
+# once, with all fields as sent to proWES (the held one with its tags, so it
+# was held until canceled), and both are finished there; the fake WES of WES
+# 1.1.0, the second WES instance, got none of them
 docker compose exec -T fake-wes python /smoke/fake_wes.py verify 1 \
   "${request[@]}" 'tags={"smoke": "true"}'
 docker compose exec -T fake-wes python /smoke/fake_wes.py verify 1 \
   "${request[@]}" 'tags={"fake.hold": "true"}'
+docker compose exec -T fake-wes-11 python /smoke/fake_wes.py verify 0 \
+  "${request[@]}"
 echo "Smoke test passed"

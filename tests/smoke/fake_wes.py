@@ -11,6 +11,12 @@ workflow URL, and, in final states only, a standard output of its own
 sees what proWES forwarded and that it fetched the final run log.
 `GET /runs` lists all runs it received.
 
+It implements WES 1.0.1, or the version of the environment variable
+`FAKE_WES_VERSION` (`1.1.0`), in its service info (`service_info()`). As
+WES 1.0.1, it rejects run requests with fields that WES 1.0.1 doesn't have
+(`400`), as some WES instances do, so that the smoke test sees that proWES
+forwards runs in the version of each WES instance.
+
 proWES sends runs to the WES instance of the smoke test's config
 (`custom.wes.backends` in `config.yaml` of this directory): the fake WES,
 at its service name in Docker Compose. It serves HTTPS on port 443, with a
@@ -44,6 +50,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
+import os
 from pathlib import Path
 import ssl
 import sys
@@ -61,9 +68,10 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 import jwt
 
 BASE_PATH = "/ga4gh/wes/v1"
-# Host names of the certificate: the service name in Docker Compose (the WES
-# instance of the smoke test's config, `config.yaml`) and the loopback host
-HOSTS = ["fake-wes", "localhost"]
+# Host names of the certificate: the service names in Docker Compose (the
+# WES instances of the smoke test's config, `config.yaml`: of WES 1.0.1 and
+# 1.1.0) and the loopback host
+HOSTS = ["fake-wes", "fake-wes-11", "localhost"]
 HTTP_PORT = 8080
 HTTPS_PORT = 443
 RUN_SECONDS = 2.0
@@ -81,7 +89,7 @@ KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 # New for each start too, so that proWES fetches the new key after a restart
 KEY_ID = uuid.uuid4().hex
 CANCEL_SECONDS = 1.0
-SERVICE_INFO = {
+SERVICE_INFO: dict[str, Any] = {
     "id": "org.example.fake-wes",
     "name": "Fake WES",
     "type": {"group": "org.ga4gh", "artifact": "wes", "version": "1.0.1"},
@@ -96,6 +104,46 @@ SERVICE_INFO = {
     "auth_instructions_url": "https://example.org/auth",
     "tags": {},
 }
+
+# Form fields of run requests of WES 1.0.1 (WES 1.1.0 adds the workflow
+# engine and its version)
+FIELDS_1_0 = frozenset(
+    {
+        "workflow_params",
+        "workflow_type",
+        "workflow_type_version",
+        "tags",
+        "workflow_engine_parameters",
+        "workflow_url",
+        "workflow_attachment",
+    }
+)
+
+
+def version() -> str:
+    """Get the WES version of the fake WES.
+
+    Returns:
+        The version: `1.0.1`, unless `FAKE_WES_VERSION` sets `1.1.0`.
+    """
+    return "1.1.0" if os.environ.get("FAKE_WES_VERSION") == "1.1.0" else "1.0.1"
+
+
+def service_info() -> dict[str, Any]:
+    """Get the service info, in the WES version of the fake WES.
+
+    Returns:
+        The service info (WES 1.1.0: the versions of each engine as objects).
+    """
+    if version() == "1.0.1":
+        return SERVICE_INFO
+    return {
+        **SERVICE_INFO,
+        "type": {**SERVICE_INFO["type"], "version": "1.1.0"},
+        "supported_wes_versions": ["1.1.0"],
+        "workflow_engine_versions": {"fake": {"workflow_engine_version": ["1.0.0"]}},
+    }
+
 
 # Standard output of runs in final states, which only final run logs have
 FINAL_STDOUT = {"COMPLETE": "fake complete", "CANCELED": "fake canceled"}
@@ -262,7 +310,7 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         with LOCK:
             if parts == ["service-info"]:
-                self._send(HTTPStatus.OK, SERVICE_INFO)
+                self._send(HTTPStatus.OK, service_info())
             elif parts == ["runs"]:
                 runs = [
                     {"run_id": run_id, "state": state_of(run, now)}
@@ -306,6 +354,10 @@ class Handler(BaseHTTPRequestHandler):
                 ]
                 if missing:
                     self._error(HTTPStatus.BAD_REQUEST, f"missing fields: {missing}")
+                    return
+                unknown = sorted(set(form) - FIELDS_1_0)
+                if unknown and version() == "1.0.1":
+                    self._error(HTTPStatus.BAD_REQUEST, f"unknown fields: {unknown}")
                     return
                 try:
                     tags = json.loads(form.get("tags") or "{}")

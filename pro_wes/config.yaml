@@ -237,6 +237,12 @@ custom:
   # Cf. "WES instances" in `docs/configuration.md`
   # Responses of WES instances are read up to `max_response_size` bytes
   # (16 MiB); larger ones fail the request
+  # Runs go to WES instances that can run them, in their WES version (1.0
+  # or 1.1): the label `wes.version` of an entry (e.g., `labels:
+  # {wes.version: "1.1"}`), else the version of their service info, read
+  # without credentials and cached for `version_cache_ttl` seconds; cf. "WES
+  # versions" in `docs/configuration.md`
   wes:
     backends: []
     max_response_size: 16777216
+    version_cache_ttl: 3600

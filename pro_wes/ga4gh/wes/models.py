@@ -391,6 +391,9 @@ class WesEndpoint(BaseModel):
         base_path: Override the default path suffix defined in the WES API
             specification, i.e., `/ga4gh/wes/v1`.
         run_id: Identifier for workflow run on external WES endpoint.
+        wes_version: WES version of the WES instance that the run was
+            forwarded in (e.g., `1.0`; cf. :py:mod:`pro_wes.ga4gh.wes.versions`);
+            none for runs stored by earlier versions of proWES.
 
     Attributes:
         host: Host at which the WES API is served that is processing this
@@ -401,11 +404,14 @@ class WesEndpoint(BaseModel):
         base_path: Override the default path suffix defined in the WES API
             specification, i.e., `/ga4gh/wes/v1`.
         run_id: Identifier for workflow run on external WES endpoint.
+        wes_version: WES version of the WES instance that the run was
+            forwarded in.
     """
 
     host: str
     base_path: str | None = "/ga4gh/wes/v1"
     run_id: str | None = None
+    wes_version: str | None = None
 
 
 class DbDocument(BaseModel):

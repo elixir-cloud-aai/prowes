@@ -595,10 +595,27 @@ def test_get_run_status_preempted() -> None:
 
 @pytest.mark.usefixtures("foca_app")
 def test_service_info_wes_1_0() -> None:
-    """Service info of WES 1.0.x (engine versions as strings) is invalid (#122)."""
+    """Service info of WES 1.0.x (engine versions as strings) is invalid.
+
+    It is read as it is instead, for the WES version (`read_service_info`).
+    """
     body = {**SERVICE_INFO, "workflow_engine_versions": {"cwltool": "3.1"}}
     with pytest.raises(ValueError, match="invalid response"):
         _client(FakeHttp(body=body)).get_service_info()
+    http = FakeHttp(body=body)
+    assert _client(http).read_service_info(timeout=5) == (200, body)
+    assert http.calls[0]["url"].endswith("/ga4gh/wes/v1/service-info")
+    assert http.calls[0]["timeout"] == 5
+
+
+@pytest.mark.usefixtures("foca_app")
+@pytest.mark.parametrize(("status", "body"), [(401, b"denied"), (500, b"")])
+def test_read_service_info_any_status(status: int, body: bytes) -> None:
+    """Service infos are read with their status, also without JSON."""
+    assert _client(FakeHttp(body=body, status=status)).read_service_info() == (
+        status,
+        None,
+    )
 
 
 # What requests may do (`http`, private addresses), by backend list

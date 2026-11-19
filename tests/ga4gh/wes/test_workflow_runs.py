@@ -39,7 +39,7 @@ from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
-from tests.conftest import OWNER, TokenClient
+from tests.conftest import BACKEND_URL, OWNER, TokenClient
 
 BASE_PATH = "/ga4gh/wes/v1"
 REMOTE_RUN_ID = "REMOTE1"
@@ -169,10 +169,39 @@ def test_post_run(
                 "remote_host": stored["wes_endpoint"]["host"],
                 "remote_base_path": "/ga4gh/wes/v1",
                 "remote_run_id": REMOTE_RUN_ID,
+                "remote_wes_version": "1.1",
             },
             "task_id": stored["task_id"],
         }
     ]
+    # the WES version that the run was forwarded in
+    assert stored["wes_endpoint"]["wes_version"] == "1.1"
+
+
+def test_post_run_wes_10(
+    add_overlay: Callable[[str], None],
+    mongodb: MongoClient[dict[str, Any]],
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+    token: str,
+) -> None:
+    """Runs for WES instances of WES 1.0 are forwarded in WES 1.0."""
+    from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
+
+    add_overlay(
+        "custom:\n  wes:\n    backends:\n      - type: ga4gh-wes\n"
+        f'        url: {BACKEND_URL}\n        labels: {{wes.version: "1.0"}}\n'
+    )
+    with TokenClient(init_app(), token) as client:
+        response = _post_run(client, RUN_REQUEST)
+    assert response.status_code == 200
+    assert remote_wes == [
+        {**RUN_REQUEST, "tags": "{}", "workflow_engine_parameters": "{}"}
+    ]
+    stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
+    assert stored is not None
+    assert stored["wes_endpoint"]["wes_version"] == "1.0"
+    assert queued[0]["kwargs"]["remote_wes_version"] == "1.0"
 
 
 @pytest.mark.usefixtures("queued")

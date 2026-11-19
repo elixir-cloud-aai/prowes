@@ -19,6 +19,12 @@ from pro_wes.ga4gh.wes.models import (
     RunStatus,
     State,
 )
+from pro_wes.ga4gh.wes.versions import (
+    OLDEST,
+    SUPPORTED,
+    WesVersion,
+    upgrade_run_log,
+)
 from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 
@@ -37,6 +43,7 @@ def task__track_run_progress(
     remote_base_path: str,
     remote_run_id: str,
     jwt: str | None,
+    remote_wes_version: str | None = None,
 ) -> str:
     """Relay workflow run request to remote WES and track run progress.
 
@@ -56,6 +63,10 @@ def task__track_run_progress(
         remote_run_id: Workflow run identifier on remote WES service.
         jwt: Ignored: the client's token is never passed on to WES instances
             (kept for tasks queued by earlier versions).
+        remote_wes_version: WES version of the remote service, as the run was
+            forwarded in (e.g., `1.0`); its run logs are converted to the WES
+            version of proWES. The oldest supported version if none, or
+            unsupported (e.g., for tasks queued by earlier versions).
 
     Returns:
         Task identifier.
@@ -103,12 +114,16 @@ def task__track_run_progress(
             token=None,
         )
 
+        parsed = WesVersion.parse(remote_wes_version)
+        wes_version = parsed if parsed in SUPPORTED else OLDEST
+
         # fetch run log and upsert database document
         document: DbDocument = _update_run_log(
             db_client=db_client,
             wes_client=wes_client,
             run_id=remote_run_id,
             timeout=controller_config.timeout_post,
+            wes_version=wes_version,
         )
 
         # track workflow run progress, from the state stored last (so that a
@@ -154,6 +169,7 @@ def task__track_run_progress(
             wes_client=wes_client,
             run_id=remote_run_id,
             timeout=controller_config.timeout_post,
+            wes_version=wes_version,
         )
     except SoftTimeLimitExceeded:
         # tracking took longer than `custom.post_runs.timeout_job`; runs whose
@@ -205,6 +221,7 @@ def _update_run_log(
     wes_client: WesClient,
     run_id: str,
     timeout: float,
+    wes_version: WesVersion = OLDEST,
 ) -> DbDocument:
     """Fetch the run log from the remote WES and store it in the run document.
 
@@ -221,6 +238,8 @@ def _update_run_log(
         wes_client: Client of the remote WES.
         run_id: Workflow run identifier on remote WES service.
         timeout: Timeout of the request, in seconds.
+        wes_version: WES version of the remote WES; the run log is converted
+            from it to the WES version of proWES.
 
     Returns:
         Run document, updated if any field was stored.
@@ -235,6 +254,7 @@ def _update_run_log(
             exc,
         )
         return db_client.get_document()
+    response = upgrade_run_log(response, wes_version)
     fields: dict[str, Any] = {}
     for key, adapter in RUN_LOG_FIELDS.items():
         if key not in response:
