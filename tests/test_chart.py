@@ -535,14 +535,29 @@ def test_flower_needs_secret() -> None:
 
 
 def test_notes() -> None:
-    """The notes warn of the missing authentication and show the URLs."""
+    """The notes warn of missing token issuers and show the URLs."""
     notes = render_notes("--set", "hostName=wes.example.org")
-    assert "serves the WES API without authentication" in notes
+    assert "No token issuers are trusted" in notes
     assert "https://wes.example.org/ga4gh/wes/v1/service-info" in notes
     assert "The Ingress has no TLS" in notes
     notes = render_notes(*NO_INGRESS)
     assert "kubectl port-forward svc/prowes 8080:8080" in notes
     assert "http://localhost:8080/ga4gh/wes/v1/ui/" in notes
+
+
+def test_auth_settings() -> None:
+    """With token issuers, the notes don't warn of missing ones."""
+    issuers = 'config.security.auth.issuers=["https://login.example.org/"]'
+    audience = 'config.security.auth.audience=["my-portal"]'
+    notes = render_notes(
+        "--set",
+        "hostName=wes.example.org",
+        "--set-json",
+        issuers,
+        "--set-json",
+        audience,
+    )
+    assert "No token issuers are trusted" not in notes
 
 
 def test_library_chart_pinned() -> None:

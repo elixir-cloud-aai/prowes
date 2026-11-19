@@ -68,8 +68,8 @@ the token's issuer as `<namespace>|<subject>`, so that equal subjects of
 different issuers are different owners. The namespace is the issuer itself
 (e.g., `https://login.example.org/oidc/|alice`), also if only one issuer is
 trusted, so that owners stay the same when another issuer is trusted later
-(and when proWES moves to FOCA 0.23, which namespaces subjects the same
-way). Set `namespace` of an issuer (entries of `security.auth.issuers` as
+(and when proWES moves to FOCA 0.23, which namespaces subjects by default
+the same way). Set `namespace` of an issuer (entries of `security.auth.issuers` as
 `{issuer: <url>, namespace: <name>}`) for a shorter one, or an empty one to
 keep its subjects bare; changing it later orphans the runs stored so far.
 Owners are stored with each run (`user_id`) and taken from the token only,
@@ -78,8 +78,9 @@ never from the request.
 Callers list their own runs only (`GET /runs`), and only they read, query
 the status of and cancel a run (`GET /runs/{run_id}`, `GET
 /runs/{run_id}/status`, `POST /runs/{run_id}/cancel`); requests for runs of
-others get `403 Forbidden`. Tokens whose subject can't own runs (no subject,
-or a bare one containing `|`) get `403 Forbidden` too. Runs stored without
+others get `403 Forbidden`. Tokens without a subject claim are invalid
+(`401`); tokens whose subject can't own runs (an empty one, or a bare one
+containing `|`) get `403 Forbidden`. Runs stored without
 owner (e.g., before authentication was switched on) can't be read by
 anyone. Roles, admins and sharing runs follow with access control
 ([#48](https://github.com/elixir-cloud-aai/prowes/issues/48)).

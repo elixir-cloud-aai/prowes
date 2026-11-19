@@ -76,9 +76,10 @@ RUN_SECONDS = 2.0
 ISSUER = "https://fake-wes/oidc/"
 IDP_PATH = "/oidc/"
 AUDIENCE = "prowes-smoke"
-TOKEN_SECONDS = 600
+TOKEN_SECONDS = 3600
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-KEY_ID = "smoke"
+# New for each start too, so that proWES fetches the new key after a restart
+KEY_ID = uuid.uuid4().hex
 CANCEL_SECONDS = 1.0
 SERVICE_INFO = {
     "id": "org.example.fake-wes",

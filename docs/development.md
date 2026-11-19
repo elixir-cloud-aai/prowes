@@ -112,8 +112,8 @@ has forwarded the run to the remote WES, so that the run isn't tracked.
 
 4. From the repository root, start the app with Flask's development server,
    on the host and port of the config (`server.host` and `server.port`,
-   `127.0.0.1:8080`: the loopback interface only, as the WES API is served
-   without authentication), and the Celery worker in another shell:
+   `127.0.0.1:8080`: the loopback interface only), and the Celery worker in
+   another shell:
 
     ```bash
     uv run python -m pro_wes.app

@@ -4,9 +4,11 @@ Settings of the app for the templates of the library chart foca-common (see
 YAML; the templates are called with a dict of the root context (`root`) and
 these settings (`settings`). They follow the base config in the image
 (`pro_wes/config.yaml`): its size limit of request bodies
-(`server.max_content_length`, 10 MiB), which the library checks; it serves
-the API without authentication, so no audience is required; and its database is `runStore` (`db.dbs`), without
-access control. Every template includes the settings, so the app's checks
+(`server.max_content_length`, 10 MiB), which the library checks; it trusts
+no token issuer, and foca-common 0.4.0 requires an audience also without
+issuers, so the audience is not required here (the app refuses to start with
+issuers but no audience, and the notes warn without issuers); and its
+database is `runStore` (`db.dbs`), without FOCA's access control. Every template includes the settings, so the app's checks
 (`prowes.validate`) run first, before those of the library and whichever
 template Helm renders first.
 */}}

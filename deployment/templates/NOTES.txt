@@ -13,9 +13,12 @@ front of the cluster.
 proWES is being deployed as release {{ .Release.Name }}
 in namespace {{ .Release.Namespace }}!
 
-WARNING: proWES serves the WES API without authentication, so anyone who can
-reach it can start, list and cancel runs: limit access to it in front of
-the app (see docs/deployment.md, Exposing the app).
+{{- if not (dig "security" "auth" "issuers" nil .Values.config) }}
+
+WARNING: No token issuers are trusted (config.security.auth.issuers), so the
+WES API rejects all requests but GET /service-info (401): set the issuers
+and audiences of the deployment (see docs/deployment.md, Authentication).
+{{- end }}
 {{- if and .Values.prowes.ingress.enabled (not .Values.prowes.ingress.https.enabled) }}
 
 WARNING: The Ingress has no TLS (prowes.ingress.https.enabled is false), so
