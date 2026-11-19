@@ -136,6 +136,20 @@ ALLOWED_DEVIATIONS: dict[str, Callable[[Location, Any], bool]] = {
     "409 of POST /runs/{run_id}/cancel": lambda loc, _: (
         loc == ("paths", "/runs/{run_id}/cancel", "post", "responses", 409)
     ),
+    "descriptions of 401, 403 and 500 of POST /runs/{run_id}/cancel": lambda loc, _: (
+        loc
+        in {
+            (
+                "paths",
+                "/runs/{run_id}/cancel",
+                "post",
+                "responses",
+                status,
+                "description",
+            )
+            for status in (401, 403, 500)
+        }
+    ),
     "501 of the task endpoints": _is_task_501,
     "access tokens (bearer tokens), but for the service info": lambda loc, _: (
         loc in {("security",), ("paths", "/service-info", "get", "security")}
