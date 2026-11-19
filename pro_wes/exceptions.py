@@ -116,9 +116,9 @@ class EngineRefused(EngineProblem):
 
 
 class EngineInvalidResponse(EngineProblem):
-    """The external workflow engine sent a response that is invalid.
+    """The external workflow engine sent an invalid response.
 
-    One that conforms to neither the expected schema nor `ErrorResponse`.
+    E.g., a successful response that doesn't conform to the expected schema.
     """
 
 

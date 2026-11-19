@@ -86,8 +86,8 @@ class Upload(NamedTuple):
     content: bytes
 
 
-# Errors of WES instances that proWES answers with as its own, by status (as
-# `run_workflow()` does); others become `EngineRefused` (`500`)
+# Errors of WES instances that proWES answers with as its own, by status, when
+# a run is forwarded or canceled; others become `500`
 REMOTE_ERRORS: dict[int, type[Exception]] = {
     400: BadRequest,
     401: Unauthorized,
@@ -213,13 +213,7 @@ class WorkflowRuns:
             raise
         if isinstance(response, ErrorResponse):
             db_connector.set_system_error()
-            if response.status_code == 400:
-                raise BadRequest
-            if response.status_code == 401:
-                raise Unauthorized
-            if response.status_code == 403:
-                raise Forbidden
-            raise InternalServerError
+            raise REMOTE_ERRORS.get(response.status_code, InternalServerError)
         updated_document_stored: DbDocument = db_connector.upsert_fields_in_root_object(
             root="wes_endpoint",
             run_id=response.run_id,
@@ -527,16 +521,21 @@ class WorkflowRuns:
                 timeout=self.config.defaults.timeout,
             )
         except ValueError as exc:
-            # not `pydantic.ValidationError` (a `ValueError`): the timeout of
-            # the configuration is valid
+            # raised by the client for successful responses that are no
+            # `RunId`; its other `ValueError` (an invalid timeout) can't
+            # occur, as the timeout comes from the validated configuration
             logger.error(
-                "Invalid response of the WES instance to the cancellation of run '%s'.",
+                "WES instance at %s sent an invalid response to the"
+                " cancellation of run '%s'.",
+                wes_client.url,
                 run_id,
             )
             raise EngineInvalidResponse from exc
         if isinstance(response, ErrorResponse):
             logger.error(
-                "WES instance answered the cancellation of run '%s' with status %s.",
+                "WES instance at %s answered the cancellation of run '%s'"
+                " with status %s.",
+                wes_client.url,
                 run_id,
                 response.status_code,
             )

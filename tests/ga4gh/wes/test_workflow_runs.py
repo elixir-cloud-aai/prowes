@@ -6,11 +6,13 @@ access checks, and the paging of `GET /runs`.
 """
 
 from collections.abc import Callable, Iterator
+from json import dumps
 from pathlib import Path
 from typing import Any
 
 from connexion import App
 from foca.testing import Client
+from foca.utils.http import HttpResponse
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 import pytest
@@ -1024,7 +1026,7 @@ def _insert_running(mongodb: MongoClient[dict[str, Any]]) -> None:
 
 
 # Problem details of errors of the remote WES that proWES passes on
-REMOTE_ERRORS: dict[int, dict[str, Any]] = {
+PASSED_ON_PROBLEMS: dict[int, dict[str, Any]] = {
     400: {"title": "Bad request", "detail": "The request is malformed."},
     401: {"title": "Unauthorized", "detail": "The request is unauthorized."},
     403: {
@@ -1040,78 +1042,103 @@ REMOTE_REFUSED: dict[str, Any] = {
 }
 
 
+def _answer(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: Any
+) -> list[tuple[str, str]]:
+    """Let the remote WES answer every request with a canned HTTP response.
+
+    Only sending is replaced: the WES client reads the response.
+
+    Args:
+        monkeypatch: Monkeypatch fixture of the test.
+        status: HTTP status of the response.
+        body: Body of the response, as is if bytes, else encoded as JSON.
+
+    Returns:
+        Method and path of the requests sent, in order (filled as they are
+        sent).
+    """
+    requests: list[tuple[str, str]] = []
+    content = body if isinstance(body, bytes) else dumps(body).encode()
+
+    def _send(
+        _self: WesClient, method: str, path: str, *_args: Any, **_kwargs: Any
+    ) -> HttpResponse:
+        """Record a request and answer it.
+
+        Args:
+            _self: WES client; ignored.
+            method: HTTP method.
+            path: Path of the endpoint.
+            *_args: Further arguments; ignored.
+            **_kwargs: Further keyword arguments; ignored.
+
+        Returns:
+            Canned response.
+        """
+        requests.append((method, path))
+        return HttpResponse(status=status, content=content)
+
+    monkeypatch.setattr(WesClient, "_send", _send)
+    return requests
+
+
+# Bodies of error responses of WES instances: WES `ErrorResponse`, problem
+# details (e.g., of FOCA-based services), no JSON, and bodies that contradict
+# the status
+ERROR_BODIES: dict[str, Any] = {
+    "WES error": {"msg": "refused", "status_code": 404},
+    "problem details": {"title": "Not found", "status": 404, "detail": "x"},
+    "no JSON": b"<html>Bad gateway</html>",
+    "run identifier": {"run_id": REMOTE_RUN_ID},
+    "other WES error": {"msg": "refused", "status_code": 400},
+}
+
+
 @pytest.mark.parametrize(
     ("remote", "expected"),
     [
         *(
             (status, {**problem, "status": status})
-            for status, problem in REMOTE_ERRORS.items()
+            for status, problem in PASSED_ON_PROBLEMS.items()
         ),
         *((status, REMOTE_REFUSED) for status in (404, 409, 500, 502, 503)),
     ],
 )
+@pytest.mark.parametrize("body", ERROR_BODIES.values(), ids=ERROR_BODIES.keys())
 def test_cancel_run_remote_error(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
     mongodb: MongoClient[dict[str, Any]],
     remote: int,
     expected: dict[str, Any],
+    body: Any,
 ) -> None:
     """Errors of the remote WES become errors of proWES, not `200`.
 
-    `400`, `401` and `403` are passed on (as for `POST /runs`), other errors
-    (e.g., the remote run is unknown or has finished there) become `500`; the
-    stored state is kept.
+    By the HTTP status of the response, whatever its body: `400`, `401` and
+    `403` are passed on (as for `POST /runs`), other errors (e.g., the remote
+    run is unknown or has finished there) become `500`; the stored state is
+    kept.
     """
     _insert_running(mongodb)
-    monkeypatch.setattr(
-        WesClient,
-        "cancel_run",
-        lambda *_args, **_kwargs: ErrorResponse(msg="no", status_code=remote),
-    )
+    requests = _answer(monkeypatch, remote, body)
     response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
     assert response.status_code == expected["status"]
     assert response.json() == expected
-    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
-
-
-def test_cancel_run_remote_error_body(
-    foca_client: Client,
-    monkeypatch: pytest.MonkeyPatch,
-    mongodb: MongoClient[dict[str, Any]],
-) -> None:
-    """Error bodies of the remote WES, as the WES client reads them, are refused.
-
-    Only the request is replaced: the response is validated by the client.
-    """
-    _insert_running(mongodb)
-    requests: list[tuple[str, str]] = []
-
-    def _request(_self: WesClient, method: str, path: str, **_kwargs: Any) -> Any:
-        """Answer like a WES instance that doesn't know the remote run.
-
-        Args:
-            _self: WES client; ignored.
-            method: HTTP method.
-            path: Path of the endpoint.
-            **_kwargs: Keyword arguments; ignored.
-
-        Returns:
-            Error body of the WES API (`ErrorResponse`).
-        """
-        requests.append((method, path))
-        return {"msg": "run not found", "status_code": 404}
-
-    monkeypatch.setattr(WesClient, "_request", _request)
-    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
-    assert response.json() == REMOTE_REFUSED
     assert requests == [("POST", f"/runs/{REMOTE_RUN_ID}/cancel")]
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
 
 
 @pytest.mark.parametrize(
     "body",
-    [{"unexpected": True}, ["not", "an", "object"], {"run_id": 1}],
-    ids=["unknown object", "no object", "invalid run identifier"],
+    [
+        {"unexpected": True},
+        ["not", "an", "object"],
+        {"run_id": 1},
+        {"msg": "refused", "status_code": 404},
+    ],
+    ids=["unknown object", "no object", "invalid run identifier", "WES error"],
 )
 def test_cancel_run_remote_invalid_response(
     foca_client: Client,
@@ -1119,9 +1146,9 @@ def test_cancel_run_remote_invalid_response(
     mongodb: MongoClient[dict[str, Any]],
     body: Any,
 ) -> None:
-    """Invalid responses of the remote WES get `500` with their own details."""
+    """Successful responses without run identifier get `500` with own details."""
     _insert_running(mongodb)
-    monkeypatch.setattr(WesClient, "_request", lambda *_args, **_kwargs: body)
+    _answer(monkeypatch, 200, body)
     response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
     assert response.json() == {
         "title": "Internal server error",
@@ -1161,7 +1188,7 @@ def test_cancel_run_remote_unavailable(
         """
         raise error
 
-    monkeypatch.setattr(WesClient, "_request", _unavailable)
+    monkeypatch.setattr(WesClient, "_send", _unavailable)
     response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
     assert response.json() == {
         "title": "Internal server error",
@@ -1171,16 +1198,29 @@ def test_cancel_run_remote_unavailable(
     assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
 
 
-def test_cancel_run_remote_accepted(
+def test_cancel_run_remote_no_json(
     foca_client: Client,
     monkeypatch: pytest.MonkeyPatch,
     mongodb: MongoClient[dict[str, Any]],
 ) -> None:
+    """Successful responses that are no JSON leave the outcome unknown (`500`)."""
+    _insert_running(mongodb)
+    _answer(monkeypatch, 200, b"canceled")
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.json()["detail"] == "Could not reach remote WES service."
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+@pytest.mark.parametrize("status", [200, 202])
+def test_cancel_run_remote_accepted(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    status: int,
+) -> None:
     """Cancellations that the remote WES accepts get `200` with the run's own ID."""
     _insert_running(mongodb)
-    monkeypatch.setattr(
-        WesClient, "_request", lambda *_args, **_kwargs: {"run_id": REMOTE_RUN_ID}
-    )
+    _answer(monkeypatch, status, {"run_id": REMOTE_RUN_ID})
     response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
     assert response.status_code == 200
     assert response.json() == {"run_id": "RUNNIN"}

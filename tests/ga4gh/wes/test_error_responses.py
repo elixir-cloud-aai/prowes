@@ -13,6 +13,7 @@ from typing import Any
 
 from foca.errors.fields import MAX_FIELD_ERRORS
 from foca.testing import Client
+from foca.utils.http import HttpResponse
 from jsonschema import Draft4Validator
 from pymongo import MongoClient
 import pytest
@@ -281,13 +282,13 @@ def test_cancel_finished_run(
 
 
 @pytest.mark.parametrize(
-    ("body", "expected"),
+    ("status", "body", "expected"),
     [
-        ({"msg": "malformed", "status_code": 400}, 400),
-        ({"msg": "no token", "status_code": 401}, 401),
-        ({"msg": "not yours", "status_code": 403}, 403),
-        ({"msg": "run not found", "status_code": 404}, 500),
-        ({"unexpected": True}, 500),
+        (400, b'{"msg": "malformed", "status_code": 400}', 400),
+        (401, b'{"msg": "no token", "status_code": 401}', 401),
+        (403, b'{"msg": "not yours", "status_code": 403}', 403),
+        (404, b'{"msg": "run not found", "status_code": 404}', 500),
+        (200, b'{"unexpected": true}', 500),
     ],
     ids=["400", "401", "403", "404", "invalid"],
 )
@@ -296,7 +297,8 @@ def test_cancel_remote_error(
     served_spec: dict[str, Any],
     mongodb: MongoClient[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
-    body: dict[str, Any],
+    status: int,
+    body: bytes,
     expected: int,
 ) -> None:
     """Cancellations that the WES instance refuses get errors, as declared."""
@@ -311,7 +313,11 @@ def test_cancel_remote_error(
             },
         }
     )
-    monkeypatch.setattr(WesClient, "_request", lambda *_args, **_kwargs: body)
+    monkeypatch.setattr(
+        WesClient,
+        "_send",
+        lambda *_args, **_kwargs: HttpResponse(status=status, content=body),
+    )
     response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
     assert_declared_error(
         served_spec, "post", "/runs/{run_id}/cancel", response, expected

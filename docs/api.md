@@ -149,14 +149,16 @@ instance refused the run request).
 
 proWES answers `200` with the run identifier only once the WES instance has
 accepted the cancellation. If it refuses it or can't be reached, proWES
-answers with an error, and the stored state stays as it is:
+answers with an error, and the stored state stays as it is. Errors are
+told by the HTTP status of the response, whatever its body (e.g., an
+`ErrorResponse` of WES, problem details, or an error page of a proxy):
 
 | WES instance | proWES |
 | --- | --- |
 | `400`, `401` or `403` | The same status (as when a run is forwarded); proWES sends no credentials to WES instances yet, so `401` and `403` mean that the WES instance requires them |
-| Another error (e.g., `404`: it doesn't know the run, or `500`) | `500`, "The remote WES service answered with an error." |
-| A response that is neither the run identifier nor an error of the WES API | `500`, "The remote WES service sent an invalid response." |
-| Not reached, or its response not read (e.g., connecting or the TLS handshake failed, or the response timed out, see `custom.defaults.timeout`) | `500`, "Could not reach remote WES service." |
+| Another error status (e.g., `404`: it doesn't know the run, or `500`) | `500`, "The remote WES service answered with an error." |
+| `2xx` without the run identifier (a JSON object `RunId`) | `500`, "The remote WES service sent an invalid response." |
+| Not reached, or its response not read (e.g., connecting or the TLS handshake failed, the response timed out, see `custom.defaults.timeout`, or a `2xx` response is no JSON) | `500`, "Could not reach remote WES service." |
 
 The WES instance may have canceled the run even if proWES couldn't read
 its response; check the state of the run later (`GET /runs/{run_id}`).

@@ -218,11 +218,12 @@ before: `500` "An unexpected error occurred."). Clients that cancel runs
 must accept `409`.
 
 Errors of the WES instance are now passed on instead of `200` (see [Run
-states](api.md#run-states)): `400`, `401` and `403` as they are, other
-errors (e.g., `404` for a run it doesn't know) as `500` ("The remote WES
-service answered with an error."), and invalid responses as `500` ("The
-remote WES service sent an invalid response."; before: `500` "An
-unexpected error occurred."). Clients that treated `200` as "canceled"
+states](api.md#run-states)), by the HTTP status of its response: `400`,
+`401` and `403` as they are, other errors (e.g., `404` for a run it doesn't
+know) as `500` ("The remote WES service answered with an error."), and
+successful responses without the run identifier as `500` ("The remote WES
+service sent an invalid response."; before: `500` "An unexpected error
+occurred."). Clients that treated `200` as "canceled"
 without checking the state of the run must handle these errors; a `200`
 now means that the WES instance accepted the cancellation.
 
