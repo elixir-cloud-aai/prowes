@@ -2,6 +2,10 @@
 
 `GET /service-info` is served by FOCA (`foca.api.service_info`; cf.
 `pro_wes.ga4gh.wes.service_info`).
+
+The operations on runs get the owner of the caller (`user_id`, cf.
+:py:func:`pro_wes.security.current_owner`), which replaces any `user_id`
+of the request: callers create, list, read and cancel only their own runs.
 """
 
 import logging
@@ -11,7 +15,10 @@ from typing import Any, NoReturn
 # handling of the request
 from connexion import request
 from flask import request as flask_request
+from foca import get_config
+from foca.security.auth import validate_token
 from foca.utils.logging import log_traffic
+from werkzeug.exceptions import Unauthorized
 
 from pro_wes.exceptions import (
     MissingBoundary,
@@ -20,6 +27,7 @@ from pro_wes.exceptions import (
     UrlEncodedAttachment,
 )
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
+from pro_wes.security import current_owner
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,26 @@ logger = logging.getLogger(__name__)
 RUN_REQUEST_MEDIA_TYPES = frozenset(
     {"multipart/form-data", "application/x-www-form-urlencoded"}
 )
+
+
+def _set_owner(kwargs: dict[str, Any]) -> None:
+    """Set the owner of the caller as `user_id` of the keyword arguments.
+
+    Args:
+        kwargs: Keyword arguments of a controller, changed in place: `user_id`
+            is the owner of the caller (cf.
+            :py:func:`pro_wes.security.current_owner`), replacing any value
+            of the request; without one (authentication disabled), it is
+            removed, so that runs have no owner.
+
+    Raises:
+        pro_wes.exceptions.Forbidden: The caller's token has no subject that
+            can own runs.
+    """
+    kwargs.pop("user_id", None)
+    owner = current_owner()
+    if owner is not None:
+        kwargs["user_id"] = owner
 
 
 @log_traffic
@@ -45,8 +73,13 @@ def RunWorkflow(*args: Any, **kwargs: Any) -> dict[str, str]:
     Returns:
         Response object according to WES API schema `RunId`. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+
+    Raises:
+        pro_wes.exceptions.Forbidden: The caller's token has no subject
+            that can own runs (cf. :py:func:`pro_wes.security.current_owner`).
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.run_workflow(
         request=request,
         **kwargs,
@@ -76,8 +109,13 @@ def ListRuns(*args: Any, **kwargs: Any) -> dict[str, Any]:
     Returns:
         Response object according to WES API schema `RunListResponse`. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+
+    Raises:
+        pro_wes.exceptions.Forbidden: The caller's token has no subject
+            that can own runs (cf. :py:func:`pro_wes.security.current_owner`).
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.list_runs(**kwargs)
     return response
 
@@ -98,12 +136,14 @@ def GetRunLog(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.get_run_log(run_id=run_id, **kwargs)
     return response
 
@@ -124,12 +164,14 @@ def GetRunStatus(run_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.get_run_status(run_id=run_id, **kwargs)
     return response
 
@@ -150,12 +192,14 @@ def CancelRun(run_id: str, *args: Any, **kwargs: Any) -> dict[str, str]:
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
-        pro_wes.exceptions.Forbidden: The requester is not allowed to
-            access the resource.
+        pro_wes.exceptions.Forbidden: The run belongs to another caller, or
+            the caller's token has no subject that can own runs (cf.
+            :py:func:`pro_wes.security.current_owner`).
         pro_wes.exceptions.RunNotFound: The requested workflow run is not
             available.
     """
     workflow_run = WorkflowRuns()
+    _set_owner(kwargs)
     response = workflow_run.cancel_run(run_id=run_id, **kwargs)
     return response
 
@@ -202,7 +246,10 @@ def check_run_request_body() -> None:
     Called before each request (`before_request` of the Flask app, cf.
     `pro_wes.app.init_app`), so before Connexion's validation, which fails
     with an `AttributeError` (`500`) on bodies that aren't forms. Other
-    requests are left to the operations.
+    requests are left to the operations, and so are run requests without a
+    valid token where one is required: Connexion refuses them with `401`
+    before it reads the body, so that clients learn about the body only once
+    they are authenticated.
 
     Raises:
         pro_wes.exceptions.UnsupportedMediaType: The run request isn't a
@@ -217,16 +264,52 @@ def check_run_request_body() -> None:
         RUN_WORKFLOW_ENDPOINT
     ):
         return
+    problem = _run_request_body_problem()
+    if problem is not None and _authenticated():
+        raise problem
+
+
+def _run_request_body_problem() -> Exception | None:
+    """Tell why Connexion can't read the body of a run request as a form.
+
+    Returns:
+        The error to raise, or `None` if the body is a form that Connexion
+        reads.
+    """
     if flask_request.mimetype not in RUN_REQUEST_MEDIA_TYPES:
-        raise UnsupportedMediaType
+        return UnsupportedMediaType()
     if (
         flask_request.mimetype == "multipart/form-data"
         and not flask_request.mimetype_params.get("boundary")
     ):
-        raise MissingBoundary
+        return MissingBoundary()
     # URL-encoded forms have no files: attachments would be lost
     if (
         flask_request.mimetype == "application/x-www-form-urlencoded"
         and "workflow_attachment" in flask_request.form
     ):
-        raise UrlEncodedAttachment
+        return UrlEncodedAttachment()
+    return None
+
+
+def _authenticated() -> bool:
+    """Tell whether the request passes Connexion's token validation.
+
+    Only called for run requests that are refused, so that the token of
+    other requests is validated once, by Connexion.
+
+    Returns:
+        `True` if no token is required (`disable_auth` of the API
+        specification) or the request has a valid bearer token (cf.
+        `foca.security.auth.validate_token`), `False` otherwise.
+    """
+    if all(spec.disable_auth for spec in get_config().api.specs):
+        return True
+    parts = flask_request.headers.get("Authorization", "").split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return False
+    try:
+        validate_token(parts[1].strip())
+    except Unauthorized:
+        return False
+    return True

@@ -6,7 +6,10 @@
 # to the fake WES, waits until the Celery worker has tracked them (via
 # RabbitMQ) to their final state, and checks the other endpoints, the
 # cancellation of a run, and that run requests with credentials in URLs and
-# larger than the size limit are rejected. Run it from the repository root,
+# larger than the size limit are rejected. All requests but those of the
+# service info carry an access token of the fake identity provider (the
+# fake WES); requests without a valid token are rejected, and users see only
+# their own runs. Run it from the repository root,
 # with the base URL of the WES API as argument (default
 # `http://localhost:8090/ga4gh/wes/v1`); needs curl, jq and Docker Compose.
 # On failure, it shows the logs of the services. The deployment is left
@@ -23,12 +26,18 @@ body="$(mktemp)"
 # The run that the fake WES holds, once created: canceled on failure (best
 # effort), so that its Celery task doesn't keep tracking it
 held=""
+# Access tokens: of the requests of `check` and `await` (none if empty), and
+# of the user that creates the runs
+token=""
+user_token=""
 on_exit() {
   local status=$?
   rm -f "${body}"
   if [ "${status}" -ne 0 ]; then
     if [ -n "${held}" ]; then
-      curl --silent --output /dev/null -X POST "${api}/runs/${held}/cancel" || true
+      curl --silent --output /dev/null -X POST \
+        --header "Authorization: Bearer ${user_token}" \
+        "${api}/runs/${held}/cancel" || true
     fi
     echo "Smoke test failed; logs of the services:"
     docker compose logs --tail 100 || true
@@ -41,6 +50,13 @@ trap on_exit EXIT
 # (see their health checks) or the certificates are created
 docker compose up -d --build --wait --wait-timeout 300
 
+# Access token of a user from the fake identity provider (the fake WES)
+token_of() {
+  docker compose exec -T fake-wes python /smoke/fake_wes.py token "$1"
+}
+user_token="$(token_of alice)"
+token="${user_token}"
+
 # Request a path, with an optional form (curl `--form-string` arguments);
 # check the status and that the JSON response matches a jq filter
 check() {
@@ -49,6 +65,9 @@ check() {
   local args=(--silent --show-error --max-time 10 --output "${body}"
     --write-out '%{http_code}' -X "${method}"
     --header 'Accept: application/json')
+  if [ -n "${token}" ]; then
+    args+=(--header "Authorization: Bearer ${token}")
+  fi
   local field
   for field in "$@"; do
     args+=(--form-string "${field}")
@@ -71,7 +90,7 @@ await() {
   while [ "${SECONDS}" -lt "${deadline}" ]; do
     status="$(curl --silent --max-time 10 --output "${body}" \
       --write-out '%{http_code}' --header 'Accept: application/json' \
-      "${api}$1" || true)"
+      --header "Authorization: Bearer ${token}" "${api}$1" || true)"
     if [ "${status}" = 200 ] && jq -e "$2" "${body}" > /dev/null 2>&1; then
       return
     fi
@@ -95,6 +114,13 @@ request=(
 )
 
 check GET /service-info 200 '.type.artifact == "wes" and .type.version == "1.1.0"'
+# The service info is public; all other requests need a valid access token
+token=""
+check GET /service-info 200 '.type.artifact == "wes"'
+check GET /runs 401 '.status == 401'
+token="not-a-token"
+check GET /runs 401 '.status == 401'
+token="${user_token}"
 # A run is forwarded to the WES, tracked to its end, and the final run log
 # of the WES (exit code, outputs, standard output) is stored; the request
 # is its own
@@ -117,6 +143,12 @@ await "/runs/${held}/status" '.state == "CANCELED"'
 await "/runs/${held}" '.run_log.stdout == "fake canceled"'
 check GET "/runs/${held}" 200 '.state == "CANCELED"'
 check GET '/runs?page_size=100' 200 "any(.runs[]; .run_id == \"${held}\" and .state == \"CANCELED\")"
+# Other users don't see the runs of a user, nor read or cancel them
+token="$(token_of bob)"
+check GET '/runs?page_size=100' 200 "all(.runs[]; .run_id != \"${id}\")"
+check GET "/runs/${id}" 403 '.status == 403'
+check POST "/runs/${id}/cancel" 403 '.status == 403'
+token="${user_token}"
 # Unknown runs aren't found (lowercase letters, which run identifiers don't
 # have)
 check GET /runs/unknwn 404 '.status == 404'
@@ -136,6 +168,7 @@ large="$(mktemp)"
 head -c $((11 * 1024 * 1024)) /dev/zero > "${large}"
 status="$(curl --silent --max-time 30 --output "${body}" \
   --write-out '%{http_code}' -X POST --header 'Accept: application/json' \
+  --header "Authorization: Bearer ${user_token}" \
   --form-string "workflow_params=${params}" --form-string 'workflow_type=CWL' \
   --form-string 'workflow_type_version=v1.0' \
   --form-string 'workflow_url=https://example.org/smoke.cwl' \

@@ -19,13 +19,6 @@ OpenShift by its APIs (see [Exposing the app](#exposing-the-app) and
 For local development and testing, use Docker Compose instead (see [Getting
 started](getting-started.md)).
 
-!!! warning "No authentication"
-    proWES serves the WES API without authentication for now
-    ([#120](https://github.com/elixir-cloud-aai/prowes/issues/120)): anyone
-    who can reach it can start, list and cancel runs. Limit access to it in
-    front of the app, e.g., with an authenticating proxy, the ingress
-    controller's access rules or a network that only trusted clients reach.
-
 ## Installation
 
 The chart in the repository downloads the library chart with `helm
@@ -138,6 +131,28 @@ The service info reports the version of the app's package, unless
 argument `SETUPTOOLS_SCM_PRETEND_VERSION` report `0.0.0.dev0` (see
 [Image](operations.md#image)): set `config.service_info.service.version`
 for them.
+
+### Authentication
+
+The WES API requires access tokens; the base config trusts no issuer, so
+all requests but `GET /service-info` are rejected (`401`) until
+`config.security.auth` sets the trusted issuers and the audiences of their
+tokens (see [Access control](access-control.md#authentication)); the app
+refuses to start with issuers but no audience (unless `verify_audience` is
+`false`), and the chart's notes warn while no issuer is set, e.g.:
+
+```yaml
+config:
+  security:
+    auth:
+      issuers:
+        - https://login.example.org/oidc/
+      audience:
+        - my-portal-client-id
+```
+
+Authentication of clients needs no secrets; the app's pods must reach the
+issuers over HTTPS (their discovery documents and keys).
 
 ### WES instances
 

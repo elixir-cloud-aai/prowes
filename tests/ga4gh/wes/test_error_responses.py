@@ -20,6 +20,7 @@ import pytest
 
 from pro_wes.ga4gh.wes import controllers
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
+from tests.conftest import OWNER, TokenClient
 
 BASE_PATH = "/ga4gh/wes/v1"
 BOUNDARY = "prowes-errors-boundary"
@@ -49,12 +50,13 @@ def served_spec(foca_client: Client) -> dict[str, Any]:
 
 @pytest.fixture
 def client_with(
-    add_overlay: Callable[[str], None],
+    add_overlay: Callable[[str], None], token: str
 ) -> Iterator[Callable[[str], Client]]:
     """Get a function that creates a test client of the app with an overlay.
 
     Args:
         add_overlay: Function that merges config over the test overlay.
+        token: Access token that the clients send.
 
     Yields:
         Function taking the YAML text of an overlay, returning a client of
@@ -74,7 +76,7 @@ def client_with(
                 Client of the app.
             """
             add_overlay(text)
-            return stack.enter_context(Client(init_app()))
+            return stack.enter_context(TokenClient(init_app(), token))
 
         yield _client
 
@@ -272,7 +274,7 @@ def test_cancel_finished_run(
 ) -> None:
     """Cancellations of finished runs get `409`, as declared."""
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "DONE01", "state": "COMPLETE"}}
+        {"user_id": OWNER, "run_log": {"run_id": "DONE01", "state": "COMPLETE"}}
     )
     response = foca_client.post(f"{BASE_PATH}/runs/DONE01/cancel")
     assert_declared_error(served_spec, "post", "/runs/{run_id}/cancel", response, 409)
@@ -349,7 +351,7 @@ def test_other_requests_not_checked(
         mongodb: Database of the test (FOCA's fixture).
     """
     mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "DONE01", "state": "COMPLETE"}}
+        {"user_id": OWNER, "run_log": {"run_id": "DONE01", "state": "COMPLETE"}}
     )
     response = foca_client.post(
         f"{BASE_PATH}/runs/DONE01/cancel",

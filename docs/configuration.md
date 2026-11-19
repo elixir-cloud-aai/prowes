@@ -169,8 +169,11 @@ set the service info of a deployment without changing the image.
 
 ## Security
 
-The WES API is currently served without authentication; requests are
-limited and sanitized as described below, as in proTES.
+The WES API requires access tokens of the trusted issuers
+(`security.auth`, none by default: set them for each deployment), except for
+the service info; each run belongs to the caller that created it (see
+[Access control](access-control.md)). Requests are limited and sanitized as
+described below, as in proTES.
 
 ### Request size limit
 
@@ -264,7 +267,7 @@ pro_wes.celery_worker worker` (see [Operations](operations.md)). The `host`
 and `port` of the section `server` apply to Flask's development server only
 (`python -m pro_wes.app`, see [Run from
 source](development.md#run-from-source)): `127.0.0.1` and `8080`, i.e., the
-loopback interface only, as the WES API is served without authentication.
+loopback interface only.
 
 ## Service info
 

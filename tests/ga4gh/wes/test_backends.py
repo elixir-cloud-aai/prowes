@@ -9,7 +9,6 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from foca.plugins.backends import API_TYPES, clear_caches, registry
-from foca.testing import Client
 from pydantic import ValidationError
 from pymongo import MongoClient
 import pytest
@@ -23,7 +22,7 @@ from pro_wes.ga4gh.wes.models import RunId
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
-from tests.conftest import BACKEND_URL
+from tests.conftest import BACKEND_URL, TokenClient
 
 BASE_PATH = "/ga4gh/wes/v1"
 REGISTRY_URL = "https://registry.example.org/ga4gh/registry/v1"
@@ -371,12 +370,13 @@ def test_post_run_without_backend(
     add_overlay: Callable[[str], None],
     mongodb: MongoClient[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
+    token: str,
 ) -> None:
     """Without backends, runs are refused (`503`), and nothing is stored."""
     add_overlay("custom:\n  wes:\n    backends: []\n")
     sent: list[Any] = []
     monkeypatch.setattr(WesClient, "post_run", lambda *args, **_: sent.append(args))
-    with Client(init_app()) as client:
+    with TokenClient(init_app(), token) as client:
         response = client.post(f"{BASE_PATH}/runs", data=RUN_REQUEST)
     assert response.status_code == 503
     assert response.json()["detail"] == "No WES instance is available for new runs."
@@ -388,6 +388,7 @@ def test_post_run_to_configured_backend(
     add_overlay: Callable[[str], None],
     mongodb: MongoClient[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
+    token: str,
 ) -> None:
     """Runs are sent to, stored with and tracked at the chosen WES instance."""
     add_overlay(
@@ -417,7 +418,7 @@ def test_post_run_to_configured_backend(
         "apply_async",
         lambda _args, kwargs, **_options: tracked.append(kwargs),
     )
-    with Client(init_app()) as client:
+    with TokenClient(init_app(), token) as client:
         response = client.post(f"{BASE_PATH}/runs", data=RUN_REQUEST)
     assert response.status_code == 200
     assert urls == ["https://wes.example.com"]
