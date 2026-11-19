@@ -3,7 +3,15 @@
 # backend list, at its service name in Docker Compose (HTTPS, with the
 # certificate authority of the fake WES, `REQUESTS_CA_BUNDLE`); the Celery
 # worker polls it every second (instead of every 3 seconds), so that the
-# smoke test sees state changes quickly
+# smoke test sees state changes quickly. The fake WES is also the identity
+# provider whose access tokens proWES requires (`security.auth`), reached
+# over HTTPS as the WES API
+security:
+  auth:
+    issuers:
+      - https://fake-wes/oidc/
+    audience:
+      - prowes-smoke
 custom:
   post_runs:
     polling_wait: 1
