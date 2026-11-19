@@ -141,15 +141,25 @@ unreachable or answers with errors for too long, or tracking takes longer
 than `custom.post_runs.timeout_job`. Such a run may still be running at the
 WES instance, so proWES forwards its cancellation. The stored state stays
 `SYSTEM_ERROR`, as proWES doesn't track the run any longer; check the
-outcome at the WES instance. proWES answers `200` once it has forwarded a
-cancellation, even if the WES instance answers with an error (e.g., the run
-has finished there); passing these errors on is planned
-([#86](https://github.com/elixir-cloud-aai/prowes/issues/86)). proWES
-records which `SYSTEM_ERROR`s it set itself (`system_error_by_prowes` of
-the stored run); runs stored by earlier versions don't have that record,
-and their cancellations are refused, as are those of runs that failed
-before they were forwarded (e.g., the WES instance refused the run
-request).
+outcome at the WES instance. proWES records which `SYSTEM_ERROR`s it set
+itself (`system_error_by_prowes` of the stored run); runs stored by earlier
+versions don't have that record, and their cancellations are refused, as
+are those of runs that failed before they were forwarded (e.g., the WES
+instance refused the run request).
+
+proWES answers `200` with the run identifier only once the WES instance has
+accepted the cancellation. If it refuses it or can't be reached, proWES
+answers with an error, and the stored state stays as it is:
+
+| WES instance | proWES |
+| --- | --- |
+| `400`, `401` or `403` | The same status (as when a run is forwarded); proWES sends no credentials to WES instances yet, so `401` and `403` mean that the WES instance requires them |
+| Another error (e.g., `404`: it doesn't know the run, or `500`) | `500`, "The remote WES service answered with an error." |
+| A response that is neither the run identifier nor an error of the WES API | `500`, "The remote WES service sent an invalid response." |
+| Not reached, or its response not read (e.g., connecting or the TLS handshake failed, or the response timed out, see `custom.defaults.timeout`) | `500`, "Could not reach remote WES service." |
+
+The WES instance may have canceled the run even if proWES couldn't read
+its response; check the state of the run later (`GET /runs/{run_id}`).
 
 ## Errors
 

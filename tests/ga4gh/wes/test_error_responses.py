@@ -18,6 +18,7 @@ from pymongo import MongoClient
 import pytest
 
 from pro_wes.ga4gh.wes import controllers
+from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 from tests.conftest import OWNER, TokenClient
 
@@ -277,6 +278,44 @@ def test_cancel_finished_run(
     )
     response = foca_client.post(f"{BASE_PATH}/runs/DONE01/cancel")
     assert_declared_error(served_spec, "post", "/runs/{run_id}/cancel", response, 409)
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"msg": "malformed", "status_code": 400}, 400),
+        ({"msg": "no token", "status_code": 401}, 401),
+        ({"msg": "not yours", "status_code": 403}, 403),
+        ({"msg": "run not found", "status_code": 404}, 500),
+        ({"unexpected": True}, 500),
+    ],
+    ids=["400", "401", "403", "404", "invalid"],
+)
+def test_cancel_remote_error(
+    foca_client: Client,
+    served_spec: dict[str, Any],
+    mongodb: MongoClient[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, Any],
+    expected: int,
+) -> None:
+    """Cancellations that the WES instance refuses get errors, as declared."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "RUNNIN", "state": "RUNNING"},
+            "wes_endpoint": {
+                "host": "https://wes.example.org",
+                "base_path": "/ga4gh/wes/v1",
+                "run_id": "REMOTE1",
+            },
+        }
+    )
+    monkeypatch.setattr(WesClient, "_request", lambda *_args, **_kwargs: body)
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert_declared_error(
+        served_spec, "post", "/runs/{run_id}/cancel", response, expected
+    )
 
 
 def test_invalid_parameter(foca_client: Client, served_spec: dict[str, Any]) -> None:

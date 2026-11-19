@@ -15,7 +15,12 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 import pytest
 
-from pro_wes.exceptions import EngineUnavailable, Forbidden
+from pro_wes.exceptions import (
+    EngineOutcomeUnknown,
+    EngineRequestNotSent,
+    EngineUnavailable,
+    Forbidden,
+)
 from pro_wes.ga4gh.wes import workflow_runs
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
@@ -1001,3 +1006,181 @@ def test_cancel_run_without_remote_run(
 def test_cancel_run_not_found(foca_client: Client) -> None:
     """Unknown runs can't be canceled."""
     assert foca_client.post(f"{BASE_PATH}/runs/UNKNWN/cancel").status_code == 404
+
+
+def _insert_running(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """Store a running run that has a remote run (`RUNNIN`).
+
+    Args:
+        mongodb: Database of the test.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "RUNNIN", "state": "RUNNING"},
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
+    )
+
+
+# Problem details of errors of the remote WES that proWES passes on
+REMOTE_ERRORS: dict[int, dict[str, Any]] = {
+    400: {"title": "Bad request", "detail": "The request is malformed."},
+    401: {"title": "Unauthorized", "detail": "The request is unauthorized."},
+    403: {
+        "title": "Forbidden",
+        "detail": "The requester is not authorized to perform this action.",
+    },
+}
+# Problem details of the other errors of the remote WES
+REMOTE_REFUSED: dict[str, Any] = {
+    "title": "Internal server error",
+    "detail": "The remote WES service answered with an error.",
+    "status": 500,
+}
+
+
+@pytest.mark.parametrize(
+    ("remote", "expected"),
+    [
+        *(
+            (status, {**problem, "status": status})
+            for status, problem in REMOTE_ERRORS.items()
+        ),
+        *((status, REMOTE_REFUSED) for status in (404, 409, 500, 502, 503)),
+    ],
+)
+def test_cancel_run_remote_error(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    remote: int,
+    expected: dict[str, Any],
+) -> None:
+    """Errors of the remote WES become errors of proWES, not `200`.
+
+    `400`, `401` and `403` are passed on (as for `POST /runs`), other errors
+    (e.g., the remote run is unknown or has finished there) become `500`; the
+    stored state is kept.
+    """
+    _insert_running(mongodb)
+    monkeypatch.setattr(
+        WesClient,
+        "cancel_run",
+        lambda *_args, **_kwargs: ErrorResponse(msg="no", status_code=remote),
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.status_code == expected["status"]
+    assert response.json() == expected
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+def test_cancel_run_remote_error_body(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Error bodies of the remote WES, as the WES client reads them, are refused.
+
+    Only the request is replaced: the response is validated by the client.
+    """
+    _insert_running(mongodb)
+    requests: list[tuple[str, str]] = []
+
+    def _request(_self: WesClient, method: str, path: str, **_kwargs: Any) -> Any:
+        """Answer like a WES instance that doesn't know the remote run.
+
+        Args:
+            _self: WES client; ignored.
+            method: HTTP method.
+            path: Path of the endpoint.
+            **_kwargs: Keyword arguments; ignored.
+
+        Returns:
+            Error body of the WES API (`ErrorResponse`).
+        """
+        requests.append((method, path))
+        return {"msg": "run not found", "status_code": 404}
+
+    monkeypatch.setattr(WesClient, "_request", _request)
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.json() == REMOTE_REFUSED
+    assert requests == [("POST", f"/runs/{REMOTE_RUN_ID}/cancel")]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"unexpected": True}, ["not", "an", "object"], {"run_id": 1}],
+    ids=["unknown object", "no object", "invalid run identifier"],
+)
+def test_cancel_run_remote_invalid_response(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    body: Any,
+) -> None:
+    """Invalid responses of the remote WES get `500` with their own details."""
+    _insert_running(mongodb)
+    monkeypatch.setattr(WesClient, "_request", lambda *_args, **_kwargs: body)
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.json() == {
+        "title": "Internal server error",
+        "detail": "The remote WES service sent an invalid response.",
+        "status": 500,
+    }
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        EngineUnavailable("unavailable"),
+        EngineRequestNotSent("TLS handshake failed", reason="tls_error"),
+        EngineOutcomeUnknown("response timed out", reason="read_timeout"),
+    ],
+    ids=["unavailable", "not sent", "outcome unknown"],
+)
+def test_cancel_run_remote_unavailable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    error: EngineUnavailable,
+) -> None:
+    """Cancellations that don't reach the remote WES get `500`, the state is kept."""
+    _insert_running(mongodb)
+
+    def _unavailable(*_args: Any, **_kwargs: Any) -> None:
+        """Fail like an unreachable WES.
+
+        Args:
+            *_args: Positional arguments; ignored.
+            **_kwargs: Keyword arguments; ignored.
+
+        Raises:
+            EngineUnavailable: Always.
+        """
+        raise error
+
+    monkeypatch.setattr(WesClient, "_request", _unavailable)
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.json() == {
+        "title": "Internal server error",
+        "detail": "Could not reach remote WES service.",
+        "status": 500,
+    }
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+def test_cancel_run_remote_accepted(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Cancellations that the remote WES accepts get `200` with the run's own ID."""
+    _insert_running(mongodb)
+    monkeypatch.setattr(
+        WesClient, "_request", lambda *_args, **_kwargs: {"run_id": REMOTE_RUN_ID}
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "RUNNIN"}
