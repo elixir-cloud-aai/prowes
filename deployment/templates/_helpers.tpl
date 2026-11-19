@@ -8,9 +8,10 @@ these settings (`settings`). They follow the base config in the image
 no token issuer, and foca-common 0.4.0 requires an audience also without
 issuers, so the audience is not required here (the app refuses to start with
 issuers but no audience, and the notes warn without issuers); and its
-database is `runStore` (`db.dbs`), without FOCA's access control. Every template includes the settings, so the app's checks
-(`prowes.validate`) run first, before those of the library and whichever
-template Helm renders first.
+database is `runStore` (`db.dbs`), without FOCA's access control. Every
+template includes the settings, so the app's checks (`prowes.validate`) run
+first, before those of the library and whichever template Helm renders
+first.
 */}}
 {{- define "prowes.settings" -}}
 {{- include "prowes.validate" . -}}

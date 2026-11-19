@@ -69,9 +69,10 @@ different issuers are different owners. The namespace is the issuer itself
 (e.g., `https://login.example.org/oidc/|alice`), also if only one issuer is
 trusted, so that owners stay the same when another issuer is trusted later
 (and when proWES moves to FOCA 0.23, which namespaces subjects by default
-the same way). Set `namespace` of an issuer (entries of `security.auth.issuers` as
-`{issuer: <url>, namespace: <name>}`) for a shorter one, or an empty one to
-keep its subjects bare; changing it later orphans the runs stored so far.
+the same way). Set `namespace` of an issuer (entries of
+`security.auth.issuers` as `{issuer: <url>, namespace: <name>}`) for a
+shorter one, or an empty one to keep its subjects bare; changing it later
+orphans the runs stored so far.
 Owners are stored with each run (`user_id`) and taken from the token only,
 never from the request.
 
