@@ -69,6 +69,10 @@ class DbDocumentConnector:
     ) -> None:
         """Update run status.
 
+        For states of the run as known to proWES (e.g., reported by the WES
+        instance); clears the mark of `SYSTEM_ERROR`s set by proWES itself
+        (cf. `set_system_error()`).
+
         Args:
             state: New run status; one of `pro_wes.ga4gh.wes.models.State`.
 
@@ -79,9 +83,33 @@ class DbDocumentConnector:
             State(state)
         except Exception as exc:
             raise ValueError(f"Unknown state: {state}") from exc
+        self._set_state(state=state, system_error_by_prowes=False)
+
+    def set_system_error(self) -> None:
+        """Set the run status to `SYSTEM_ERROR`, as set by proWES itself.
+
+        For runs that fail in proWES (e.g., the run request can't be sent) or
+        that proWES loses track of, without knowing their state at the WES
+        instance; such runs can still be canceled if they have a remote run.
+        """
+        self._set_state(state=State.SYSTEM_ERROR.value, system_error_by_prowes=True)
+
+    def _set_state(self, *, state: str, system_error_by_prowes: bool) -> None:
+        """Store the run status, and whether proWES set it to `SYSTEM_ERROR`.
+
+        Args:
+            state: New run status; one of `pro_wes.ga4gh.wes.models.State`.
+            system_error_by_prowes: Whether proWES itself set the state to
+                `SYSTEM_ERROR`.
+        """
         self.collection.find_one_and_update(
             {"task_id": self.task_id},
-            {"$set": {"run_log.state": state}},
+            {
+                "$set": {
+                    "run_log.state": state,
+                    "system_error_by_prowes": system_error_by_prowes,
+                }
+            },
         )
         logger.info("[%s] %s", self.task_id, state)
 

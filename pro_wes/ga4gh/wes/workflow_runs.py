@@ -155,7 +155,7 @@ class WorkflowRuns:
             if document_stored.task_id is not None:
                 DbDocumentConnector(
                     collection=self.db_client, task_id=document_stored.task_id
-                ).update_run_state(state=State.SYSTEM_ERROR.value)
+                ).set_system_error()
             raise
 
         # ensure WES endpoint is available
@@ -198,10 +198,10 @@ class WorkflowRuns:
                 timeout=controller_config.timeout_post,
             )
         except EngineUnavailable:
-            db_connector.update_run_state(state=State.SYSTEM_ERROR.value)
+            db_connector.set_system_error()
             raise
         if isinstance(response, ErrorResponse):
-            db_connector.update_run_state(state=State.SYSTEM_ERROR.value)
+            db_connector.set_system_error()
             if response.status_code == 400:
                 raise BadRequest
             if response.status_code == 401:
@@ -411,9 +411,10 @@ class WorkflowRuns:
         Controller for `POST /runs/{run_id}/cancel`.
 
         Only runs in a cancelable state (:py:attr:`State.is_cancelable`), and
-        runs of unknown state that have a remote run, are canceled at the WES
-        instance; others (e.g., finished runs) are refused without contacting
-        it.
+        runs of unknown state or that proWES itself set to `SYSTEM_ERROR`
+        (e.g., it lost track of them) that have a remote run, are canceled at
+        the WES instance; others (e.g., finished runs) are refused without
+        contacting it. The stored state is left as it is.
 
         Args:
             run_id: Workflow run identifier.
@@ -437,6 +438,7 @@ class WorkflowRuns:
             projection={
                 "user_id": True,
                 "run_log.state": True,
+                "system_error_by_prowes": True,
                 "wes_endpoint.host": True,
                 "wes_endpoint.base_path": True,
                 "wes_endpoint.run_id": True,
@@ -466,14 +468,20 @@ class WorkflowRuns:
         )
 
         # ensure workflow run is cancelable; runs stored without (valid) state
-        # are of unknown state (as in `RunLog`), and runs of unknown state are
+        # are of unknown state (as in `RunLog`); runs of unknown state are
         # cancelable once they have a remote run (e.g., forwarded, but not yet
-        # tracked, or reported as `UNKNOWN` by the WES instance)
+        # tracked, or reported as `UNKNOWN` by the WES instance), and so are
+        # runs that proWES itself set to `SYSTEM_ERROR` (e.g., it lost track of
+        # them), as they may still be running at the WES instance
         try:
             state = State(document["run_log"].get("state") or State.UNKNOWN)
         except ValueError:
             state = State.UNKNOWN
-        if not (state.is_cancelable or (state is State.UNKNOWN and has_remote_run)):
+        remote_state_unknown = state is State.UNKNOWN or (
+            state is State.SYSTEM_ERROR
+            and document.get("system_error_by_prowes") is True
+        )
+        if not (state.is_cancelable or (remote_state_unknown and has_remote_run)):
             logger.error("Run '%s' not cancelable in state '%s'.", run_id, state.value)
             raise RunNotCancelable
 

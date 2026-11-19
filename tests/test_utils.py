@@ -71,6 +71,27 @@ def test_update_run_state_unknown(collection: Any) -> None:
         connector.update_run_state(state="OTHER")
 
 
+def test_set_system_error(collection: Any) -> None:
+    """`SYSTEM_ERROR`s that proWES itself sets are marked as such."""
+    connector = DbDocumentConnector(collection=collection, task_id=TASK_ID)
+    connector.set_system_error()
+    document = collection.find_one({"task_id": TASK_ID})
+    assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert document["system_error_by_prowes"] is True
+    assert connector.get_document().system_error_by_prowes is True
+
+
+@pytest.mark.parametrize("state", ["RUNNING", "SYSTEM_ERROR"])
+def test_update_run_state_clears_system_error(collection: Any, state: str) -> None:
+    """States reported by the WES instance clear the mark of proWES's errors."""
+    connector = DbDocumentConnector(collection=collection, task_id=TASK_ID)
+    connector.set_system_error()
+    connector.update_run_state(state=state)
+    document = collection.find_one({"task_id": TASK_ID})
+    assert document["run_log"]["state"] == state
+    assert document["system_error_by_prowes"] is False
+
+
 def test_set_run_state_database_error(
     collection: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

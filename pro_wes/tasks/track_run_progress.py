@@ -73,7 +73,7 @@ def task__track_run_progress(
             to `SYSTEM_ERROR`.
         celery.exceptions.SoftTimeLimitExceeded: Tracking took longer than
             `custom.post_runs.timeout_job`; the run state is set to
-            `SYSTEM_ERROR`.
+            `SYSTEM_ERROR`, unless the run has finished already.
     """
     custom_config: CustomConfig = get_custom_config(CustomConfig)
     controller_config = custom_config.post_runs
@@ -88,29 +88,31 @@ def task__track_run_progress(
         task_id=task_id,
     )
 
-    # update state: INITIALIZING
-    db_client.update_run_state(state=State.INITIALIZING.value)
-
-    # instantiate WES client
-    wes_client: WesClient = WesClient(
-        host=remote_host,
-        base_path=remote_base_path,
-        # never the client's token (also not of tasks queued by earlier
-        # versions): no credentials for WES instances until #120
-        token=None,
-    )
-
-    # fetch run log and upsert database document
-    document: DbDocument = _update_run_log(
-        db_client=db_client,
-        wes_client=wes_client,
-        run_id=remote_run_id,
-        timeout=controller_config.timeout_post,
-    )
-
-    # track workflow run progress, from the state stored last (so that a
-    # remote `UNKNOWN` is stored, too)
+    # a time limit (`custom.post_runs.timeout_job`) may be hit anywhere from
+    # here on
     try:
+        # update state: INITIALIZING
+        db_client.update_run_state(state=State.INITIALIZING.value)
+
+        # instantiate WES client
+        wes_client: WesClient = WesClient(
+            host=remote_host,
+            base_path=remote_base_path,
+            # never the client's token (also not of tasks queued by earlier
+            # versions): no credentials for WES instances until #120
+            token=None,
+        )
+
+        # fetch run log and upsert database document
+        document: DbDocument = _update_run_log(
+            db_client=db_client,
+            wes_client=wes_client,
+            run_id=remote_run_id,
+            timeout=controller_config.timeout_post,
+        )
+
+        # track workflow run progress, from the state stored last (so that a
+        # remote `UNKNOWN` is stored, too)
         run_state: State = State.INITIALIZING
         attempt: int = 1
         while not run_state.is_finished:
@@ -118,7 +120,7 @@ def task__track_run_progress(
 
             # ensure WES endpoint is available
             if document.wes_endpoint is None or document.wes_endpoint.run_id is None:
-                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                db_client.set_system_error()
                 raise WesEndpointProblem
             try:
                 response = wes_client.get_run_status(
@@ -132,14 +134,14 @@ def task__track_run_progress(
                     attempt += 1
                     logger.warning(exc, exc_info=True)
                     continue
-                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                db_client.set_system_error()
                 raise
             if not isinstance(response, RunStatus):
                 if attempt <= controller_config.polling_attempts:
                     attempt += 1
                     logger.warning("Received error response: %s", response)
                     continue
-                db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+                db_client.set_system_error()
                 raise EngineProblem("Received too many error responses.")
             attempt = 1
             if response.state != run_state:
@@ -154,12 +156,38 @@ def task__track_run_progress(
             timeout=controller_config.timeout_post,
         )
     except SoftTimeLimitExceeded:
-        # tracking took longer than `custom.post_runs.timeout_job`
-        db_client.update_run_state(state=State.SYSTEM_ERROR.value)
+        # tracking took longer than `custom.post_runs.timeout_job`; runs whose
+        # stored state is final already (e.g., the limit is hit while the
+        # final run log is read) keep it: the stored state is read, as the
+        # limit may be hit between storing a state and tracking it
+        if not _stored_state_is_finished(db_client=db_client):
+            db_client.set_system_error()
         raise
 
     logger.info("[%s] Processing completed.", task_id)
     return task_id
+
+
+def _stored_state_is_finished(db_client: DbDocumentConnector) -> bool:
+    """Check whether the stored state of a run is final.
+
+    Args:
+        db_client: Connector to the run document.
+
+    Returns:
+        Whether the stored state is final; `False` if the run, or its state,
+            is missing or invalid.
+    """
+    document = db_client.collection.find_one(
+        filter={"task_id": db_client.task_id},
+        projection={"run_log.state": True, "_id": False},
+    )
+    if document is None:
+        return False
+    try:
+        return State(document["run_log"]["state"]).is_finished
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 # Fields of remote run logs that are stored, with their types (cf.
