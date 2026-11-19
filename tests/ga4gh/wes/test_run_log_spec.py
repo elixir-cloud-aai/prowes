@@ -264,6 +264,19 @@ def _store_run(mongodb: MongoClient[dict[str, Any]], request: dict[str, Any]) ->
                 "workflow_engine_parameters": {},
             },
         ),
+        # empty optional fields, which the model makes empty objects
+        (
+            {
+                "workflow_params": '{"input": "value"}',
+                "tags": "",
+                "workflow_engine_parameters": "null",
+            },
+            {
+                "workflow_params": {"input": "value"},
+                "tags": {},
+                "workflow_engine_parameters": {},
+            },
+        ),
     ],
 )
 def test_stored_run_log_conforms(

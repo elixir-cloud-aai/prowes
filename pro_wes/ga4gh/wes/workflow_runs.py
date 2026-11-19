@@ -827,8 +827,9 @@ class WorkflowRuns:
                 if field in request_data:
                     decoded = loads(request_data[field])
                     sanitize_json(decoded, field, "strip")
-                    # objects, as validated by the model (also for stored
-                    # runs, `STORED_CONTEXT`)
+                    # objects: `RunRequest.json_serialized_object_field_valid`
+                    # refuses others and makes empty values `{}`, also for
+                    # stored runs (`STORED_CONTEXT`)
                     if field in STRING_OBJECT_FIELDS:
                         decoded = {
                             key: _json_text(value) for key, value in decoded.items()
