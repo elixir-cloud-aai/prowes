@@ -72,7 +72,9 @@ trusted, so that owners stay the same when another issuer is trusted later
 the same way). Set `namespace` of an issuer (entries of
 `security.auth.issuers` as `{issuer: <url>, namespace: <name>}`) for a
 shorter one, or an empty one to keep its subjects bare; changing it later
-orphans the runs stored so far.
+orphans the runs stored so far. Namespaces must differ between issuers and
+must not contain `|` (FOCA refuses such settings on startup); subjects of
+an issuer whose URL contains `|` can't own runs.
 Owners are stored with each run (`user_id`) and taken from the token only,
 never from the request.
 
@@ -80,8 +82,8 @@ Callers list their own runs only (`GET /runs`), and only they read, query
 the status of and cancel a run (`GET /runs/{run_id}`, `GET
 /runs/{run_id}/status`, `POST /runs/{run_id}/cancel`); requests for runs of
 others get `403 Forbidden`. Tokens without a subject claim are invalid
-(`401`); tokens whose subject can't own runs (an empty one, or a bare one
-containing `|`) get `403 Forbidden`. Runs stored without
+(`401`); tokens whose subject can't own runs (an empty one, a bare one
+containing `|`, or one of an issuer with `|`) get `403 Forbidden`. Runs stored without
 owner (e.g., before authentication was switched on) can't be read by
 anyone. Roles, admins and sharing runs follow with access control
 ([#48](https://github.com/elixir-cloud-aai/prowes/issues/48)).

@@ -21,8 +21,14 @@ Each new run belongs to the caller that created it, the subject of its
 token namespaced by its issuer, and only that caller lists, reads and
 cancels it. Runs stored before have no owner and can't be read anymore:
 let them finish (or cancel them) before upgrading, or set their `user_id`
-in the database to the owner (`<issuer>|<subject>`, see [Run
-ownership](access-control.md#run-ownership)).
+in the database to the owner: `<namespace>|<subject>`, where the namespace
+is the issuer unless its entry in `security.auth.issuers` sets `namespace`,
+and the bare subject if that is empty (see [Run
+ownership](access-control.md#run-ownership)). Runs that old pods still
+accept during a rolling upgrade have no owner either: scale proWES down to
+zero replicas before upgrading (with the Helm chart: `kubectl scale
+deployment <release>-prowes --replicas=0`), or set their owners afterwards
+as above.
 
 ### MongoDB 4.4 or later
 
