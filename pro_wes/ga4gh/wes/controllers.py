@@ -18,7 +18,6 @@ from flask import request as flask_request
 from foca import get_config
 from foca.security.auth import validate_token
 from foca.utils.logging import log_traffic
-from werkzeug.exceptions import Unauthorized
 
 from pro_wes.exceptions import (
     MissingBoundary,
@@ -77,7 +76,16 @@ def RunWorkflow(*args: Any, **kwargs: Any) -> dict[str, str]:
     Raises:
         pro_wes.exceptions.Forbidden: The caller's token has no subject
             that can own runs (cf. :py:func:`pro_wes.security.current_owner`).
+        pro_wes.exceptions.UrlEncodedAttachment: The run request is
+            URL-encoded with workflow attachments (`400`).
     """
+    # URL-encoded forms have no files: attachments would be lost. Checked
+    # here, after the token, as Werkzeug reads such bodies without limits
+    if (
+        flask_request.mimetype == "application/x-www-form-urlencoded"
+        and "workflow_attachment" in flask_request.form
+    ):
+        raise UrlEncodedAttachment
     workflow_run = WorkflowRuns()
     _set_owner(kwargs)
     response = workflow_run.run_workflow(
@@ -245,19 +253,20 @@ def check_run_request_body() -> None:
 
     Called before each request (`before_request` of the Flask app, cf.
     `pro_wes.app.init_app`), so before Connexion's validation, which fails
-    with an `AttributeError` (`500`) on bodies that aren't forms. Other
-    requests are left to the operations, and so are run requests without a
-    valid token where one is required: Connexion refuses them with `401`
-    before it reads the body, so that clients learn about the body only once
-    they are authenticated.
+    with an `AttributeError` (`500`) on bodies that aren't forms. Decided by
+    the headers only; the body isn't read. Other requests are left to the
+    operations, and so are run requests without a token where one is
+    required: Connexion refuses them with `401` before it reads the body, so
+    that clients learn about the body only once they are authenticated.
 
     Raises:
         pro_wes.exceptions.UnsupportedMediaType: The run request isn't a
             form (`415`), e.g., JSON, or has no media type.
         pro_wes.exceptions.MissingBoundary: The run request is
             `multipart/form-data` without a boundary (`400`).
-        pro_wes.exceptions.UrlEncodedAttachment: The run request is
-            URL-encoded with workflow attachments (`400`).
+        werkzeug.exceptions.Unauthorized: The run request, which would be
+            refused, has an invalid token (`401`; as FOCA's validation
+            raises it, so that the token is validated once).
     """
     endpoint = flask_request.endpoint or ""
     if flask_request.method != "POST" or endpoint.rpartition(".")[2] != (
@@ -272,6 +281,8 @@ def check_run_request_body() -> None:
 def _run_request_body_problem() -> Exception | None:
     """Tell why Connexion can't read the body of a run request as a form.
 
+    From the headers only, so that the body isn't read.
+
     Returns:
         The error to raise, or `None` if the body is a form that Connexion
         reads.
@@ -283,12 +294,6 @@ def _run_request_body_problem() -> Exception | None:
         and not flask_request.mimetype_params.get("boundary")
     ):
         return MissingBoundary()
-    # URL-encoded forms have no files: attachments would be lost
-    if (
-        flask_request.mimetype == "application/x-www-form-urlencoded"
-        and "workflow_attachment" in flask_request.form
-    ):
-        return UrlEncodedAttachment()
     return None
 
 
@@ -301,15 +306,17 @@ def _authenticated() -> bool:
     Returns:
         `True` if no token is required (`disable_auth` of the API
         specification) or the request has a valid bearer token (cf.
-        `foca.security.auth.validate_token`), `False` otherwise.
+        `foca.security.auth.validate_token`), `False` if it has no bearer
+        token (Connexion refuses it).
+
+    Raises:
+        werkzeug.exceptions.Unauthorized: The bearer token is invalid; the
+            error of FOCA's validation, as Connexion would answer it.
     """
     if all(spec.disable_auth for spec in get_config().api.specs):
         return True
     parts = flask_request.headers.get("Authorization", "").split(None, 1)
     if len(parts) != 2 or parts[0].lower() != "bearer":
         return False
-    try:
-        validate_token(parts[1].strip())
-    except Unauthorized:
-        return False
+    validate_token(parts[1].strip())
     return True
