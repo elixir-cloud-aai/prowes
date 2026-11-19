@@ -212,13 +212,19 @@ custom:
     # (`413 Content Too Large` otherwise)
     max_attachments: 100
     max_attachment_size: 1048576
+    # Tags: at most 16 KiB of JSON text, as stored (`400 Bad Request`
+    # otherwise); `GET /runs` lists stored runs with larger tags with `{}`
+    max_tags_size: 16384
     # Runs with credentials in URLs (`https://user:password@host/...`):
     # `reject` (`400 Bad Request`) or `strip` (remove the credentials)
     url_credentials: reject
-  # `GET /runs`: runs per page if the request sets no `page_size` (`0`: all
-  # runs; not negative)
+  # `GET /runs`
   list_runs:
+    # Runs per page of requests without `page_size` (1 to `max_page_size`)
     default_page_size: 5
+    # Largest `page_size`; larger ones, and those below 1, get `400 Bad
+    # Request`
+    max_page_size: 100
   # WES instances that runs are forwarded to, in order: WES instances
   # (`type: ga4gh-wes`, with `url`, optionally `api_path`, `id`, `labels`,
   # `location`, `url_schemes`) and service registries whose verified WES

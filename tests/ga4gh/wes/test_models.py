@@ -173,14 +173,56 @@ def test_id_charset_invalid(charset: str) -> None:
         PostRuns(id_charset=charset)
 
 
-def test_default_page_size_negative() -> None:
-    """Negative default page sizes stop the app on startup.
+@pytest.mark.parametrize("default_page_size", [-1, 0, 101])
+def test_default_page_size_invalid(default_page_size: int) -> None:
+    """Default page sizes below 1 or above the maximum stop the app on startup.
 
-    `GET /runs` would refuse requests without `page_size` with `400`.
+    `GET /runs` would refuse requests without `page_size` with `400`; `0`
+    no longer lists all runs.
+
+    Args:
+        default_page_size: Invalid default page size (maximum: 100).
     """
     with pytest.raises(ValidationError):
-        ListRuns(default_page_size=-1)
-    assert ListRuns(default_page_size=0).default_page_size == 0
+        ListRuns(default_page_size=default_page_size)
+
+
+def test_page_sizes_default() -> None:
+    """By default, pages have 5 runs, and at most 100."""
+    assert ListRuns().default_page_size == 5
+    assert ListRuns().max_page_size == 100
+    assert ListRuns(default_page_size=100).default_page_size == 100
+    assert ListRuns(default_page_size=1, max_page_size=1).max_page_size == 1
+    assert ListRuns(default_page_size=3, max_page_size=3).max_page_size == 3
+
+
+def test_max_page_size_below_default() -> None:
+    """A maximum page size below the default of 5 needs a default too."""
+    with pytest.raises(ValidationError):
+        ListRuns(max_page_size=3)
+
+
+@pytest.mark.parametrize("max_page_size", [-1, 0, 2**62 + 1])
+def test_max_page_size_invalid(max_page_size: int) -> None:
+    """Maximum page sizes below 1 or beyond what MongoDB takes stop the app.
+
+    Args:
+        max_page_size: Invalid maximum page size.
+    """
+    with pytest.raises(ValidationError):
+        ListRuns(default_page_size=1, max_page_size=max_page_size)
+
+
+@pytest.mark.parametrize("max_tags_size", [-1, 0, 1])
+def test_max_tags_size_invalid(max_tags_size: int) -> None:
+    """Maximum sizes of tags below 2 (the size of `{}`) stop the app on startup.
+
+    Args:
+        max_tags_size: Invalid maximum size of tags.
+    """
+    with pytest.raises(ValidationError):
+        PostRuns(max_tags_size=max_tags_size)
+    assert PostRuns().max_tags_size == 16384
 
 
 @pytest.mark.parametrize(

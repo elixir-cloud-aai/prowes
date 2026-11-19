@@ -25,7 +25,8 @@ The settings that deployments usually change:
 | `server.debug` | `False` | Flask's debug mode, which allows executing arbitrary code: only for local development |
 | `server.max_content_length` | `10485760` (10 MiB) | Maximum size of request bodies, see [Request size limit](#request-size-limit) |
 | `exceptions` | `pro_wes.exceptions.exceptions`, `application/json` | Problem details of errors (`title`, `status`, `detail`) and their media type (see [Errors](api.md#errors)) |
-| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds for each request as a whole; required, a positive number), polling of the remote WES (`polling_wait`, `polling_attempts`), limits of workflow attachments (`max_attachments`, `max_attachment_size`) and credentials in URLs (`url_credentials`), see [Run requests](#run-requests) |
+| `custom.post_runs` | | Storage path of runs (`storage_path`), characters and length of run identifiers (`id_charset`, `id_length`; the characters are taken as is), timeout of forwarding runs and reading run logs (`timeout_post`, 30 seconds for each request as a whole; required, a positive number), polling of the remote WES (`polling_wait`, `polling_attempts`), limits of workflow attachments (`max_attachments`, `max_attachment_size`) and of the size of tags (`max_tags_size`, 16 KiB), and credentials in URLs (`url_credentials`), see [Run requests](#run-requests) |
+| `custom.list_runs.default_page_size`, `custom.list_runs.max_page_size` | `5`, `100` | Runs per page of `GET /runs` without `page_size`, and at most, see [Run lists](#run-lists) |
 | `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds, for each request as a whole; required, a positive number |
 | `custom.wes.max_response_size` | `16777216` (16 MiB) | Maximum size of each response of a WES instance, in bytes; larger responses fail the request, see [WES instances](#wes-instances) |
 
@@ -202,6 +203,15 @@ proWES), with the same `413`.
   (default 1048576, i.e., 1 MiB); runs with a larger one are rejected with
   `413 Content Too Large`. All attachments together are limited by the
   [request size limit](#request-size-limit);
+- `max_tags_size`: the maximum size of the tags (`tags`) of a run, in
+  bytes (default 16384, i.e., 16 KiB; at least 2, the size of `{}`): of
+  their JSON text as stored, in UTF-8, after credentials are removed
+  (`url_credentials: strip`); runs with larger tags are rejected with
+  `400 Bad Request`, naming `tags` in `errors`. Tags are listed with
+  every run (see [Run lists](#run-lists)), so the limit bounds the size
+  of run lists. Stored runs with larger tags (e.g., stored before the
+  limit, or under a larger one) are listed with `{}` as tags, with a
+  warning logged; their run logs (`GET /runs/{run_id}`) keep the tags;
 - `url_credentials`: what happens to runs with credentials in URLs
   (`https://user:password@host/...`), in `workflow_url` and in the strings
   (keys and values) of `workflow_params`, `workflow_engine_parameters` and
@@ -236,6 +246,28 @@ The values of `tags` and `workflow_engine_parameters` must be strings, as
 in the WES specification, and no object in the JSON fields may have a key
 twice, as decoding would keep only its last value (`400 Bad Request`
 otherwise).
+
+### Run lists
+
+`custom.list_runs` bounds the pages of `GET /runs`, so that no request
+makes a worker load, decode and serialise all runs of a caller at once:
+
+- `max_page_size`: the largest number of runs per page (default 100, at
+  least 1); requests with a larger `page_size`, or one below 1, are
+  rejected with `400 Bad Request`, naming `page_size` in `errors`;
+- `default_page_size`: the number of runs per page of requests without
+  `page_size` (default 5); from 1 to `max_page_size`, or the app doesn't
+  start.
+
+Clients get the other runs page by page, with `next_page_token` (see [Run
+lists](api.md#run-lists)). With the size of tags (`max_tags_size`, see
+[Run requests](#run-requests)), the limits bound the size of each list: by
+default, 100 runs with at most 16 KiB of tags each, as stored. Responses
+escape characters other than ASCII (e.g., `é` as `\u00e9`), so tags may
+take up to about three times their stored size in a list.
+
+Setting only `max_page_size` below 5 needs `default_page_size` too (at most
+`max_page_size`), or the app doesn't start.
 
 ### Rate limits
 

@@ -13,7 +13,7 @@ from celery import uuid
 # from Flask, until they are read in `controllers.py` (#117)
 from flask import request  # ast-grep-ignore: framework-free-tasks
 from foca import get_collection, get_custom_config
-from foca.errors import FieldError, InvalidFieldsProblem
+from foca.errors import FieldError, InvalidFieldsProblem, json_pointer
 from foca.utils.misc import generate_id
 from pydantic import ValidationError
 from pymongo.collection import Collection
@@ -77,11 +77,6 @@ STRING_OBJECT_FIELDS = ("workflow_engine_parameters", "tags")
 # until they are forwarded (#66), so that the choice isn't lost
 ENGINE_FIELDS = ("workflow_engine", "workflow_engine_version")
 
-# Largest number of runs per page that is passed to MongoDB as the limit of
-# a query (plus one, cf. `list_runs`); MongoDB takes 8-byte integers only,
-# and Connexion doesn't check the range of `page_size` (`int64`)
-MAX_QUERY_LIMIT = 2**62
-
 
 def _page_token_id(page_token: str) -> ObjectId:
     """Get the database identifier of the last run of a page.
@@ -136,6 +131,23 @@ def _decode_stored_json(value: str, field: str) -> Any:
     decoded = loads(value)
     sanitize_json(decoded, field, "strip")
     return decoded
+
+
+def _tags_too_large(tags: Any, max_tags_size: int) -> bool:
+    """Check whether tags are larger than allowed.
+
+    The size is that of the JSON text of the tags, as stored, in bytes
+    (UTF-8; cf. `custom.post_runs.max_tags_size`).
+
+    Args:
+        tags: Tags of a run request, as stored (JSON text; others, e.g.,
+            `None`, have no size).
+        max_tags_size: Maximum size, in bytes.
+
+    Returns:
+        Whether the tags are JSON text larger than `max_tags_size`.
+    """
+    return isinstance(tags, str) and len(tags.encode()) > max_tags_size
 
 
 class Upload(NamedTuple):
@@ -232,6 +244,7 @@ class WorkflowRuns:
         document.run_log.request = self._validate_run_request(
             form_data=request.form,
             url_credentials=controller_config.url_credentials,
+            max_tags_size=controller_config.max_tags_size,
         )
 
         # check and read workflow attachments, before anything is stored
@@ -360,20 +373,26 @@ class WorkflowRuns:
                 `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
         Raises:
-            foca.errors.InvalidFieldsProblem: The page size is negative, or
-                the page token is malformed (`400`).
+            foca.errors.InvalidFieldsProblem: The page size is below 1 or
+                above `custom.list_runs.max_page_size`, or the page token is
+                malformed (`400`).
         """
-        # set query params
+        # set query params; page sizes are bounded, so that no request lists
+        # more runs at once (`0` doesn't list all: the specification has
+        # services return at most `page_size` runs)
         page_size: int = kwargs.get(
             "page_size", self.config.list_runs.default_page_size
         )
         page_token = kwargs.get("page_token", "")
-        if page_size < 0:
+        max_page_size = self.config.list_runs.max_page_size
+        if not 1 <= page_size <= max_page_size:
             raise InvalidFieldsProblem(
                 [
                     FieldError(
-                        detail="Must be at least 0.",
-                        code="too-small",
+                        detail="Must be at least 1."
+                        if page_size < 1
+                        else f"Must be at most {max_page_size}.",
+                        code="too-small" if page_size < 1 else "too-large",
                         parameter="page_size",
                     )
                 ]
@@ -386,10 +405,7 @@ class WorkflowRuns:
         if page_token != "":
             filter_dict["_id"] = {"$lt": _page_token_id(page_token)}
 
-        # get resources, and one more if a page size is set, to tell
-        # whether older runs are left (`limit(0)`: no limit); larger page
-        # sizes than MongoDB takes (8-byte integers) can't have more runs
-        limit = min(page_size, MAX_QUERY_LIMIT)
+        # get resources, and one more, to tell whether older runs are left
         resources = list(
             self.db_client.find(
                 filter=filter_dict,
@@ -402,17 +418,23 @@ class WorkflowRuns:
                 },
             )
             .sort("_id", -1)
-            .limit(limit + 1 if limit else 0)
+            .limit(page_size + 1)
         )
 
         # set next page token: only if older runs are left
         next_page_token = ""
-        if limit and len(resources) > limit:
-            resources = resources[:limit]
+        if len(resources) > page_size:
+            resources = resources[:page_size]
             next_page_token = str(resources[-1]["_id"])
 
         # format response: `RunSummary`, which WES 2.0.0 requires
-        runs = [self._run_summary(run_log=run["run_log"]) for run in resources]
+        runs = [
+            self._run_summary(
+                run_log=run["run_log"],
+                max_tags_size=self.config.post_runs.max_tags_size,
+            )
+            for run in resources
+        ]
 
         return {"next_page_token": next_page_token, "runs": runs}
 
@@ -764,7 +786,8 @@ class WorkflowRuns:
     @staticmethod
     def _validate_run_request(
         form_data: ImmutableMultiDict[str, Any],
-        url_credentials: UrlCredentialsMode = "reject",
+        url_credentials: UrlCredentialsMode,
+        max_tags_size: int,
     ) -> RunRequest:
         """Convert run request form input to `RunRequest` model.
 
@@ -772,12 +795,15 @@ class WorkflowRuns:
         `custom.post_runs.url_credentials`): in `workflow_url`, and in the
         strings (keys and values) of `workflow_params`,
         `workflow_engine_parameters` and `tags`, at any depth. Fields without
-        credentials are kept as sent.
+        credentials are kept as sent. Tags are limited in size, as stored
+        (cf. `custom.post_runs.max_tags_size`), so that run lists are too.
 
         Args:
             form_data: Flask data structure for representing form values.
             url_credentials: Whether runs with credentials in URLs are
                 rejected (`reject`), or the credentials removed (`strip`).
+            max_tags_size: Maximum size of the JSON text of the tags, as
+                stored, in bytes (UTF-8).
 
         Returns:
             The run request, without credentials in URLs.
@@ -789,6 +815,8 @@ class WorkflowRuns:
             pro_wes.exceptions.UrlCredentials: A URL has credentials, and
                 `url_credentials` is `reject`.
             pro_wes.exceptions.MalformedUrl: A URL is malformed.
+            foca.errors.InvalidFieldsProblem: The tags are larger than
+                `max_tags_size` (`400`).
         """
         dict_of_lists = form_data.to_dict(flat=False)
         # flatten single item lists
@@ -814,10 +842,20 @@ class WorkflowRuns:
             decoded = loads(value)
             if sanitize_json(decoded, field, url_credentials):
                 updates[field] = dumps(decoded)
+        if _tags_too_large(updates.get("tags", model_instance.tags), max_tags_size):
+            raise InvalidFieldsProblem(
+                [
+                    FieldError(
+                        detail=f"Must be at most {max_tags_size} bytes long.",
+                        code="too-long",
+                        pointer=json_pointer("tags"),
+                    )
+                ]
+            )
         return model_instance.model_copy(update=updates)
 
     @staticmethod
-    def _run_summary(run_log: dict[str, Any]) -> dict[str, Any]:
+    def _run_summary(run_log: dict[str, Any], max_tags_size: int) -> dict[str, Any]:
         """Get the summary of a run for `GET /runs` from its stored run log.
 
         Start and end time come from the engine log of the run (`run_log`),
@@ -826,10 +864,14 @@ class WorkflowRuns:
         earlier versions stored without checking them (other than strings)
         are JSON-encoded, and credentials in URLs are removed. Tags that
         can't be read (e.g., with malformed URLs) are returned as `{}`, with
-        an error logged, rather than failing the whole list.
+        an error logged, rather than failing the whole list; so are tags
+        larger than `max_tags_size` (e.g., of runs stored before the limit),
+        with a warning, without decoding them.
 
         Args:
             run_log: Run log, as stored (projected to the fields needed).
+            max_tags_size: Maximum size of the JSON text of the tags, as
+                stored, in bytes (UTF-8).
 
         Returns:
             Response object according to WES API schema `RunSummary`.
@@ -844,6 +886,14 @@ class WorkflowRuns:
                 summary[field] = engine_log[field]
         tags: dict[str, str] | None = {}
         stored_tags = (run_log.get("request") or {}).get("tags")
+        if _tags_too_large(stored_tags, max_tags_size):
+            logger.warning(
+                "Tags of run '%s' are larger than custom.post_runs.max_tags_size"
+                " (%d bytes); returned as {}.",
+                summary["run_id"],
+                max_tags_size,
+            )
+            stored_tags = None
         if stored_tags not in (None, ""):
             try:
                 decoded = _decode_stored_json(stored_tags, "tags")

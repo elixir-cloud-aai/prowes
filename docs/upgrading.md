@@ -166,9 +166,28 @@ per run of 1 MiB each (`custom.post_runs.max_attachments`,
 credentials in URLs (`https://user:password@host/...`) are rejected with
 `400 Bad Request` (`custom.post_runs.url_credentials: reject`; set `strip` to
 remove the credentials instead), as are `tags` and
-`workflow_engine_parameters` with values other than strings. Raise the limits
-for clients that send larger runs, also at the reverse proxy in front of
-proWES.
+`workflow_engine_parameters` with values other than strings, and runs with
+`tags` larger than 16 KiB of JSON text (`custom.post_runs.max_tags_size`;
+before: up to the 500 kB of a form field). Raise the limits for clients
+that send larger runs, also at the reverse proxy in front of proWES.
+
+### Run lists (breaking)
+
+`GET /runs` lists at most 100 runs per page
+(`custom.list_runs.max_page_size`, see [Run
+lists](configuration.md#run-lists)): larger `page_size` values get `400 Bad
+Request`, and so does `page_size=0`, which listed all runs before. Clients
+that list all runs at once must follow `next_page_token` instead, page by
+page. A `custom.list_runs.default_page_size` of `0`, or above
+`max_page_size`, now stops the app on startup: set a page size from 1 to
+`max_page_size` (default: 5; set it too if you set `max_page_size`
+below 5). Runs stored before with tags larger than
+`custom.post_runs.max_tags_size` are listed with `{}` as tags, and a
+warning is logged; their run logs keep the tags, and no migration is
+needed. Raise `max_tags_size` to list them with their tags. Their tags
+are still read from the database for each list (up to the 500 kB of a
+form field each, for at most `max_page_size` runs per page); new runs are
+bounded at submission.
 
 Workflow attachments are written with their contents, under safe file names
 (before: runs with attachments failed with `500`); their contents are no
@@ -212,7 +231,8 @@ that aren't forms (e.g., JSON) get `415 Unsupported Media Type`,
 `multipart/form-data` run requests without a boundary and `GET /runs` with
 a malformed `page_token` get `400`. `GET /runs` with a negative `page_size`
 gets `400` too (before: runs were listed as for its absolute value), and a
-negative `custom.list_runs.default_page_size` stops the app on startup.
+negative `custom.list_runs.default_page_size` stops the app on startup (see
+also [Run lists](#run-lists-breaking)).
 URL-encoded run requests with `workflow_attachment` get `400` (before: the
 run was started without the attachments).
 
