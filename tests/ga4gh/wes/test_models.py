@@ -7,7 +7,7 @@ from connexion import App
 from pydantic import ValidationError
 import pytest
 
-from pro_wes.config_models import Defaults, PostRuns, Wes
+from pro_wes.config_models import Defaults, ListRuns, PostRuns, Wes
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
 from pro_wes.ga4gh.wes import models
@@ -140,6 +140,16 @@ def test_id_charset_invalid(charset: str) -> None:
     """Run identifier characters that FOCA can't use stop the app on startup."""
     with pytest.raises(ValidationError):
         PostRuns(id_charset=charset)
+
+
+def test_default_page_size_negative() -> None:
+    """Negative default page sizes stop the app on startup.
+
+    `GET /runs` would refuse requests without `page_size` with `400`.
+    """
+    with pytest.raises(ValidationError):
+        ListRuns(default_page_size=-1)
+    assert ListRuns(default_page_size=0).default_page_size == 0
 
 
 @pytest.mark.parametrize(

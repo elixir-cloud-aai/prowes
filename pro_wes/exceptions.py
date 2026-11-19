@@ -37,6 +37,7 @@ __all__ = [
     "InternalServerError",
     "InvalidAttachmentName",
     "MalformedUrl",
+    "MissingBoundary",
     "NoBackendAvailable",
     "NoSuitableEngine",
     "NotFound",
@@ -46,7 +47,9 @@ __all__ = [
     "TasksNotServed",
     "TooManyAttachments",
     "Unauthorized",
+    "UnsupportedMediaType",
     "UrlCredentials",
+    "UrlEncodedAttachment",
     "WesEndpointProblem",
     "WorkflowEngineNotSupported",
     "exceptions",
@@ -182,6 +185,23 @@ class MalformedUrl(BadRequest):
     """A URL of a run request is malformed, so its credentials can't be checked."""
 
 
+class UnsupportedMediaType(BadRequest):
+    """A run request isn't a form (`multipart/form-data` or URL-encoded).
+
+    Mapped to `415 Unsupported Media Type` in `exceptions` below; FOCA has
+    no error class for it, so it derives from the closest client-side one
+    (like `TasksNotServed`).
+    """
+
+
+class UrlEncodedAttachment(BadRequest):
+    """A URL-encoded run request has workflow attachments, which it can't carry."""
+
+
+class MissingBoundary(BadRequest):
+    """A `multipart/form-data` run request has no boundary, so it can't be read."""
+
+
 class RunNotFound(NotFound):
     """Workflow run with given identifier not found."""
 
@@ -264,6 +284,26 @@ exceptions = {
     MalformedUrl: {
         "title": "Bad request",
         "detail": "A URL of the run request is malformed.",
+        "status": 400,
+    },
+    UnsupportedMediaType: {
+        "title": "Unsupported media type",
+        "detail": (
+            "Run requests must be forms (multipart/form-data, or URL-encoded"
+            " without attachments)."
+        ),
+        "status": 415,
+    },
+    UrlEncodedAttachment: {
+        "title": "Bad request",
+        "detail": (
+            "Workflow attachments must be sent as files of a multipart/form-data body."
+        ),
+        "status": 400,
+    },
+    MissingBoundary: {
+        "title": "Bad request",
+        "detail": "The multipart/form-data body has no boundary.",
         "status": 400,
     },
     NoSuitableEngine: {

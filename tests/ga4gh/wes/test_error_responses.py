@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from typing import Any
 
+from connexion import App
 from foca.errors.fields import MAX_FIELD_ERRORS
 from foca.testing import Client
 from foca.utils.http import HttpResponse
@@ -336,6 +337,156 @@ def test_invalid_run_request(foca_client: Client, served_spec: dict[str, Any]) -
     fields = {k: v for k, v in RUN_REQUEST.items() if k != "workflow_url"}
     response = _post_run(foca_client, fields)
     assert_declared_error(served_spec, "post", "/runs", response, 400)
+
+
+@pytest.mark.parametrize(
+    ("content", "headers"),
+    [
+        (b'{"workflow_url": "x"}', {"Content-Type": "application/json"}),
+        (b"workflow_url=x", {"Content-Type": "text/plain"}),
+        (b"workflow_url=x", {}),
+        (b"", {}),
+    ],
+    ids=["json", "text", "no-media-type", "no-body"],
+)
+def test_run_request_unsupported_media_type(
+    content: bytes,
+    headers: dict[str, str],
+    foca_client: Client,
+    served_spec: dict[str, Any],
+) -> None:
+    """Run requests that aren't forms get `415`, as declared.
+
+    Args:
+        content: Body of the request.
+        headers: Headers of the request.
+        foca_client: Test client of the app.
+        served_spec: Served specification.
+    """
+    response = foca_client.post(f"{BASE_PATH}/runs", content=content, headers=headers)
+    assert_declared_error(served_spec, "post", "/runs", response, 415)
+    assert response.json()["detail"] == (
+        "Run requests must be forms (multipart/form-data, or URL-encoded"
+        " without attachments)."
+    )
+
+
+def test_run_workflow_endpoint(foca_app: App) -> None:
+    """The check of run request bodies names the endpoint of `POST /runs`."""
+    rules = [
+        rule
+        for rule in foca_app.app.url_map.iter_rules()
+        if rule.endpoint.rpartition(".")[2] == controllers.RUN_WORKFLOW_ENDPOINT
+    ]
+    assert [(rule.rule, "POST" in (rule.methods or set())) for rule in rules] == [
+        (f"{BASE_PATH}/runs", True)
+    ]
+
+
+def test_other_requests_not_checked(
+    foca_client: Client,
+    served_spec: dict[str, Any],
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Requests other than run requests keep their responses, whatever the body.
+
+    Args:
+        foca_client: Test client of the app.
+        served_spec: Served specification.
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"user_id": OWNER, "run_log": {"run_id": "DONE01", "state": "COMPLETE"}}
+    )
+    response = foca_client.post(
+        f"{BASE_PATH}/runs/DONE01/cancel",
+        content=b"{}",
+        headers={"Content-Type": "application/json"},
+    )
+    assert_declared_error(served_spec, "post", "/runs/{run_id}/cancel", response, 409)
+    response = foca_client.get(
+        f"{BASE_PATH}/runs", headers={"Content-Type": "text/plain"}
+    )
+    assert response.status_code == 200
+
+
+def test_run_request_without_boundary(
+    foca_client: Client, served_spec: dict[str, Any]
+) -> None:
+    """Multipart run requests without a boundary get `400`, as declared."""
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=_multipart(RUN_REQUEST),
+        headers={"Content-Type": "multipart/form-data"},
+    )
+    assert_declared_error(served_spec, "post", "/runs", response, 400)
+    assert response.json()["detail"] == (
+        "The multipart/form-data body has no boundary."
+    )
+
+
+def test_run_request_url_encoded_attachment(
+    foca_client: Client, served_spec: dict[str, Any]
+) -> None:
+    """URL-encoded run requests with workflow attachments get `400`, as declared.
+
+    URL-encoded forms can't carry files, so the attachments would be lost.
+    """
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        data={**RUN_REQUEST, "workflow_attachment": "main.cwl"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert_declared_error(served_spec, "post", "/runs", response, 400)
+    assert response.json()["detail"] == (
+        "Workflow attachments must be sent as files of a multipart/form-data body."
+    )
+
+
+def test_run_request_wrong_boundary(
+    foca_client: Client, served_spec: dict[str, Any]
+) -> None:
+    """Multipart run requests with another boundary get `400`, as declared.
+
+    Connexion's own `400` (empty form), not that of the check of run
+    request bodies; a guard against `500`s.
+    """
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=_multipart(RUN_REQUEST),
+        headers={"Content-Type": "multipart/form-data; boundary=other"},
+    )
+    assert_declared_error(served_spec, "post", "/runs", response, 400)
+
+
+@pytest.mark.parametrize(
+    ("params", "parameter"),
+    [
+        ({"page_token": "zzz"}, "page_token"),
+        ({"page_token": "0" * 23}, "page_token"),
+        ({"page_size": "-1"}, "page_size"),
+    ],
+    ids=["malformed-token", "short-token", "negative-size"],
+)
+def test_invalid_page(
+    params: dict[str, str],
+    parameter: str,
+    foca_client: Client,
+    served_spec: dict[str, Any],
+) -> None:
+    """Malformed page tokens and negative page sizes get `400`, as declared.
+
+    Args:
+        params: Query parameters.
+        parameter: The invalid parameter.
+        foca_client: Test client of the app.
+        served_spec: Served specification.
+    """
+    response = foca_client.get(f"{BASE_PATH}/runs", params=params)
+    assert_declared_error(served_spec, "get", "/runs", response, 400)
+    errors = response.json()["errors"]
+    assert [error["parameter"] for error in errors] == [parameter]
+    assert params[parameter] not in response.text
 
 
 def test_run_request_too_large(

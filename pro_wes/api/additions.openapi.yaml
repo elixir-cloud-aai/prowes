@@ -69,6 +69,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        # proWES extension
+        415:
+          description: >-
+            proWES extension: the request body isn't a form
+            (`multipart/form-data`, or `application/x-www-form-urlencoded`
+            without workflow attachments), e.g., it is JSON or has no media
+            type.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         500: *problem
         # proWES extension
         503:

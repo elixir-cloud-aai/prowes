@@ -6,9 +6,12 @@ access tokens; runs belong to the namespaced subject of the token that
 created them.
 """
 
-from typing import Any
+from typing import Any, NoReturn
 
 from connexion import App
+from flask import Request
+from foca import get_config
+from foca.security import auth
 from foca.testing import Client, request_context
 from foca.testing.client import Response
 from foca.testing.issuer import Issuer
@@ -180,3 +183,121 @@ def test_set_owner_replaces_user_id(
     if token_info is not None:
         expected["user_id"] = OWNER
     assert kwargs == expected
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        pytest.param("", id="no token"),
+        pytest.param("Basic dXNlcjpwYXNz", id="other scheme"),
+        pytest.param("Bearer not-a-jwt", id="invalid token"),
+    ],
+)
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        pytest.param("application/json", id="json"),
+        pytest.param("multipart/form-data", id="no boundary"),
+    ],
+)
+def test_run_request_body_after_token(
+    foca_client: Client, authorization: str, content_type: str
+) -> None:
+    """Unauthenticated run requests get `401`, also with bodies that aren't forms.
+
+    Their bodies are refused (`415`, `400`) only once the token is valid (cf.
+    `test_error_responses.py`).
+    """
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=b"{}",
+        headers={"Authorization": authorization, "Content-Type": content_type},
+    )
+    _assert_unauthorized(response)
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        pytest.param("", id="no token"),
+        pytest.param("Bearer not-a-jwt", id="invalid token"),
+    ],
+)
+def test_run_request_body_check_reads_no_body(
+    foca_app: App, monkeypatch: pytest.MonkeyPatch, authorization: str
+) -> None:
+    """The check of run request bodies decides by the headers only.
+
+    Werkzeug parses URL-encoded bodies without limits on memory or fields;
+    the check doesn't read them, also not before the token is checked.
+    (Connexion 2 reads the form of every request before its security
+    checks, which this check can't prevent.)
+    """
+
+    def _read(_request: Request) -> NoReturn:
+        """Fail the test if the body is read.
+
+        Args:
+            _request: Request.
+
+        Raises:
+            AssertionError: Always.
+        """
+        raise AssertionError("body read")
+
+    monkeypatch.setattr(Request, "form", property(_read))
+    monkeypatch.setattr(Request, "files", property(_read))
+    with foca_app.app.test_request_context(
+        f"{BASE_PATH}/runs",
+        method="POST",
+        data=b"a&" * 1000,
+        headers={"Authorization": authorization},
+        content_type="application/x-www-form-urlencoded",
+    ):
+        controllers.check_run_request_body()
+
+
+def test_invalid_token_validated_once(
+    foca_client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid tokens of refused run request bodies are validated once."""
+    calls: list[str] = []
+    validate = auth._validate
+
+    def _validate(token: str, conf: Any) -> Any:
+        """Count the validations of tokens.
+
+        Args:
+            token: Token.
+            conf: Auth config.
+
+        Returns:
+            What FOCA's validation returns.
+        """
+        calls.append(token)
+        return validate(token=token, conf=conf)
+
+    monkeypatch.setattr(auth, "_validate", _validate)
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=b"{}",
+        headers={
+            "Authorization": "Bearer not-a-jwt",
+            "Content-Type": "application/json",
+        },
+    )
+    _assert_unauthorized(response)
+    assert calls == ["not-a-jwt"]
+
+
+def test_run_request_body_auth_disabled(
+    foca_app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without required tokens (`disable_auth`), bodies are checked directly."""
+    with foca_app.app.app_context():
+        for spec in get_config().api.specs:
+            monkeypatch.setattr(spec, "disable_auth", True)
+    with foca_app.app.test_request_context(
+        f"{BASE_PATH}/runs", method="POST", data=b"{}", content_type="text/plain"
+    ):
+        assert controllers._authenticated()
