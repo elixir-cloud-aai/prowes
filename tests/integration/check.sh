@@ -116,6 +116,19 @@ await_state() {
   return 1
 }
 
+# Wait until the run log of a run matches a jq filter: the Celery worker
+# stores the final state before it fetches and stores the final run log
+await_log() {
+  for _ in $(seq "${final_wait}"); do
+    check GET "/runs/$1" 200 '.run_id != null'
+    jq -e "$2" "${body}" > /dev/null 2>&1 && return
+    sleep 1
+  done
+  echo "::error::run log of run $1 doesn't match $2"
+  cat "${body}"
+  return 1
+}
+
 # The identifier of a run of proWES at Sapporo, from proWES's database
 backend_id() {
   local remote
@@ -193,6 +206,7 @@ message="integration-$(date +%s)-${RANDOM}"
 create hello.cwl "{\"message\": \"${message}\"}"
 done_id="${id}"
 await_state "${done_id}" COMPLETE
+await_log "${done_id}" '.run_log.exit_code != null and (.run_log.stdout // "" | test("greeting"))'
 check GET "/runs/${done_id}" 200 "
   .run_id == \"${done_id}\"
   and .state == \"COMPLETE\"
@@ -212,6 +226,7 @@ echo "proWES: a run that fails"
 create fail.cwl '{}'
 failed="${id}"
 await_state "${failed}" EXECUTOR_ERROR
+await_log "${failed}" '.run_log.exit_code != null'
 check GET "/runs/${failed}" 200 '.state == "EXECUTOR_ERROR" and .run_log.exit_code != 0'
 
 echo "proWES: a run that is canceled while it runs"
