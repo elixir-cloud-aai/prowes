@@ -43,13 +43,17 @@ def task__track_run_progress(
     remote_base_path: str,
     remote_run_id: str,
     jwt: str | None,
-    remote_wes_version: str | None = None,
 ) -> str:
     """Relay workflow run request to remote WES and track run progress.
 
     The collection of the runs is taken from FOCA when the task runs, as
     FOCA replaces the MongoDB client of the worker after each fork (cf.
-    :py:func:`foca.get_collection`).
+    :py:func:`foca.get_collection`). Run logs of the remote service are
+    converted from the WES version that the run was forwarded in, as stored
+    with the run (`wes_endpoint.wes_version`; the oldest supported version
+    for runs stored without one, e.g., by earlier versions), so that the
+    task's arguments are the same as before, and workers of earlier versions
+    can track runs of later ones (e.g., in a rolling update).
 
     Args:
         self: The bound task (`bind=True`).
@@ -63,10 +67,6 @@ def task__track_run_progress(
         remote_run_id: Workflow run identifier on remote WES service.
         jwt: Ignored: the client's token is never passed on to WES instances
             (kept for tasks queued by earlier versions).
-        remote_wes_version: WES version of the remote service, as the run was
-            forwarded in (e.g., `1.0`); its run logs are converted to the WES
-            version of proWES. The oldest supported version if none, or
-            unsupported (e.g., for tasks queued by earlier versions).
 
     Returns:
         Task identifier.
@@ -114,7 +114,7 @@ def task__track_run_progress(
             token=None,
         )
 
-        wes_version = parse_supported(remote_wes_version) or OLDEST
+        wes_version = _stored_wes_version(db_client=db_client)
 
         # fetch run log and upsert database document
         document: DbDocument = _update_run_log(
@@ -181,6 +181,25 @@ def task__track_run_progress(
 
     logger.info("[%s] Processing completed.", task_id)
     return task_id
+
+
+def _stored_wes_version(db_client: DbDocumentConnector) -> WesVersion:
+    """Get the WES version that a run was forwarded in, as stored.
+
+    Args:
+        db_client: Connector to the run document.
+
+    Returns:
+        The stored version; the oldest supported one if the run, or its
+            version, is missing or not supported.
+    """
+    document = db_client.collection.find_one(
+        filter={"task_id": db_client.task_id},
+        projection={"wes_endpoint.wes_version": True, "_id": False},
+    )
+    endpoint = (document or {}).get("wes_endpoint")
+    value = endpoint.get("wes_version") if isinstance(endpoint, dict) else None
+    return parse_supported(value) or OLDEST
 
 
 def _stored_state_is_finished(db_client: DbDocumentConnector) -> bool:

@@ -278,8 +278,9 @@ def test_unavailable(
     ("answer", "hint"),
     [
         ((200, _service_info("2.0.0")), ""),
-        ((200, None), ""),
+        ((200, {"name": "not a WES"}), ""),
         ((404, {"msg": "not found"}), ""),
+        ((404, None), ""),
         ((401, None), " (status 401 without credentials)"),
         ((403, _service_info("1.1.0")), " (status 403 without credentials)"),
     ],
@@ -309,6 +310,39 @@ def test_unknown_version(
         backend_versions.get(backend)
     assert f"WES instance {URL_11} unknown{hint}: taken as 1.0" in caplog.text
     assert service_infos.reads == [URL_11, URL_11]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [(503, None), (502, {"msg": "bad gateway"}), (429, None), (200, None), (200, [])],
+)
+def test_no_answer_keeps_version(
+    foca_app: App,
+    service_infos: FakeServiceInfos,
+    clock: list[float],
+    caplog: pytest.LogCaptureFixture,
+    answer: tuple[int, Any],
+) -> None:
+    """Server errors and answers that aren't JSON objects count as failures.
+
+    A version read before stays; without one, the WES instance counts as the
+    oldest version, unconfirmed (e.g., a proxy in front of it in
+    maintenance), and is read again after a minute.
+    """
+    backend = _backend(URL_11)
+    with foca_app.app.app_context():
+        service_infos.answers[URL_11] = answer
+        assert backend_versions.get(backend) == V10
+        assert not backend_versions.confirmed(backend)
+        clock[0] += PROBE_RETRY
+        service_infos.answers[URL_11] = (200, _service_info("1.1.0"))
+        assert backend_versions.get(backend) == V11
+        clock[0] += 3600
+        service_infos.answers[URL_11] = answer
+        assert backend_versions.get(backend) == V11
+        assert backend_versions.confirmed(backend)
+    assert f"Service info of WES instance {URL_11} not available" in caplog.text
+    assert service_infos.reads == [URL_11] * 3
 
 
 def test_read_service_info(

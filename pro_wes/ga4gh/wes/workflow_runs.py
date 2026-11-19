@@ -358,7 +358,6 @@ class WorkflowRuns:
                 "remote_host": updated_document_stored.wes_endpoint.host,
                 "remote_base_path": updated_document_stored.wes_endpoint.base_path,
                 "remote_run_id": updated_document_stored.wes_endpoint.run_id,
-                "remote_wes_version": str(backend.version),
             },
             task_id=updated_document_stored.task_id,
             **options,

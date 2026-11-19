@@ -169,7 +169,6 @@ def test_post_run(
                 "remote_host": stored["wes_endpoint"]["host"],
                 "remote_base_path": "/ga4gh/wes/v1",
                 "remote_run_id": REMOTE_RUN_ID,
-                "remote_wes_version": "1.1",
             },
             "task_id": stored["task_id"],
         }
@@ -201,7 +200,7 @@ def test_post_run_wes_10(
     stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
     assert stored is not None
     assert stored["wes_endpoint"]["wes_version"] == "1.0"
-    assert queued[0]["kwargs"]["remote_wes_version"] == "1.0"
+    assert "remote_wes_version" not in queued[0]["kwargs"]
 
 
 @pytest.mark.usefixtures("queued")

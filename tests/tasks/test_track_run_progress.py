@@ -172,19 +172,28 @@ def test_track_run_until_finished(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "request" not in document["run_log"]
 
 
-@pytest.mark.usefixtures("run")
 @pytest.mark.parametrize(
     ("version", "expected"),
     [("1.0", "1.0"), ("1.1", "1.1"), (None, "1.0"), ("9.9", "1.0")],
 )
 def test_track_run_upgrades_run_logs(
-    monkeypatch: pytest.MonkeyPatch, version: str | None, expected: str
+    foca_app: App,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str | None,
+    expected: str,
 ) -> None:
-    """Run logs are converted from the WES version of the remote WES.
+    """Run logs are converted from the WES version stored with the run.
 
-    Tasks without a known version (e.g., queued by earlier versions) take
-    the oldest one.
+    Runs without a supported version (e.g., stored by earlier versions)
+    take the oldest one.
     """
+    endpoint = {
+        "host": TASK_KWARGS["remote_host"],
+        "base_path": TASK_KWARGS["remote_base_path"],
+        "run_id": REMOTE_RUN_ID,
+    }
+    if version is not None:
+        endpoint["wes_version"] = version
     _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
     upgraded: list[str] = []
 
@@ -202,13 +211,17 @@ def test_track_run_upgrades_run_logs(
         return {**run_log, "outputs": {"upgraded": True}}
 
     monkeypatch.setattr(track_run_progress, "upgrade_run_log", _upgrade)
-    task__track_run_progress.push_request(id=TASK_ID)
-    try:
-        task__track_run_progress.run(**TASK_KWARGS, remote_wes_version=version)
-    finally:
-        task__track_run_progress.pop_request()
+    with foca_app.app.app_context():
+        get_collection(RUN_DB, RUN_COLLECTION).insert_one(
+            {
+                "task_id": TASK_ID,
+                "run_log": {"run_id": RUN_ID, "state": "UNKNOWN"},
+                "wes_endpoint": endpoint,
+            }
+        )
+        _track()
+        assert _stored()["run_log"]["outputs"] == {"upgraded": True}
     assert upgraded == [expected, expected]
-    assert _stored()["run_log"]["outputs"] == {"upgraded": True}
 
 
 @pytest.mark.usefixtures("run")

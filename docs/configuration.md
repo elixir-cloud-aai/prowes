@@ -177,7 +177,9 @@ leniently (e.g., `1.0.1`, `v1.1.0`), if `type.group` is `org.ga4gh` and
 `type.artifact` is `wes`. A WES instance that reports no version that proWES
 supports (e.g., one that refuses anonymous reads with `401` or `403`, logged
 with a hint), or never answered, counts as WES 1.0, with a warning in the
-logs; one that stops answering keeps the version read before.
+logs; one that stops answering (also with a server error, or an answer that
+is no JSON object, e.g., of a proxy in maintenance) keeps the version read
+before.
 
 The service info is read when a run needs the version: for the WES instance
 that a run goes to, and, for the first run with fields that WES 1.0 can't

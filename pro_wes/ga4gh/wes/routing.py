@@ -48,6 +48,9 @@ tried again."""
 PROBE_REFUSED = frozenset({HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN})
 """Statuses of service infos that need credentials (logged with a hint)."""
 
+PROBE_NOT_FOUND = frozenset({HTTPStatus.NOT_FOUND, HTTPStatus.GONE})
+"""Statuses of WES instances without a service info, which count as answers."""
+
 
 def label_version(backend: Backend) -> WesVersion | None:
     """Get the WES version that the label `wes.version` of a backend states.
@@ -147,10 +150,13 @@ class BackendVersions:
         """Read the WES version of a WES instance from its service info.
 
         The service info is read without credentials (it is public in the WES
-        specification), within `PROBE_TIMEOUT` seconds. A failure doesn't
-        change what is known: a version that was read before stays, so that
-        one failed request doesn't make a WES instance count as another
-        version. An answer without a supported version does.
+        specification), within `PROBE_TIMEOUT` seconds. A failure (also an
+        answer that is no service info: neither a JSON object of a
+        successful status, nor `401`, `403`, `404` or `410`, e.g., a server
+        error of a proxy) doesn't change what is known: a version that was
+        read before stays, so that one failed request doesn't make a WES
+        instance count as another version. An answer without a supported
+        version does.
 
         Args:
             backend: Backend.
@@ -160,11 +166,18 @@ class BackendVersions:
         """
         try:
             status, service_info = read_service_info(backend)
+            if not (
+                (200 <= status < 300 and isinstance(service_info, dict))
+                or status in PROBE_REFUSED
+                or status in PROBE_NOT_FOUND
+            ):
+                # e.g., a proxy in front of the WES instance in maintenance
+                raise ValueError(f"status {status}, no service info")
         except Exception as exc:
             logger.warning(
                 "Service info of WES instance %s not available: %s",
                 backend.url,
-                type(exc).__name__,
+                exc if isinstance(exc, ValueError) else type(exc).__name__,
             )
             # as it is now: other threads may have read it meanwhile
             previous = self._cache.get(backend.url)
