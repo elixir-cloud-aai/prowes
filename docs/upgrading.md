@@ -184,7 +184,10 @@ page. A `custom.list_runs.default_page_size` of `0`, or above
 below 5). Runs stored before with tags larger than
 `custom.post_runs.max_tags_size` are listed with `{}` as tags, and a
 warning is logged; their run logs keep the tags, and no migration is
-needed. Raise `max_tags_size` to list them with their tags.
+needed. Raise `max_tags_size` to list them with their tags. Their tags
+are still read from the database for each list (up to the 500 kB of a
+form field each, for at most `max_page_size` runs per page); new runs are
+bounded at submission.
 
 Workflow attachments are written with their contents, under safe file names
 (before: runs with attachments failed with `500`); their contents are no

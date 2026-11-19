@@ -204,14 +204,14 @@ proWES), with the same `413`.
   `413 Content Too Large`. All attachments together are limited by the
   [request size limit](#request-size-limit);
 - `max_tags_size`: the maximum size of the tags (`tags`) of a run, in
-  bytes (default 16384, i.e., 16 KiB): of their JSON text as stored, in
-  UTF-8, after credentials are removed (`url_credentials: strip`); runs
-  with larger tags are rejected with `400 Bad Request`, naming `tags` in
-  `errors`. Tags are listed with every run (see [Run lists](#run-lists)),
-  so the limit bounds the size of run lists. Stored runs with larger tags
-  (e.g., stored before the limit, or under a larger one) are listed with
-  `{}` as tags, with a warning logged; their run logs (`GET
-  /runs/{run_id}`) keep the tags;
+  bytes (default 16384, i.e., 16 KiB; at least 2, the size of `{}`): of
+  their JSON text as stored, in UTF-8, after credentials are removed
+  (`url_credentials: strip`); runs with larger tags are rejected with
+  `400 Bad Request`, naming `tags` in `errors`. Tags are listed with
+  every run (see [Run lists](#run-lists)), so the limit bounds the size
+  of run lists. Stored runs with larger tags (e.g., stored before the
+  limit, or under a larger one) are listed with `{}` as tags, with a
+  warning logged; their run logs (`GET /runs/{run_id}`) keep the tags;
 - `url_credentials`: what happens to runs with credentials in URLs
   (`https://user:password@host/...`), in `workflow_url` and in the strings
   (keys and values) of `workflow_params`, `workflow_engine_parameters` and

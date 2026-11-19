@@ -213,9 +213,9 @@ def test_max_page_size_invalid(max_page_size: int) -> None:
         ListRuns(default_page_size=1, max_page_size=max_page_size)
 
 
-@pytest.mark.parametrize("max_tags_size", [-1, 0])
+@pytest.mark.parametrize("max_tags_size", [-1, 0, 1])
 def test_max_tags_size_invalid(max_tags_size: int) -> None:
-    """Maximum sizes of tags below 1 stop the app on startup.
+    """Maximum sizes of tags below 2 (the size of `{}`) stop the app on startup.
 
     Args:
         max_tags_size: Invalid maximum size of tags.

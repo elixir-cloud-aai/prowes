@@ -209,7 +209,8 @@ class PostRuns(BaseModel):
             JSON text, as stored (UTF-8, after removing credentials in URLs,
             cf. `url_credentials`); runs with larger tags are rejected with
             `400 Bad Request`. Stored runs with larger tags (e.g., stored
-            before the limit) are listed by `GET /runs` with empty tags.
+            before the limit) are listed by `GET /runs` with empty tags. At
+            least 2, the size of no tags (`{}`).
         url_credentials: What happens to runs with credentials in the URLs of
             their run requests (`https://user:password@host/...`, in
             `workflow_url` and in the strings of `workflow_params`,
@@ -229,7 +230,7 @@ class PostRuns(BaseModel):
     polling_attempts: int = 100
     max_attachments: NonNegativeInt = 100
     max_attachment_size: PositiveInt = 1048576
-    max_tags_size: PositiveInt = 16384
+    max_tags_size: Annotated[int, Field(ge=2)] = 16384
     url_credentials: Literal["reject", "strip"] = "reject"
 
     @field_validator("id_charset")
