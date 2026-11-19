@@ -335,6 +335,9 @@ class WorkflowRuns:
                 projection={
                     "run_log.run_id": True,
                     "run_log.state": True,
+                    "run_log.request.tags": True,
+                    "run_log.run_log.start_time": True,
+                    "run_log.run_log.end_time": True,
                 },
             )
             .sort("_id", -1)
@@ -347,14 +350,10 @@ class WorkflowRuns:
             resources = resources[:limit]
             next_page_token = str(resources[-1]["_id"])
 
-        # format response
-        for run in resources:
-            run["run_id"] = run["run_log"]["run_id"]
-            run["state"] = run["run_log"]["state"]
-            del run["run_log"]
-            del run["_id"]
+        # format response: `RunSummary`, which WES 2.0.0 requires
+        runs = [self._run_summary(run_log=run["run_log"]) for run in resources]
 
-        return {"next_page_token": next_page_token, "runs": resources}
+        return {"next_page_token": next_page_token, "runs": runs}
 
     def get_run_log(
         self,
@@ -722,6 +721,52 @@ class WorkflowRuns:
             if sanitize_json(decoded, field, url_credentials):
                 updates[field] = dumps(decoded)
         return model_instance.model_copy(update=updates)
+
+    @staticmethod
+    def _run_summary(run_log: dict[str, Any]) -> dict[str, Any]:
+        """Get the summary of a run for `GET /runs` from its stored run log.
+
+        Start and end time come from the engine log of the run (`run_log`),
+        and are left out while the WES instance hasn't reported them. Tags
+        come from the run request, as an object of strings: values that
+        earlier versions stored without checking them (other than strings)
+        are JSON-encoded, and credentials in URLs are removed. Tags that
+        can't be read (e.g., with malformed URLs) are left out, with an
+        error logged, rather than failing the whole list.
+
+        Args:
+            run_log: Run log, as stored (projected to the fields needed).
+
+        Returns:
+            Response object according to WES API schema `RunSummary`.
+        """
+        summary: dict[str, Any] = {
+            "run_id": run_log["run_id"],
+            "state": run_log["state"],
+        }
+        engine_log = run_log.get("run_log") or {}
+        for field in ("start_time", "end_time"):
+            if engine_log.get(field) is not None:
+                summary[field] = engine_log[field]
+        summary["tags"] = {}
+        stored_tags = (run_log.get("request") or {}).get("tags")
+        if stored_tags in (None, ""):
+            return summary
+        try:
+            tags = loads(stored_tags)
+            if not isinstance(tags, dict):
+                raise TypeError("not an object")
+            sanitize_json(tags, "tags", "strip")
+        except (BadRequest, RecursionError, TypeError, ValueError):
+            logger.error(
+                "Tags of run '%s' can't be listed; left out.", summary["run_id"]
+            )
+            return summary
+        summary["tags"] = {
+            key: value if isinstance(value, str) else dumps(value)
+            for key, value in tags.items()
+        }
+        return summary
 
     @staticmethod
     def _run_log_response(run_id: str, run_log: dict[str, Any]) -> dict[str, Any]:

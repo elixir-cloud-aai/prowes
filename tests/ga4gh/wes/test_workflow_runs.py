@@ -13,6 +13,7 @@ import bson
 from connexion import App
 from foca.errors import InvalidFieldsProblem
 from foca.testing import Client
+from jsonschema import Draft4Validator
 from mongomock.collection import Cursor
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
@@ -700,7 +701,9 @@ def test_list_runs_huge_page_size(
     page = WorkflowRuns().list_runs(page_size=page_size)
     assert page == {
         "next_page_token": "",
-        "runs": [{"run_id": f"RUN{i:03}", "state": "QUEUED"} for i in (2, 1, 0)],
+        "runs": [
+            {"run_id": f"RUN{i:03}", "state": "QUEUED", "tags": {}} for i in (2, 1, 0)
+        ],
     }
     bson.encode({"limit": limits[0]})
 
@@ -716,7 +719,7 @@ def test_list_runs_unknown_page_token(mongodb: MongoClient[dict[str, Any]]) -> N
         {"run_log": {"run_id": "RUN001", "state": "QUEUED"}}
     )
     assert WorkflowRuns().list_runs(page_token="f" * 24)["runs"] == [
-        {"run_id": "RUN001", "state": "QUEUED"}
+        {"run_id": "RUN001", "state": "QUEUED", "tags": {}}
     ]
     assert WorkflowRuns().list_runs(page_token="0" * 24)["runs"] == []
 
@@ -766,7 +769,7 @@ def test_list_runs_last_page_of_user(mongodb: MongoClient[dict[str, Any]]) -> No
     second = WorkflowRuns().list_runs(
         user_id="alice", page_size=1, page_token=first["next_page_token"]
     )
-    assert second["runs"] == [{"run_id": "RUNA01", "state": "QUEUED"}]
+    assert second["runs"] == [{"run_id": "RUNA01", "state": "QUEUED", "tags": {}}]
     assert second["next_page_token"] == ""
 
 
@@ -786,7 +789,124 @@ def test_list_runs_of_user(mongodb: MongoClient[dict[str, Any]]) -> None:
         ]
     )
     runs = WorkflowRuns().list_runs(user_id="alice")["runs"]
-    assert runs == [{"run_id": "RUNA01", "state": "QUEUED"}]
+    assert runs == [{"run_id": "RUNA01", "state": "QUEUED", "tags": {}}]
+
+
+def test_list_runs_summaries(
+    foca_client: Client, mongodb: MongoClient[dict[str, Any]]
+) -> None:
+    """Runs are listed as `RunSummary`, as the served specification defines it.
+
+    Start and end time come from the engine log of the run, and are left out
+    while the WES instance hasn't reported them; tags come from the run
+    request, as an object, and are empty for runs without them.
+
+    Args:
+        foca_client: Test client of the app.
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {
+                "user_id": OWNER,
+                "run_log": {
+                    "run_id": "DONE01",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": '{"project": "demo"}'},
+                    "run_log": {
+                        "name": "engine",
+                        "start_time": "2026-11-19T10:00:00Z",
+                        "end_time": "2026-11-19T11:00:00Z",
+                    },
+                },
+            },
+            {
+                "user_id": OWNER,
+                "run_log": {
+                    "run_id": "RUNS01",
+                    "state": "RUNNING",
+                    "request": RUN_REQUEST,
+                    "run_log": {"start_time": "2026-11-19T12:00:00Z", "end_time": None},
+                },
+            },
+            {"user_id": OWNER, "run_log": {"run_id": "NEW001", "state": "UNKNOWN"}},
+        ]
+    )
+    response = foca_client.get(f"{BASE_PATH}/runs")
+    assert response.status_code == 200
+    runs = response.json()["runs"]
+    assert runs == [
+        {"run_id": "NEW001", "state": "UNKNOWN", "tags": {}},
+        {
+            "run_id": "RUNS01",
+            "state": "RUNNING",
+            "start_time": "2026-11-19T12:00:00Z",
+            "tags": {},
+        },
+        {
+            "run_id": "DONE01",
+            "state": "COMPLETE",
+            "start_time": "2026-11-19T10:00:00Z",
+            "end_time": "2026-11-19T11:00:00Z",
+            "tags": {"project": "demo"},
+        },
+    ]
+    spec = foca_client.get(f"{BASE_PATH}/openapi.json").json()
+    # Draft 4 resolves `$ref` against the root, which has the components
+    validator = Draft4Validator(
+        {
+            "components": spec["components"],
+            **spec["components"]["schemas"]["RunSummary"],
+        }
+    )
+    for run in runs:
+        validator.validate(run)
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        # stored by versions that didn't check the values of tags
+        (
+            '{"count": 1, "flag": true, "none": null}',
+            {"count": "1", "flag": "true", "none": "null"},
+        ),
+        ('{"nested": {"key": "value"}}', {"nested": '{"key": "value"}'}),
+        # stored by versions that didn't check credentials in URLs
+        (
+            '{"source": "https://user:secret@example.org/data"}',
+            {"source": "https://example.org/data"},
+        ),
+        # what can't be listed is left out, rather than failing the list
+        ('{"source": "https://[malformed/data"}', {}),
+        ("not JSON", {}),
+        ('["not", "an", "object"]', {}),
+        (None, {}),
+    ],
+)
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_stored_tags(
+    mongodb: MongoClient[dict[str, Any]], tags: str | None, expected: dict[str, str]
+) -> None:
+    """Tags of stored runs are listed as objects of strings, without credentials.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        tags: Tags, as stored.
+        expected: Tags, as listed.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "run_log": {
+                "run_id": "OLD001",
+                "state": "COMPLETE",
+                "request": {**RUN_REQUEST, "tags": tags},
+            }
+        }
+    )
+    assert WorkflowRuns().list_runs()["runs"] == [
+        {"run_id": "OLD001", "state": "COMPLETE", "tags": expected}
+    ]
 
 
 def test_get_run_status_not_found(foca_client: Client) -> None:

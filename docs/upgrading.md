@@ -387,6 +387,13 @@ proWES serves WES 1.1.0 instead of 1.0.1 (see [API](api.md#wes-110)):
   instances of the older version (app and worker) before the new version
   starts, and don't downgrade below this version once runs are stored as
   `PREEMPTED`.
+- `GET /runs` lists runs as `RunSummary` (before: `RunStatus`): besides
+  `run_id` and `state`, each run has `tags` (`{}` without tags) and, once
+  the WES instance has reported them, `start_time` and `end_time` (see
+  [Run lists](api.md#run-lists)). WES 1.1.0 allows both forms, and the
+  new fields are additions: clients that read only `run_id` and `state`
+  keep working. Runs stored before are listed with the times and tags
+  that are stored; no migration is needed.
 - Clients that read the service info must accept the object form of
   `workflow_engine_versions` (and the version `1.1.0`). Otherwise, the
   endpoints and fields of WES 1.0.1 are unchanged: clients of the runs
