@@ -188,8 +188,11 @@ need no migration: their run requests are returned as objects too, and
 values of `tags` or `workflow_engine_parameters` that aren't strings (which
 earlier versions accepted) as their JSON text (e.g., `{"threads": 4}` as
 `{"threads": "4"}`), as the specification allows strings only; the database
-keeps them as they are. Credentials in the URLs of runs stored by earlier
-versions are removed from the run logs returned (not from the database).
+keeps them as they are. Numbers beyond the range of floats (e.g., `1e999`)
+in such values have no JSON text: their run logs get `500 Internal Server
+Error`, and `GET /runs` lists them with empty tags. Credentials in the URLs
+of runs stored by earlier versions are removed from the run logs returned
+(not from the database).
 
 ### Errors
 

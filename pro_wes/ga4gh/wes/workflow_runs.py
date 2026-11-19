@@ -175,9 +175,15 @@ def _string_values(decoded: dict[str, Any]) -> dict[str, str]:
     Returns:
         The object, with values other than strings replaced by their JSON
         text (e.g., `1` for the number 1, `null` for `None`).
+
+    Raises:
+        RecursionError: A value is too deeply nested to encode.
+        ValueError: A value has numbers that JSON can't represent (e.g.,
+            `1e999` decodes to infinity); refused rather than encoded as
+            the invalid JSON text `Infinity`.
     """
     return {
-        key: value if isinstance(value, str) else dumps(value)
+        key: value if isinstance(value, str) else dumps(value, allow_nan=False)
         for key, value in decoded.items()
     }
 
@@ -836,20 +842,21 @@ class WorkflowRuns:
         for field in ("start_time", "end_time"):
             if engine_log.get(field) is not None:
                 summary[field] = engine_log[field]
-        tags: Any = {}
+        tags: dict[str, str] | None = {}
         stored_tags = (run_log.get("request") or {}).get("tags")
         if stored_tags not in (None, ""):
             try:
-                tags = _decode_stored_json(stored_tags, "tags")
+                decoded = _decode_stored_json(stored_tags, "tags")
+                tags = _string_values(decoded) if isinstance(decoded, dict) else None
             except (BadRequest, RecursionError, TypeError, ValueError):
                 tags = None
-            if not isinstance(tags, dict):
+            if tags is None:
                 logger.error(
                     "Tags of run '%s' can't be listed; returned as {}.",
                     summary["run_id"],
                 )
                 tags = {}
-        summary["tags"] = _string_values(tags)
+        summary["tags"] = tags
         return summary
 
     @staticmethod
@@ -875,7 +882,9 @@ class WorkflowRuns:
 
         Raises:
             pro_wes.exceptions.InternalServerError: The stored run log doesn't
-                conform to its model, or its run request has malformed URLs.
+                conform to its model, or its run request has malformed URLs,
+                or values of `tags` or `workflow_engine_parameters` that
+                can't be returned as JSON text (e.g., `1e999`).
         """
         try:
             model = RunLog.model_validate(run_log, context=STORED_CONTEXT)
@@ -905,6 +914,13 @@ class WorkflowRuns:
                     request_data[field] = decoded
         except BadRequest as exc:
             logger.error("Run request of run '%s' has malformed URLs.", run_id)
+            raise InternalServerError from exc
+        except (RecursionError, ValueError) as exc:
+            logger.error(
+                "Run request of run '%s' has values that can't be returned as"
+                " JSON text.",
+                run_id,
+            )
             raise InternalServerError from exc
         return response
 

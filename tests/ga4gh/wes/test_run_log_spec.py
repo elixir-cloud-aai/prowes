@@ -345,3 +345,31 @@ def test_stored_nested_credentials_not_returned(
     assert loads(request["workflow_engine_parameters"]["l"]) == [
         "https://example.org/y"
     ]
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"tags": '{"big": 1e999}'},
+        {"workflow_engine_parameters": '{"list": [-1e999]}'},
+    ],
+    ids=["tags", "workflow_engine_parameters"],
+)
+def test_stored_values_without_json_text(
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    stored: dict[str, str],
+) -> None:
+    """Legacy values that JSON text can't represent aren't returned as text.
+
+    Numbers beyond the range of floats decode to infinity, which would be
+    the invalid JSON text `Infinity`: the run log gets `500`, and `GET
+    /runs` lists the run with empty tags (not failing the whole list).
+    """
+    _store_run(mongodb, {"workflow_params": '{"input": "value"}', **stored})
+    run = foca_client.get(f"{BASE_PATH}/runs/{STORED_RUN_ID}")
+    assert run.status_code == 500
+    runs = foca_client.get(f"{BASE_PATH}/runs")
+    assert runs.status_code == 200
+    assert runs.json()["runs"][0]["run_id"] == STORED_RUN_ID
+    assert runs.json()["runs"][0]["tags"] == {}
