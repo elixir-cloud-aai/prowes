@@ -183,7 +183,10 @@ Bad requests that got `500` before get `400` or `415` now: run requests
 that aren't forms (e.g., JSON) get `415 Unsupported Media Type`,
 `multipart/form-data` run requests without a boundary and `GET /runs` with
 a malformed `page_token` get `400`. `GET /runs` with a negative `page_size`
-gets `400` too (before: runs were listed as for its absolute value).
+gets `400` too (before: runs were listed as for its absolute value), and a
+negative `custom.list_runs.default_page_size` stops the app on startup.
+URL-encoded run requests with `workflow_attachment` get `400` (before: the
+run was started without the attachments).
 
 ### Cancellation
 

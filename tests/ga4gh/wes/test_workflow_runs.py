@@ -675,8 +675,8 @@ def test_list_runs_huge_page_size(
         monkeypatch: Pytest fixture to patch the cursor.
         page_size: Number of runs per page.
     """
-    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
-        {"run_log": {"run_id": "RUN001", "state": "QUEUED"}}
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [{"run_log": {"run_id": f"RUN{i:03}", "state": "QUEUED"}} for i in range(3)]
     )
     limits: list[int] = []
     limit = Cursor.limit
@@ -698,7 +698,7 @@ def test_list_runs_huge_page_size(
     page = WorkflowRuns().list_runs(page_size=page_size)
     assert page == {
         "next_page_token": "",
-        "runs": [{"run_id": "RUN001", "state": "QUEUED"}],
+        "runs": [{"run_id": f"RUN{i:03}", "state": "QUEUED"} for i in (2, 1, 0)],
     }
     bson.encode({"limit": limits[0]})
 

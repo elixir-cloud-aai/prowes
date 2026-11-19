@@ -47,6 +47,7 @@ __all__ = [
     "Unauthorized",
     "UnsupportedMediaType",
     "UrlCredentials",
+    "UrlEncodedAttachment",
     "WesEndpointProblem",
     "WorkflowEngineNotSupported",
     "exceptions",
@@ -176,6 +177,10 @@ class UnsupportedMediaType(BadRequest):
     """
 
 
+class UrlEncodedAttachment(BadRequest):
+    """A URL-encoded run request has workflow attachments, which it can't carry."""
+
+
 class MissingBoundary(BadRequest):
     """A `multipart/form-data` run request has no boundary, so it can't be read."""
 
@@ -271,6 +276,13 @@ exceptions = {
             " without attachments)."
         ),
         "status": 415,
+    },
+    UrlEncodedAttachment: {
+        "title": "Bad request",
+        "detail": (
+            "Workflow attachments must be sent as files of a multipart/form-data body."
+        ),
+        "status": 400,
     },
     MissingBoundary: {
         "title": "Bad request",

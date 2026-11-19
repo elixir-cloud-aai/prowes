@@ -378,6 +378,24 @@ def test_run_request_without_boundary(
     )
 
 
+def test_run_request_url_encoded_attachment(
+    foca_client: Client, served_spec: dict[str, Any]
+) -> None:
+    """URL-encoded run requests with workflow attachments get `400`, as declared.
+
+    URL-encoded forms can't carry files, so the attachments would be lost.
+    """
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        data={**RUN_REQUEST, "workflow_attachment": "main.cwl"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert_declared_error(served_spec, "post", "/runs", response, 400)
+    assert response.json()["detail"] == (
+        "Workflow attachments must be sent as files of a multipart/form-data body."
+    )
+
+
 def test_run_request_wrong_boundary(
     foca_client: Client, served_spec: dict[str, Any]
 ) -> None:
@@ -421,7 +439,7 @@ def test_invalid_page(
     assert_declared_error(served_spec, "get", "/runs", response, 400)
     errors = response.json()["errors"]
     assert [error["parameter"] for error in errors] == [parameter]
-    assert params[parameter] not in response.json()["detail"]
+    assert params[parameter] not in response.text
 
 
 def test_run_request_too_large(

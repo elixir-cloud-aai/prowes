@@ -13,7 +13,12 @@ from connexion import request
 from flask import request as flask_request
 from foca.utils.logging import log_traffic
 
-from pro_wes.exceptions import MissingBoundary, TasksNotServed, UnsupportedMediaType
+from pro_wes.exceptions import (
+    MissingBoundary,
+    TasksNotServed,
+    UnsupportedMediaType,
+    UrlEncodedAttachment,
+)
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 
 logger = logging.getLogger(__name__)
@@ -204,6 +209,8 @@ def check_run_request_body() -> None:
             form (`415`), e.g., JSON, or has no media type.
         pro_wes.exceptions.MissingBoundary: The run request is
             `multipart/form-data` without a boundary (`400`).
+        pro_wes.exceptions.UrlEncodedAttachment: The run request is
+            URL-encoded with workflow attachments (`400`).
     """
     endpoint = flask_request.endpoint or ""
     if flask_request.method != "POST" or endpoint.rpartition(".")[2] != (
@@ -217,3 +224,9 @@ def check_run_request_body() -> None:
         and not flask_request.mimetype_params.get("boundary")
     ):
         raise MissingBoundary
+    # URL-encoded forms have no files: attachments would be lost
+    if (
+        flask_request.mimetype == "application/x-www-form-urlencoded"
+        and "workflow_attachment" in flask_request.form
+    ):
+        raise UrlEncodedAttachment
