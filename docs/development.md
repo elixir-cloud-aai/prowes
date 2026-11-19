@@ -208,6 +208,7 @@ how to run them locally:
 | `docs` | Docs | `uv run --extra docs mkdocs build --strict` (see [Documentation](#documentation)) |
 | `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
 | `smoke` | Smoke test | `tests/smoke/check.sh` (see [Smoke test](#smoke-test)) |
+| `integration` | Integration | `tests/integration/check.sh` (see [Integration test](#integration-test)) |
 | `push` | Push image | Pushes to `dev` in this repository only |
 | `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
 
@@ -252,6 +253,73 @@ certificate authority, which proWES trusts instead of the public ones
 (`REQUESTS_CA_BUNDLE`), so that runs are forwarded with TLS verification on
 and no run leaves the Compose network.
 
+## Integration test
+
+The integration test
+([`tests/integration/`](https://github.com/elixir-cloud-aai/prowes/tree/dev/tests/integration))
+runs proWES as the smoke test does, but against
+[Sapporo](https://github.com/sapporo-wes/sapporo-service), a real WES
+implementation (the image of `tests/integration/compose.yaml`, pinned by
+digest and updated by Dependabot), instead of the fake WES, which
+stays the identity provider. It creates runs of the CWL workflows of
+`tests/integration/workflows/`, which proWES forwards to Sapporo: one that
+completes (its run log, with the engine's output, and the run list), one
+that fails (`EXECUTOR_ERROR`) and one that is canceled while it runs (also
+at Sapporo, whose engine container must be gone). It also prints the WES
+version of Sapporo's service info (to the job summary in CI). Sapporo runs
+cwltool in containers through the host's Docker socket, and access to the
+socket amounts to control of the host, so run the test locally only where
+that is acceptable. It needs Docker Compose, curl and jq; run it from the
+repository root:
+
+```bash
+export COMPOSE_FILE=docker-compose.yaml:tests/smoke/compose.yaml:tests/integration/compose.yaml
+export COMPOSE_PROJECT_NAME=prowes-integration
+docker compose up -d --build --wait --wait-timeout 300
+tests/integration/check.sh
+docker compose down --volumes
+```
+
+The first run pulls the images of Sapporo and cwltool, so the waits are
+long (each up to `FINAL_WAIT` polls, about one a second, by default 300).
+As in the smoke test, the image is `prowes:smoke` and proWES is published
+on `127.0.0.1:8090`, so stop the smoke test's deployment first. Sapporo
+keeps its runs in `SAPPORO_RUN_DIR` (default `.integration/sapporo` of the
+repository root, ignored by Git), at the same path in its container and on
+the host, so that the engine containers it starts find them. The files
+belong to root and stay after `docker compose down`; remove them without
+root with a container, from the repository root:
+
+```bash
+docker run --rm -v "${PWD}/.integration:/runs" alpine:3.22 rm -rf /runs/sapporo
+```
+
+The engine containers join the Compose network, which therefore has the
+fixed name `prowes-integration` (also if `COMPOSE_PROJECT_NAME` is
+changed), and fetch the workflows over HTTP from the service `workflows`.
+The run that is canceled starts its engine container before the cancel,
+and the test checks that Sapporo stopped it. On failure, the script cancels
+that run and shows the logs of the services; the deployment keeps
+running, for inspection, and the test can run again on it.
+
+Where Sapporo 2.4.2 differs from WES 1.1.0, the test accommodates it:
+
+- Sapporo requires the field `workflow_engine` in run requests, which
+  proWES doesn't forward yet
+  ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)). Until it
+  does, runs go to Sapporo through a proxy that adds
+  `workflow_engine=cwltool` (`tests/integration/engine_proxy.py`). The test
+  checks that Sapporo still rejects runs without the field, so that the
+  proxy is dropped once it doesn't.
+- Its run logs list the outputs as an array of files, not as an object:
+  proWES leaves them out of the run log, as it does with any invalid field,
+  so the test checks the output file in the engine's standard output
+  (cwltool's output object).
+- Its service info reports the WES version `sapporo-wes-2.1.0` (Sapporo's
+  extension of WES 1.1.0) in `type.version` and `supported_wes_versions`,
+  not a version of the WES specification (relevant for routing by WES
+  version, [#122](https://github.com/elixir-cloud-aai/prowes/issues/122)).
+
 ## Dependencies
 
 After changing dependencies in `pyproject.toml`, update the lock with `uv
@@ -262,8 +330,8 @@ Dependabot
 opens pull requests labelled `type: dependencies` once a month, to `dev`,
 grouped per ecosystem: Python dependencies (`pyproject.toml` and `uv.lock`),
 GitHub Actions, the images of the `Dockerfile`, the service images of Docker
-Compose (MongoDB, RabbitMQ, Flower) and the pre-commit hook revisions. Some
-updates are made by hand instead:
+Compose (MongoDB, RabbitMQ, Flower, and Sapporo of the integration test)
+and the pre-commit hook revisions. Some updates are made by hand instead:
 
 - FOCA, in `pyproject.toml` and `uv.lock` together with the FOCA base image
   (the image build fails unless the base image has the locked FOCA); run

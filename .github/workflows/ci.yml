@@ -1,10 +1,11 @@
 # Everything that must pass on pull requests and pushes to `dev`: the pull
 # request title, lint and build, the docs, test, the Helm chart (lint, tests
-# and an installation on kind), run the app with Docker
-# Compose, and, on pushes, push the Docker image. Forks, which have none of
-# the secrets, run the same checks without the push. The gate `passed` ("CI
-# passed") is the only required check. No `paths:` filters, so that the gate
-# always reports; skip jobs with `if:` instead (and allow the skip in the gate).
+# and an installation on kind), run the app with Docker Compose (against a
+# fake WES and against Sapporo), and, on pushes, push the Docker image.
+# Forks, which have none of the secrets, run the same checks without the
+# push. The gate `passed` ("CI passed") is the only required check. No
+# `paths:` filters, so that the gate always reports; skip jobs with `if:`
+# instead (and allow the skip in the gate).
 # Runs also when a pull request is edited, so that the title check follows
 # the title; all jobs run then, as a run that skipped the tests would report
 # "CI passed" for the commit
@@ -345,9 +346,44 @@ jobs:
         if: failure() || cancelled()
         run: docker compose logs
 
+  # Runs the app as in `smoke`, against Sapporo, a real WES implementation,
+  # instead of the fake WES (`tests/integration/`): runs of CWL workflows
+  # that complete, fail and are canceled, from proWES's API to Sapporo and
+  # back. Sapporo (pinned by digest) runs the workflow engine (cwltool) in
+  # containers through the Docker socket of the runner; its image and the
+  # engine's come from third parties' registries. Needed by the gate, and so
+  # not skipped for edits of a pull request, like the other jobs
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    # Up to 5 minutes for the services to become healthy, after the image
+    # build, and up to 5 minutes for each wait of the script (`FINAL_WAIT`)
+    timeout-minutes: 30
+    # The Compose files and project of the script (its defaults), for the
+    # steps after it
+    env:
+      COMPOSE_FILE: docker-compose.yaml:tests/smoke/compose.yaml:tests/integration/compose.yaml
+      COMPOSE_PROJECT_NAME: prowes-integration
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start app and Sapporo
+        run: docker compose up -d --build --wait --wait-timeout 300
+      # Also writes the WES version of Sapporo's service info to the job
+      # summary
+      - name: Check runs on Sapporo
+        run: tests/integration/check.sh
+      - name: Show logs
+        if: failure() || cancelled()
+        run: docker compose logs
+
   # Pushes the image on pushes to `dev` (unchanged from the former
   # `main.yml`; push, scan and publish by digest follow with their own
-  # issue). Skipped on pull requests and in forks, which have no secrets
+  # issue). Skipped on pull requests and in forks, which have no secrets.
+  # Doesn't wait for `integration`, whose images come from third parties'
+  # registries (the gate still needs it)
   push:
     name: Push image
     runs-on: ubuntu-latest
@@ -397,7 +433,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [title, lint, docs, test, chart, chart-install, smoke, push]
+    needs: [title, lint, docs, test, chart, chart-install, smoke, integration, push]
     permissions: {}
     steps:
       - name: Check results of all jobs

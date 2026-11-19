@@ -1,0 +1,26 @@
+# Config overlay for the integration test (`compose.yaml` of this
+# directory): runs go to Sapporo, the one WES instance of the backend list,
+# through the proxy that adds the workflow engine to run requests
+# (`engine_proxy.py`, until #66), at its service name in Docker Compose,
+# over HTTP (`url_schemes`), with the WES API at its root (`api_path`). The
+# Celery worker polls it every second. The fake WES of the smoke test
+# (`../smoke/fake_wes.py`, not a backend here) is the identity provider
+# whose access tokens proWES requires, as in the smoke test
+# (`../smoke/config.yaml`); proWES has no credentials for Sapporo, which
+# requires none (#182)
+security:
+  auth:
+    issuers:
+      - https://fake-wes/oidc/
+    audience:
+      - prowes-smoke
+custom:
+  post_runs:
+    polling_wait: 1
+  wes:
+    backends:
+      - type: ga4gh-wes
+        url: http://engine-proxy:1122
+        api_path: /
+        url_schemes:
+          - http

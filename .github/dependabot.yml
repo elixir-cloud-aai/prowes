@@ -64,9 +64,10 @@ updates:
     groups:
       docker:
         patterns: ["*"]
-  # Images of the services in `docker-compose.yaml` (see the group)
+  # Images of the services in `docker-compose.yaml` and of Sapporo in the
+  # integration test (`tests/integration/compose.yaml`; see the group)
   - package-ecosystem: docker-compose
-    directory: /
+    directories: ["/", "/tests/integration"]
     patterns: ["*"]
     labels: ["type: dependencies"]
     multi-ecosystem-group: service-images

@@ -234,3 +234,6 @@ deployment/charts/
 /docker-compose.override.yaml
 /docker-compose.override.yml
 /local/
+
+# Runs of Sapporo in the integration test (`tests/integration/compose.yaml`)
+/.integration/
