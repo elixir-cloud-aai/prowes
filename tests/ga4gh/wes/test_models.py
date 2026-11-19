@@ -193,6 +193,13 @@ def test_page_sizes_default() -> None:
     assert ListRuns().max_page_size == 100
     assert ListRuns(default_page_size=100).default_page_size == 100
     assert ListRuns(default_page_size=1, max_page_size=1).max_page_size == 1
+    assert ListRuns(default_page_size=3, max_page_size=3).max_page_size == 3
+
+
+def test_max_page_size_below_default() -> None:
+    """A maximum page size below the default of 5 needs a default too."""
+    with pytest.raises(ValidationError):
+        ListRuns(max_page_size=3)
 
 
 @pytest.mark.parametrize("max_page_size", [-1, 0, 2**62 + 1])
