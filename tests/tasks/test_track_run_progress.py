@@ -1,7 +1,7 @@
 """Tests of the task tracking workflow runs (`task__track_run_progress`)."""
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 from celery.exceptions import SoftTimeLimitExceeded
 from connexion import App
@@ -11,7 +11,12 @@ import pytest
 from pro_wes.exceptions import EngineProblem, EngineUnavailable
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import ErrorResponse, RunStatus, State
-from pro_wes.tasks.track_run_progress import task__track_run_progress
+from pro_wes.ga4gh.wes.versions import WesVersion
+from pro_wes.tasks import track_run_progress
+from pro_wes.tasks.track_run_progress import (
+    _stored_state_is_finished,
+    task__track_run_progress,
+)
 from pro_wes.tasks.utils import set_run_state
 from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
@@ -167,6 +172,96 @@ def test_track_run_until_finished(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "request" not in document["run_log"]
 
 
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [("1.0", "1.0"), ("1.1", "1.1"), (None, "1.0"), ("9.9", "1.0")],
+)
+def test_track_run_upgrades_run_logs(
+    foca_app: App,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str | None,
+    expected: str,
+) -> None:
+    """Run logs are converted from the WES version stored with the run.
+
+    Runs without a supported version (e.g., stored by earlier versions)
+    take the oldest one.
+    """
+    endpoint = {
+        "host": TASK_KWARGS["remote_host"],
+        "base_path": TASK_KWARGS["remote_base_path"],
+        "run_id": REMOTE_RUN_ID,
+    }
+    if version is not None:
+        endpoint["wes_version"] = version
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    upgraded: list[str] = []
+
+    def _upgrade(run_log: dict[str, Any], wes_version: WesVersion) -> dict[str, Any]:
+        """Record the conversion of a run log.
+
+        Args:
+            run_log: Run log of the remote WES.
+            wes_version: Its WES version.
+
+        Returns:
+            The run log, with other outputs.
+        """
+        upgraded.append(str(wes_version))
+        return {**run_log, "outputs": {"upgraded": True}}
+
+    monkeypatch.setattr(track_run_progress, "upgrade_run_log", _upgrade)
+    with foca_app.app.app_context():
+        get_collection(RUN_DB, RUN_COLLECTION).insert_one(
+            {
+                "task_id": TASK_ID,
+                "run_log": {"run_id": RUN_ID, "state": "UNKNOWN"},
+                "wes_endpoint": endpoint,
+            }
+        )
+        _track()
+        assert _stored()["run_log"]["outputs"] == {"upgraded": True}
+    assert upgraded == [expected, expected]
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_remote_system_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `SYSTEM_ERROR` reported by the remote WES is not marked as proWES's."""
+    _fake_remote(
+        monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.SYSTEM_ERROR)]
+    )
+    assert _track() == TASK_ID
+    document = _stored()
+    assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert document["system_error_by_prowes"] is False
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_ignores_client_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tasks queued with a client token (earlier versions) don't pass it on."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    tokens: list[str | None] = []
+    original = WesClient.set_token
+
+    def _set_token(self: WesClient, token: str | None = None) -> None:
+        """Record the token of a client.
+
+        Args:
+            self: WES client.
+            token: Token of the client.
+        """
+        tokens.append(token)
+        original(self, token)
+
+    monkeypatch.setattr(WesClient, "set_token", _set_token)
+    task__track_run_progress.push_request(id=TASK_ID)
+    try:
+        task__track_run_progress.run(**{**TASK_KWARGS, "jwt": "client-token"})
+    finally:
+        task__track_run_progress.pop_request()
+    assert tokens == [None]
+
+
 @pytest.mark.usefixtures("run")
 def test_track_run_invalid_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """Invalid fields of remote run logs are left out; tracking goes on."""
@@ -184,6 +279,24 @@ def test_track_run_invalid_log(monkeypatch: pytest.MonkeyPatch) -> None:
     assert document["run_log"]["state"] == "COMPLETE"
     assert document["run_log"]["outputs"] == {"out": 1}
     assert "task_logs" not in document["run_log"]
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_system_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """System logs of WES 1.1.0 run and task logs are stored."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    monkeypatch.setattr(
+        WesClient,
+        "get_run",
+        lambda *_args, **_kwargs: {
+            "run_log": {"exit_code": 0, "system_logs": ["disk ok"]},
+            "task_logs": [{"name": "step", "system_logs": ["node 1"]}],
+        },
+    )
+    assert _track() == TASK_ID
+    document = _stored()
+    assert document["run_log"]["run_log"]["system_logs"] == ["disk ok"]
+    assert document["run_log"]["task_logs"][0]["system_logs"] == ["node 1"]
 
 
 @pytest.mark.usefixtures("run")
@@ -229,12 +342,32 @@ def test_track_run_remote_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("run")
+def test_track_run_preempted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preempted runs (WES 1.1.0) are final: stored as is, with their log."""
+    logs = _fake_remote(
+        monkeypatch,
+        [
+            RunStatus(run_id=REMOTE_RUN_ID, state=State.RUNNING),
+            RunStatus.model_validate({"run_id": REMOTE_RUN_ID, "state": "PREEMPTED"}),
+            # never requested: tracking ends with `PREEMPTED`
+            RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE),
+        ],
+    )
+    assert _track() == TASK_ID
+    assert logs == [REMOTE_RUN_ID, REMOTE_RUN_ID]
+    document = _stored()
+    assert document["run_log"]["state"] == "PREEMPTED"
+    assert document["run_log"]["outputs"] == {"out": 2}
+
+
+@pytest.mark.usefixtures("run")
 def test_track_run_invalid_status(monkeypatch: pytest.MonkeyPatch) -> None:
     """Invalid status responses are retried, then fail with `SYSTEM_ERROR`."""
     _fake_remote(monkeypatch, [ValueError("invalid response") for _ in range(3)])
     with pytest.raises(ValueError, match="invalid response"):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("run")
@@ -244,6 +377,139 @@ def test_track_run_soft_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SoftTimeLimitExceeded):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_soft_time_limit_final_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs that finish before tracking takes too long keep their final state.
+
+    E.g., the time limit is hit while the final run log is read.
+    """
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    calls: list[str] = []
+
+    def _get_run(_self: WesClient, run_id: str, **_kwargs: Any) -> dict[str, Any]:
+        """Return a run log, then hit the time limit.
+
+        Args:
+            _self: WES client; ignored.
+            run_id: Run identifier.
+            **_kwargs: Further arguments; ignored.
+
+        Returns:
+            Run log, on the first call.
+
+        Raises:
+            SoftTimeLimitExceeded: On later calls.
+        """
+        calls.append(run_id)
+        if len(calls) > 1:
+            raise SoftTimeLimitExceeded()
+        return {"outputs": {"out": 1}}
+
+    monkeypatch.setattr(WesClient, "get_run", _get_run)
+    with pytest.raises(SoftTimeLimitExceeded):
+        _track()
+    document = _stored()
+    assert document["run_log"]["state"] == "COMPLETE"
+    assert document["system_error_by_prowes"] is False
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_soft_time_limit_first_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs whose tracking hits the time limit before polling fail, too."""
+    _fake_remote(monkeypatch, [])
+
+    def _get_run(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        """Hit the time limit.
+
+        Args:
+            *_args: Positional arguments; ignored.
+            **_kwargs: Keyword arguments; ignored.
+
+        Raises:
+            SoftTimeLimitExceeded: Always.
+        """
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(WesClient, "get_run", _get_run)
+    with pytest.raises(SoftTimeLimitExceeded):
+        _track()
+    document = _stored()
+    assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert document["system_error_by_prowes"] is True
+
+
+@pytest.mark.usefixtures("run")
+def test_track_run_soft_time_limit_after_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final states keep, if the limit is hit right after they are stored."""
+    _fake_remote(monkeypatch, [RunStatus(run_id=REMOTE_RUN_ID, state=State.COMPLETE)])
+    update = DbDocumentConnector.update_run_state
+
+    def _update(self: DbDocumentConnector, state: str = "UNKNOWN") -> None:
+        """Store a state, then hit the time limit for final ones.
+
+        Args:
+            self: Database connector.
+            state: New state.
+
+        Raises:
+            SoftTimeLimitExceeded: The state is final.
+        """
+        update(self, state=state)
+        if State(state).is_finished:
+            raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(DbDocumentConnector, "update_run_state", _update)
+    with pytest.raises(SoftTimeLimitExceeded):
+        _track()
+    document = _stored()
+    assert document["run_log"]["state"] == "COMPLETE"
+    assert document["system_error_by_prowes"] is False
+
+
+@pytest.mark.parametrize(
+    "document",
+    [None, {}, {"run_log": {}}, {"run_log": {"state": "INVALID"}}],
+    ids=["no run", "no run log", "no state", "invalid state"],
+)
+def test_stored_state_is_finished_invalid(document: dict[str, Any] | None) -> None:
+    """Missing or invalid stored states aren't final.
+
+    Args:
+        document: Stored run (projected), if any.
+    """
+    connector = DbDocumentConnector(
+        collection=cast(Any, _FindOne(document)), task_id=TASK_ID
+    )
+    assert _stored_state_is_finished(db_client=connector) is False
+
+
+class _FindOne:
+    """Collection that returns one document for any query.
+
+    Args:
+        document: Document to return.
+    """
+
+    def __init__(self, document: dict[str, Any] | None) -> None:
+        """Class constructor."""
+        self.document = document
+
+    def find_one(self, *_args: Any, **_kwargs: Any) -> dict[str, Any] | None:
+        """Return the document.
+
+        Args:
+            *_args: Positional arguments; ignored.
+            **_kwargs: Keyword arguments; ignored.
+
+        Returns:
+            The document.
+        """
+        return self.document
 
 
 @pytest.mark.usefixtures("run")
@@ -256,6 +522,7 @@ def test_track_run_too_many_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(EngineProblem):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("run")
@@ -265,6 +532,7 @@ def test_track_run_remote_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(EngineUnavailable):
         _track()
     assert _stored()["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored()["system_error_by_prowes"] is True
 
 
 @pytest.mark.usefixtures("run")

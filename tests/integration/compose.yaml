@@ -1,0 +1,99 @@
+# Compose override for the integration test (`check.sh` of this directory,
+# job `integration` of `.github/workflows/ci.yml`): proWES forwards runs to
+# Sapporo, a real WES implementation, instead of the fake WES of the smoke
+# test. Use it on top of the smoke test's override, whose fake WES is the
+# identity provider here too:
+#
+#   export COMPOSE_FILE=docker-compose.yaml:tests/smoke/compose.yaml:tests/integration/compose.yaml
+#   export COMPOSE_PROJECT_NAME=prowes-integration
+#   docker compose up -d --build --wait --wait-timeout 300
+#
+# Relative paths are resolved against the directory of the first file, i.e.,
+# the repository root. Sapporo runs each workflow engine in a container on
+# the host, through the Docker socket: its run directory (`SAPPORO_RUN_DIR`,
+# default `.integration/sapporo` of the working directory, i.e., the
+# repository root, ignored by Git) has the same path in its container and on
+# the host, and the engine containers join the Compose network (named
+# `prowes-integration`), so that they fetch the workflows (`workflows/`)
+# from the service `workflows`
+
+# Settings of the app and the Celery worker
+x-integration: &integration
+  environment:
+    FOCA_CONFIG_OVERLAY: /integration/config.yaml
+    REQUESTS_CA_BUNDLE: /certs/ca.pem
+  volumes:
+    - ./tests/integration:/integration:ro
+    - smoke-certs-data:/certs:ro
+  depends_on:
+    fake-wes:
+      condition: service_healthy
+    engine-proxy:
+      condition: service_healthy
+
+services:
+
+  prowes:
+    <<: *integration
+
+  prowes-worker:
+    <<: *integration
+
+  # Sapporo, the published image pinned by digest, at its
+  # defaults, without authentication; not published on the host. The
+  # image's Python probes its service info
+  sapporo:
+    image: ghcr.io/sapporo-wes/sapporo-service:2.4.2@sha256:428a194f9724a05932d050e86def330cb2a8bcbc9ca9ea7a1bd422f1e0c8742e
+    command: ["sapporo"]
+    init: true
+    environment:
+      SAPPORO_HOST: 0.0.0.0
+      SAPPORO_PORT: "1122"
+      SAPPORO_RUN_DIR: ${SAPPORO_RUN_DIR:-${PWD}/.integration/sapporo}
+      SAPPORO_EXTRA_DOCKER_ARGS: --network=prowes-integration
+    volumes:
+      - ${SAPPORO_RUN_DIR:-${PWD}/.integration/sapporo}:${SAPPORO_RUN_DIR:-${PWD}/.integration/sapporo}
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:1122/service-info', timeout=4)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # Adds the workflow engine to the run requests that proWES forwards to
+  # Sapporo, which requires it (`engine_proxy.py`, until #66), in the app's
+  # image, whose health check probes Sapporo's service info through it
+  engine-proxy:
+    image: prowes:smoke
+    pull_policy: never
+    command: ["python", "/integration/engine_proxy.py"]
+    environment:
+      HEALTHCHECK_URL: http://localhost:1122/service-info
+    volumes:
+      - ./tests/integration:/integration:ro
+    depends_on:
+      sapporo:
+        condition: service_healthy
+    healthcheck:
+      interval: 5s
+      start_period: 5s
+
+  # The workflows of the test, over plain HTTP, in the app's image (built
+  # for the other services), whose health check probes one of them
+  workflows:
+    image: prowes:smoke
+    pull_policy: never
+    command: ["python", "-m", "http.server", "8000", "--directory", "/workflows"]
+    environment:
+      HEALTHCHECK_URL: http://localhost:8000/hello.cwl
+    volumes:
+      - ./tests/integration/workflows:/workflows:ro
+    healthcheck:
+      interval: 5s
+      start_period: 5s
+
+# A fixed name, which `SAPPORO_EXTRA_DOCKER_ARGS` names
+networks:
+  default:
+    name: prowes-integration

@@ -2,7 +2,6 @@
 
 from enum import Enum, EnumMeta
 from json import JSONDecodeError, loads
-from pathlib import Path
 from typing import Any
 
 from pydantic import (
@@ -15,13 +14,31 @@ from pydantic import (
 
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
-from pro_wes.ga4gh.wes.service_info import workflow_type_versions
+from pro_wes.utils.config import workflow_type_versions
 
 # Validation context of stored documents (e.g., `DbDocument`): their run
 # requests aren't checked against the service info of the process reading
 # them (cf. `RunRequest.workflow_type_and_version_supported`)
 STORED_KEY = "stored"
 STORED_CONTEXT = {STORED_KEY: True}
+
+
+def _without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Make an object of decoded JSON, refusing duplicate keys.
+
+    Args:
+        pairs: Keys and values of the object, in order.
+
+    Returns:
+        The object.
+
+    Raises:
+        JSONDecodeError: A key occurs more than once.
+    """
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise JSONDecodeError("duplicate keys", "", 0)
+    return result
 
 
 class MetaEnum(EnumMeta):
@@ -43,47 +60,53 @@ class BaseEnum(Enum, metaclass=MetaEnum):
 class Attachment(BaseModel):
     """Model for workflow attachment.
 
+    Stored with the run; the contents are written to the storage of the runs
+    only (not to the database).
+
     Args:
         filename: Name of the file as indicated in the run request.
-        object: File object.
-        path: Path to the file on the app's storage system.
+        path: Path to the file on the app's storage system, inside the
+            working directory of the run, with a safe file name.
     """
 
     filename: str
-    object: bytes
-    path: Path
+    path: str
 
 
 class RunRequest(BaseModel):
     """Model for WES API `RunRequest` schema.
 
+    `workflow_engine` and `workflow_engine_version` of WES 1.1.0 are not
+    modeled: requests that set them are refused before the model is built
+    (`pro_wes.ga4gh.wes.versions.ENGINE_FIELDS`, #66).
+
     Args:
         workflow_params: Workflow parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type: Workflow type. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type_version: Workflow type version. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         tags: Tags. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_engine_parameters: Workflow engine parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_url: Workflow URL. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Attributes:
         workflow_params: Workflow parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type: Workflow type. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_type_version: Workflow type version. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         tags: Tags. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_engine_parameters: Workflow engine parameters. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_url: Workflow URL. Cf.
-            `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
         pro_wes.exceptions.ValidationError: The class was instantianted with an
@@ -96,6 +119,10 @@ class RunRequest(BaseModel):
     tags: str | None = "{}"
     workflow_engine_parameters: str | None = "{}"
     workflow_url: str
+
+    # Validation errors, which are logged, without the values, which may hold
+    # credentials (cf. `custom.post_runs.url_credentials`)
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     @field_validator(
         "workflow_type",
@@ -150,6 +177,10 @@ class RunRequest(BaseModel):
         empty JSON string object '{}' for optional fields and cause a
         `ValueError` to be raised for required fields.
 
+        The values of `tags` and `workflow_engine_parameters` must be strings,
+        as in the WES specification (not checked for stored runs, validation
+        context `STORED_CONTEXT`).
+
         Args:
             value: Field value to be validated.
             info: Validation context, with the name of the field.
@@ -160,20 +191,38 @@ class RunRequest(BaseModel):
         Raises:
             ValueError: The value is required but it is either missing or does
                 not represent any actual content.
-            ValueError: The value could not be JSON deserialized.
+            ValueError: The value could not be JSON deserialized, or has an
+                object with duplicate keys (not checked for stored runs).
             ValueError: The value could be JSON decoded, but the deserialized
                 value does not represent an object/dictionary.
+            ValueError: The tags or workflow engine parameters have values
+                other than strings.
         """
         if value is None or value in {"", "null"}:
             if info.field_name == "workflow_params":
                 raise ValueError("field required")
             return "{}"
+        stored = bool(info.context and info.context.get(STORED_KEY))
         try:
-            decoded = loads(value)
-        except JSONDecodeError as exc:
+            # duplicate keys refused for new requests, as decoding keeps only
+            # the last value, so that the others (e.g., with credentials in
+            # URLs) would be forwarded unchecked
+            decoded = loads(
+                value, object_pairs_hook=dict if stored else _without_duplicates
+            )
+        except (JSONDecodeError, RecursionError) as exc:
+            # also JSON too deeply nested to decode
             raise ValueError("could not be JSON deserialized") from exc
         if not isinstance(decoded, dict):
             raise ValueError("could not be interpreted as object")
+        # objects of strings, as the WES specification defines them; not
+        # checked for stored runs, which earlier versions accepted without
+        if (
+            info.field_name != "workflow_params"
+            and not stored
+            and not all(isinstance(item, str) for item in decoded.values())
+        ):
+            raise ValueError("values must be strings")
         return value
 
     @model_validator(mode="after")
@@ -212,7 +261,7 @@ class RunRequest(BaseModel):
 class Log(BaseModel):
     """Model for task log, including the log of the workflow engine itself.
 
-    Cf. `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+    Cf. `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Attributes:
         cmd: List of executed commands.
@@ -224,6 +273,9 @@ class Log(BaseModel):
             "%Y-%m-%dT%H:%M:%SZ".
         stderr: A URL to retrieve standard error logs of the task.
         stdout: A URL to retrieve standard output logs of the task.
+        system_logs: Logs of the system that are relevant to the task or
+            run, but not tied to it (e.g., the error message of a
+            `SYSTEM_ERROR`); WES 1.1.0.
     """
 
     cmd: list[str] | None = []
@@ -233,12 +285,13 @@ class Log(BaseModel):
     start_time: str | None = None
     stderr: str | None = None
     stdout: str | None = None
+    system_logs: list[str] | None = None
 
 
 class State(BaseEnum):
     """Enumerator for supported workflow run states.
 
-    Cf. `pro_wes.api.20200806.4048014.workflow_execution_service.openapi.yaml`
+    Cf. `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Attributes:
         UNKNOWN: The state of the task is unknown.
@@ -254,6 +307,9 @@ class State(BaseEnum):
         CANCELED: The task was canceled by the user.
         CANCELING: The task was canceled by the user, and is in the process of
             stopping.
+        PREEMPTED: The task was stopped (preempted) by the system (WES
+            1.1.0), e.g., as the resources it ran on were reclaimed; final:
+            proWES doesn't resubmit the run.
     """
 
     UNKNOWN = "UNKNOWN"
@@ -266,6 +322,7 @@ class State(BaseEnum):
     SYSTEM_ERROR = "SYSTEM_ERROR"
     CANCELED = "CANCELED"
     CANCELING = "CANCELING"
+    PREEMPTED = "PREEMPTED"
 
     @property
     def is_finished(self) -> bool:
@@ -275,6 +332,7 @@ class State(BaseEnum):
             self.EXECUTOR_ERROR,
             self.SYSTEM_ERROR,
             self.CANCELED,
+            self.PREEMPTED,
         )
 
     @property
@@ -333,6 +391,9 @@ class WesEndpoint(BaseModel):
         base_path: Override the default path suffix defined in the WES API
             specification, i.e., `/ga4gh/wes/v1`.
         run_id: Identifier for workflow run on external WES endpoint.
+        wes_version: WES version of the WES instance that the run was
+            forwarded in (e.g., `1.0`; cf. :py:mod:`pro_wes.ga4gh.wes.versions`);
+            none for runs stored by earlier versions of proWES.
 
     Attributes:
         host: Host at which the WES API is served that is processing this
@@ -343,11 +404,14 @@ class WesEndpoint(BaseModel):
         base_path: Override the default path suffix defined in the WES API
             specification, i.e., `/ga4gh/wes/v1`.
         run_id: Identifier for workflow run on external WES endpoint.
+        wes_version: WES version of the WES instance that the run was
+            forwarded in.
     """
 
     host: str
     base_path: str | None = "/ga4gh/wes/v1"
     run_id: str | None = None
+    wes_version: str | None = None
 
 
 class DbDocument(BaseModel):
@@ -356,6 +420,9 @@ class DbDocument(BaseModel):
     Args:
         attachments: Names of attached files.
         run_log: Complete logging information for workflow run.
+        system_error_by_prowes: Whether proWES itself set the state to
+            `SYSTEM_ERROR` (e.g., it lost track of the run), rather than the
+            WES instance reporting it.
         task_id: Identifier of worker task.
         user_id: Identifier of resource owner.
         wes_endpoint: Information about the endpoint to where the run request
@@ -365,6 +432,9 @@ class DbDocument(BaseModel):
     Attributes:
         attachments: Names of attached files.
         run_log: Complete logging information for workflow run.
+        system_error_by_prowes: Whether proWES itself set the state to
+            `SYSTEM_ERROR` (e.g., it lost track of the run), rather than the
+            WES instance reporting it.
         task_id: Identifier of worker task.
         user_id: Identifier of resource owner.
         wes_endpoint: Information about the endpoint to where the run request
@@ -374,6 +444,7 @@ class DbDocument(BaseModel):
 
     attachments: list[Attachment] = []
     run_log: RunLog = RunLog()
+    system_error_by_prowes: bool = False
     task_id: str | None = None
     user_id: str | None = None
     work_dir: str | None = None
@@ -425,15 +496,42 @@ class ErrorResponse(BaseModel):
     status_code: int
 
 
+class RunSummary(RunStatus):
+    """Summary of a workflow run, as listed by `GET /runs` (WES 1.1.0).
+
+    Args:
+        run_id: Workflow run identifier.
+        state: Workflow run state.
+        start_time: When the run started executing, in ISO 8601 format.
+        end_time: When the run stopped executing, in ISO 8601 format.
+        tags: Key-value tags added by the client when it created the run.
+
+    Attributes:
+        run_id: Workflow run identifier.
+        state: Workflow run state.
+        start_time: When the run started executing, in ISO 8601 format.
+        end_time: When the run stopped executing, in ISO 8601 format.
+        tags: Key-value tags added by the client when it created the run.
+    """
+
+    start_time: str | None = None
+    end_time: str | None = None
+    tags: dict[str, str]
+
+
 class RunListResponse(BaseModel):
     """List of workflow runs that the service has processed or is processing.
 
+    Items are `RunSummary` or `RunStatus` (WES 1.0.1 instances), as WES 1.1.0
+    allows (`anyOf`).
+
     Args:
-        runs: List of runs, indicating the run identifier and status for each.
+        runs: List of runs, with the run identifier and state of each, and
+            the summary fields where the WES instance returns them.
         next_page_token: Token to receive the next page of results.
     """
 
-    runs: list[RunStatus] | None = []
+    runs: list[RunSummary | RunStatus] | None = []
     next_page_token: str | None = None
 
 
@@ -446,6 +544,18 @@ class WorkflowTypeVersion(BaseModel):
     """
 
     workflow_type_version: list[str] | None = []
+
+
+class WorkflowEngineVersion(BaseModel):
+    """Available versions of a workflow engine (WES 1.1.0).
+
+    Args:
+        workflow_engine_version: List of one or more available versions of
+            the workflow engine; an array, as in the WES specification (not
+            `null`).
+    """
+
+    workflow_engine_version: list[str] = []
 
 
 class DefaultWorkflowEngineParameter(BaseModel):
@@ -504,7 +614,7 @@ class ServiceInfoWesBase(BaseModel):
     workflow_type_versions: dict[str, WorkflowTypeVersion]
     supported_wes_versions: list[str] = []
     supported_filesystem_protocols: list[str] = []
-    workflow_engine_versions: dict[str, str]
+    workflow_engine_versions: dict[str, WorkflowEngineVersion]
     default_workflow_engine_parameters: list[DefaultWorkflowEngineParameter] = []
     auth_instructions_url: str
     tags: dict[str, str]

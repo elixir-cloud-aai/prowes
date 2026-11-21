@@ -47,6 +47,97 @@ The version of the package comes from Git tags (`vX.Y.Z`) via
 [setuptools-scm](https://setuptools-scm.readthedocs.io/); there is no version
 to edit in the code.
 
+## Run from source
+
+To run proWES from the source code, e.g., to debug it or to try changes
+without rebuilding the image, start the app and the Celery worker in the dev
+environment set up as above. They need MongoDB and RabbitMQ; without the
+broker, the app starts and serves the API, but `POST /runs` fails after it
+has forwarded the run to the remote WES, so that the run isn't tracked.
+
+1. Start MongoDB and RabbitMQ, e.g., those of Docker Compose, with their
+   ports published on the host's loopback interface by a
+   `docker-compose.override.yaml` (ignored by Git), which Docker Compose
+   merges over `docker-compose.yaml`:
+
+    ```yaml
+    services:
+      mongodb:
+        ports:
+          - "127.0.0.1:27017:27017"
+      rabbitmq:
+        ports:
+          - "127.0.0.1:5672:5672"
+    ```
+
+    ```bash
+    docker compose up -d --wait mongodb rabbitmq
+    ```
+
+    Or install them locally (MongoDB 7.0 and RabbitMQ 4.3, as in
+    `docker-compose.yaml`). RabbitMQ 4.3 then needs the setting that
+    `docker-compose.yaml` gives it, as Celery declares transient
+    non-exclusive queues, which RabbitMQ denies by default: add
+    `deprecated_features.permit.transient_nonexcl_queues = true` to its
+    configuration (e.g., in `/etc/rabbitmq/conf.d/90-foca.conf`).
+
+2. Write a configuration overlay, e.g., `local/config.yaml` (the directory
+   `local/` is ignored by Git), that keeps the runs in the repository instead
+   of `/data` (relative paths are relative to the working directory):
+
+    ```yaml
+    custom:
+      post_runs:
+        storage_path: local/data
+    ```
+
+3. Point the app and the worker to the services, with the overlay and the
+   credentials of RabbitMQ (`prowes:prowes`, the defaults of
+   `docker-compose.yaml`, or your `RABBITMQ_DEFAULT_USER` and
+   `RABBITMQ_DEFAULT_PASS`, if you set them on the first start;
+   URL-encode other characters than letters, digits, `-`, `.`, `_` and `~`
+   in the URL), in each
+   shell that runs one of them (see [Configuration](configuration.md) for
+   these and further variables):
+
+    ```bash
+    export FOCA_CONFIG_OVERLAY=local/config.yaml
+    export MONGO_HOST=localhost
+    export CELERY_BROKER_URL='pyamqp://prowes:prowes@localhost:5672//'
+    ```
+
+    With a locally installed RabbitMQ, use its default user `guest`, which
+    can connect from the same host only:
+    `pyamqp://guest:guest@localhost:5672//`.
+
+4. From the repository root, start the app with Flask's development server,
+   on the host and port of the config (`server.host` and `server.port`,
+   `127.0.0.1:8080`: the loopback interface only), and the Celery worker in
+   another shell:
+
+    ```bash
+    uv run python -m pro_wes.app
+    ```
+
+    ```bash
+    uv run celery -A pro_wes.celery_worker worker -E --loglevel=info
+    ```
+
+    To serve the app with Gunicorn, as the image does
+    (`pro_wes/gunicorn.py`), instead of the development server:
+
+    ```bash
+    uv run gunicorn --config python:pro_wes.gunicorn --bind 127.0.0.1:8080 pro_wes.wsgi:app
+    ```
+
+The WES API is then served at `http://localhost:8080/ga4gh/wes/v1/`, with a
+Swagger UI at `http://localhost:8080/ga4gh/wes/v1/ui/`. For Flask's debugger
+and reloader, set `server.debug: True` in the overlay, only with the loopback
+host, as the debugger allows executing arbitrary code. Runs are forwarded to
+the WES instances of `custom.wes.backends` (see [WES
+instances](configuration.md#wes-instances)), none by default; to try runs
+without a real WES, use the [smoke test](#smoke-test) instead.
+
 ## Static analysis rules
 
 Besides ruff's security rules (`S`, from bandit), pre-commit runs
@@ -117,9 +208,10 @@ how to run them locally:
 | `docs` | Docs | `uv run --extra docs mkdocs build --strict` (see [Documentation](#documentation)) |
 | `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
 | `smoke` | Smoke test | `tests/smoke/check.sh` (see [Smoke test](#smoke-test)) |
+| `integration` | Integration | `tests/integration/check.sh` (see [Integration test](#integration-test)) |
 | `push` | Push image | Pushes to `dev` only (see below): builds the image and pushes it by digest |
 | `scan` | Scan image | Pull requests: `docker build -t prowes:scan .`, then [Trivy](https://trivy.dev/) on `prowes:scan` with `.trivyignore.yaml`; pushes: the pushed digest |
-| `publish` | Publish image | Pushes to `dev` only: attests, signs and tags the scanned digest (`dev`, `sha-<commit>`) |
+| `publish` | Publish image | Pushes to `dev` only, after all other checks passed: attests, signs and tags the scanned digest (`dev`, `sha-<commit>`) |
 | `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
 
 `CI passed` is the only required check. Add every new job to its `needs`.
@@ -145,8 +237,11 @@ Celery worker, MongoDB, RabbitMQ), against a fake WES (`fake_wes.py`)
 instead of a real one. It creates runs, which proWES forwards to the fake
 WES, waits until the Celery worker has tracked them to their final state,
 and checks the run list, the run logs, the run status, the cancellation of
-a run and that the fake WES got the runs as sent. It needs Docker Compose,
-curl and jq. Run it from the repository root:
+a run and that the fake WES got the runs as sent. The fake WES is also the
+identity provider whose access tokens proWES requires: the test checks that
+requests without a valid token are rejected and that users see only their
+own runs. It needs Docker Compose, curl and jq. Run it from the repository
+root:
 
 ```bash
 tests/smoke/check.sh
@@ -165,12 +260,79 @@ COMPOSE_FILE=docker-compose.yaml:tests/smoke/compose.yaml \
   COMPOSE_PROJECT_NAME=prowes-smoke docker compose down --volumes
 ```
 
-Until WES backends are configurable
-([#118](https://github.com/elixir-cloud-aai/prowes/issues/118)), proWES
-sends all runs to a hard-coded WES; the fake WES takes its host name in the
-Compose network, with a certificate of its own certificate authority, which
-proWES trusts instead of the public ones (`REQUESTS_CA_BUNDLE`), so that no
-run reaches the real WES.
+The fake WES is the one WES instance of the smoke test's config overlay
+(`custom.wes.backends` in `tests/smoke/config.yaml`), at its service name in
+the Compose network (`https://fake-wes`), with a certificate of its own
+certificate authority, which proWES trusts instead of the public ones
+(`REQUESTS_CA_BUNDLE`), so that runs are forwarded with TLS verification on
+and no run leaves the Compose network.
+
+## Integration test
+
+The integration test
+([`tests/integration/`](https://github.com/elixir-cloud-aai/prowes/tree/dev/tests/integration))
+runs proWES as the smoke test does, but against
+[Sapporo](https://github.com/sapporo-wes/sapporo-service), a real WES
+implementation (the image of `tests/integration/compose.yaml`, pinned by
+digest and updated by Dependabot), instead of the fake WES, which
+stays the identity provider. It creates runs of the CWL workflows of
+`tests/integration/workflows/`, which proWES forwards to Sapporo: one that
+completes (its run log, with the engine's output, and the run list), one
+that fails (`EXECUTOR_ERROR`) and one that is canceled while it runs (also
+at Sapporo, whose engine container must be gone). It also prints the WES
+version of Sapporo's service info (to the job summary in CI). Sapporo runs
+cwltool in containers through the host's Docker socket, and access to the
+socket amounts to control of the host, so run the test locally only where
+that is acceptable. It needs Docker Compose, curl and jq; run it from the
+repository root:
+
+```bash
+export COMPOSE_FILE=docker-compose.yaml:tests/smoke/compose.yaml:tests/integration/compose.yaml
+export COMPOSE_PROJECT_NAME=prowes-integration
+docker compose up -d --build --wait --wait-timeout 300
+tests/integration/check.sh
+docker compose down --volumes
+```
+
+The first run pulls the images of Sapporo and cwltool, so the waits are
+long (each up to `FINAL_WAIT` polls, about one a second, by default 300).
+As in the smoke test, the image is `prowes:smoke` and proWES is published
+on `127.0.0.1:8090`, so stop the smoke test's deployment first. Sapporo
+keeps its runs in `SAPPORO_RUN_DIR` (default `.integration/sapporo` of the
+repository root, ignored by Git), at the same path in its container and on
+the host, so that the engine containers it starts find them. The files
+belong to root and stay after `docker compose down`; remove them without
+root with a container, from the repository root:
+
+```bash
+docker run --rm -v "${PWD}/.integration:/runs" alpine:3.22 rm -rf /runs/sapporo
+```
+
+The engine containers join the Compose network, which therefore has the
+fixed name `prowes-integration` (also if `COMPOSE_PROJECT_NAME` is
+changed), and fetch the workflows over HTTP from the service `workflows`.
+The run that is canceled starts its engine container before the cancel,
+and the test checks that Sapporo stopped it. On failure, the script cancels
+that run and shows the logs of the services; the deployment keeps
+running, for inspection, and the test can run again on it.
+
+Where Sapporo 2.4.2 differs from WES 1.1.0, the test accommodates it:
+
+- Sapporo requires the field `workflow_engine` in run requests, which
+  proWES doesn't forward yet
+  ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)). Until it
+  does, runs go to Sapporo through a proxy that adds
+  `workflow_engine=cwltool` (`tests/integration/engine_proxy.py`). The test
+  checks that Sapporo still rejects runs without the field, so that the
+  proxy is dropped once it doesn't.
+- Its run logs list the outputs as an array of files, not as an object:
+  proWES leaves them out of the run log, as it does with any invalid field,
+  so the test checks the output file in the engine's standard output
+  (cwltool's output object).
+- Its service info reports the WES version `sapporo-wes-2.1.0` (Sapporo's
+  extension of WES 1.1.0) in `type.version` and `supported_wes_versions`,
+  not a version of the WES specification (relevant for routing by WES
+  version, [#122](https://github.com/elixir-cloud-aai/prowes/issues/122)).
 
 ## Dependencies
 
@@ -182,8 +344,8 @@ Dependabot
 opens pull requests labelled `type: dependencies` once a month, to `dev`,
 grouped per ecosystem: Python dependencies (`pyproject.toml` and `uv.lock`),
 GitHub Actions, the images of the `Dockerfile`, the service images of Docker
-Compose (MongoDB, RabbitMQ, Flower) and the pre-commit hook revisions. Some
-updates are made by hand instead:
+Compose (MongoDB, RabbitMQ, Flower, and Sapporo of the integration test)
+and the pre-commit hook revisions. Some updates are made by hand instead:
 
 - FOCA, in `pyproject.toml` and `uv.lock` together with the FOCA base image
   (the image build fails unless the base image has the locked FOCA); run

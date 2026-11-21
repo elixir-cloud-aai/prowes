@@ -1,6 +1,20 @@
 apiVersion: v2
 name: prowes
-description: A proWES Helm chart for Kubernetes
+description: >-
+  proWES, a gateway for the GA4GH Workflow Execution Service API by ELIXIR
+  On-Cloud, with its Celery worker, a MongoDB database and a RabbitMQ broker
 type: application
-version: 2.0.4
-appVersion: 2.0.1
+# Placeholders: releases will set `version` and `appVersion` from the tag
+# (`vX.Y.Z`), once the repository has a release workflow (#116)
+version: 0.0.0
+# `appVersion` is the default image tag, so the chart in the repository
+# deploys the `dev` image (of the latest commit on `dev`) unless `prowes.tag`
+# is set
+appVersion: "dev"
+dependencies:
+  # The library chart of FOCA apps, with the templates of all resources (see
+  # "Helm library chart" in FOCA's docs); `helm dependency build` downloads
+  # the version locked in `Chart.lock` into `charts/`
+  - name: foca-common
+    version: 0.4.0
+    repository: oci://ghcr.io/elixir-cloud-aai/charts

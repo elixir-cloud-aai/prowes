@@ -7,7 +7,7 @@ from connexion import App
 from pydantic import ValidationError
 import pytest
 
-from pro_wes.config_models import PostRuns
+from pro_wes.config_models import Defaults, ListRuns, PostRuns, Wes
 from pro_wes.exceptions import NoSuitableEngine
 from pro_wes.ga4gh.service_info.models import Service
 from pro_wes.ga4gh.wes import models
@@ -18,7 +18,10 @@ from pro_wes.ga4gh.wes.models import (
     RunListResponse,
     RunLog,
     RunRequest,
+    RunStatus,
+    RunSummary,
     State,
+    WorkflowEngineVersion,
 )
 
 RUN_REQUEST: dict[str, Any] = {
@@ -114,6 +117,35 @@ def test_run_log_state_values() -> None:
     assert DbDocument().model_dump()["run_log"]["state"] == "UNKNOWN"
 
 
+def test_run_list_response_keeps_summaries() -> None:
+    """Run lists keep `RunSummary` items, and accept `RunStatus` items.
+
+    WES 1.1.0 allows both (`anyOf`); WES 1.0.1 instances list `RunStatus`.
+    """
+    response = RunListResponse.model_validate(
+        {
+            "runs": [
+                {
+                    "run_id": "DONE01",
+                    "state": "COMPLETE",
+                    "start_time": "2026-11-19T10:00:00Z",
+                    "end_time": "2026-11-19T11:00:00Z",
+                    "tags": {"project": "demo"},
+                },
+                {"run_id": "OLD001", "state": "RUNNING"},
+            ],
+            "next_page_token": "",
+        }
+    )
+    assert response.runs is not None
+    summary, status = response.runs
+    assert isinstance(summary, RunSummary)
+    assert summary.tags == {"project": "demo"}
+    assert summary.start_time == "2026-11-19T10:00:00Z"
+    assert summary.end_time == "2026-11-19T11:00:00Z"
+    assert type(status) is RunStatus
+
+
 def test_optional_fields_default_to_none() -> None:
     """Optional fields without value are `None`, as with pydantic 1."""
     assert ErrorResponse(status_code=500).msg is None
@@ -141,6 +173,92 @@ def test_id_charset_invalid(charset: str) -> None:
         PostRuns(id_charset=charset)
 
 
+@pytest.mark.parametrize("default_page_size", [-1, 0, 101])
+def test_default_page_size_invalid(default_page_size: int) -> None:
+    """Default page sizes below 1 or above the maximum stop the app on startup.
+
+    `GET /runs` would refuse requests without `page_size` with `400`; `0`
+    no longer lists all runs.
+
+    Args:
+        default_page_size: Invalid default page size (maximum: 100).
+    """
+    with pytest.raises(ValidationError):
+        ListRuns(default_page_size=default_page_size)
+
+
+def test_page_sizes_default() -> None:
+    """By default, pages have 5 runs, and at most 100."""
+    assert ListRuns().default_page_size == 5
+    assert ListRuns().max_page_size == 100
+    assert ListRuns(default_page_size=100).default_page_size == 100
+    assert ListRuns(default_page_size=1, max_page_size=1).max_page_size == 1
+    assert ListRuns(default_page_size=3, max_page_size=3).max_page_size == 3
+
+
+def test_max_page_size_below_default() -> None:
+    """A maximum page size below the default of 5 needs a default too."""
+    with pytest.raises(ValidationError):
+        ListRuns(max_page_size=3)
+
+
+@pytest.mark.parametrize("max_page_size", [-1, 0, 2**62 + 1])
+def test_max_page_size_invalid(max_page_size: int) -> None:
+    """Maximum page sizes below 1 or beyond what MongoDB takes stop the app.
+
+    Args:
+        max_page_size: Invalid maximum page size.
+    """
+    with pytest.raises(ValidationError):
+        ListRuns(default_page_size=1, max_page_size=max_page_size)
+
+
+@pytest.mark.parametrize("max_tags_size", [-1, 0, 1])
+def test_max_tags_size_invalid(max_tags_size: int) -> None:
+    """Maximum sizes of tags below 2 (the size of `{}`) stop the app on startup.
+
+    Args:
+        max_tags_size: Invalid maximum size of tags.
+    """
+    with pytest.raises(ValidationError):
+        PostRuns(max_tags_size=max_tags_size)
+    assert PostRuns().max_tags_size == 16384
+
+
+@pytest.mark.parametrize(
+    "timeout", [None, 0, -1, "never", float("inf"), float("nan"), 1e10, 86401]
+)
+def test_timeouts_required(timeout: Any) -> None:
+    """Timeouts of requests to WES instances: positive, finite, at most a day.
+
+    Before, `null` disabled them; FOCA's guarded client needs a deadline.
+
+    Args:
+        timeout: Invalid timeout.
+    """
+    with pytest.raises(ValidationError):
+        PostRuns(timeout_post=timeout)
+    with pytest.raises(ValidationError):
+        Defaults(timeout=timeout)
+
+
+def test_timeouts() -> None:
+    """Timeouts may have fractions of seconds; the job timeout may be `null`."""
+    assert PostRuns(timeout_post=2.5, timeout_job=None).timeout_post == 2.5
+    assert Defaults(timeout=0.5).timeout == 0.5
+
+
+@pytest.mark.parametrize("size", [None, 0, -1])
+def test_max_response_size_invalid(size: Any) -> None:
+    """Responses of WES instances are always limited, to a positive size.
+
+    Args:
+        size: Invalid size.
+    """
+    with pytest.raises(ValidationError):
+        Wes(max_response_size=size)
+
+
 def test_state_properties() -> None:
     """States tell whether runs are finished or can be canceled."""
     assert State.COMPLETE.is_finished
@@ -149,3 +267,33 @@ def test_state_properties() -> None:
     assert not State.COMPLETE.is_cancelable
     assert "RUNNING" in State
     assert "OTHER" not in State
+
+
+def test_state_preempted() -> None:
+    """`PREEMPTED` (WES 1.1.0) is a finished state that can't be canceled."""
+    assert State("PREEMPTED") is State.PREEMPTED
+    assert State.PREEMPTED.is_finished
+    assert not State.PREEMPTED.is_cancelable
+
+
+# Final states, as `docs/api.md` (section "Run states") lists them
+FINAL_STATES = {"COMPLETE", "EXECUTOR_ERROR", "SYSTEM_ERROR", "CANCELED", "PREEMPTED"}
+
+
+@pytest.mark.parametrize("state", list(State), ids=lambda state: state.value)
+def test_state_final(state: State) -> None:
+    """The final states are those of the docs; final states can't be canceled.
+
+    Args:
+        state: Run state.
+    """
+    assert state.is_finished == (state.value in FINAL_STATES)
+    if state.is_finished:
+        assert not state.is_cancelable
+
+
+def test_workflow_engine_version_not_null() -> None:
+    """Engine versions are arrays (WES 1.1.0), not `null`; default empty."""
+    with pytest.raises(ValidationError):
+        WorkflowEngineVersion(workflow_engine_version=None)  # type: ignore[arg-type]
+    assert WorkflowEngineVersion().workflow_engine_version == []

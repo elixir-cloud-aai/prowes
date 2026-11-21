@@ -20,13 +20,10 @@ import yaml
 import pro_wes
 from pro_wes.app import init_app
 from pro_wes.config_models import CustomConfig
-from pro_wes.ga4gh.wes import service_info
-from pro_wes.ga4gh.wes.service_info import (
-    runtime_fields,
-    state_counts,
-    workflow_type_versions,
-)
-from pro_wes.ga4gh.wes.states import States
+from pro_wes.ga4gh.wes.models import State
+from pro_wes.ga4gh.wes.service_info import runtime_fields, state_counts
+from pro_wes.utils import config as config_utils
+from pro_wes.utils.config import workflow_type_versions
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
 from tests.conftest import SERVICE_INFO_ID
 
@@ -65,14 +62,18 @@ def test_get_service_info(foca_client: Client) -> None:
     assert response.status_code == 200
     body: dict[str, Any] = response.json()
     assert body["id"] == SERVICE_INFO_ID
-    assert body["type"] == {"group": "org.ga4gh", "artifact": "wes", "version": "1.0.1"}
+    assert body["type"] == {"group": "org.ga4gh", "artifact": "wes", "version": "1.1.0"}
     assert body["contactUrl"] == "mailto:support@example.org"
     assert body["workflow_type_versions"] == {
         "CWL": {"workflow_type_version": ["v1.0"]}
     }
-    assert body["supported_wes_versions"] == ["1.0.1"]
+    assert body["supported_wes_versions"] == ["1.1.0"]
+    # WES 1.1.0: versions of each engine as objects
+    assert body["workflow_engine_versions"] == {
+        "cwl-engine": {"workflow_engine_version": ["1.2.3"]}
+    }
     assert None not in body.values()
-    assert body.pop("system_state_counts") == dict.fromkeys(States.ALL, 0)
+    assert body.pop("system_state_counts") == {state.value: 0 for state in State}
     assert body.pop("version") == version("pro-wes")
     assert body == _configured_service()
 
@@ -83,9 +84,9 @@ def test_get_service_info_counts_states(foca_app: App, foca_client: Client) -> N
     with foca_app.app.app_context():
         get_collection(RUN_DB, RUN_COLLECTION).insert_many(
             [
-                {"run_log": {"state": "RUNNING"}},
-                {"run_log": {"state": "RUNNING"}},
-                {"run_log": {"state": "COMPLETE"}},
+                {"run_log": {"run_id": "RUN001", "state": "RUNNING"}},
+                {"run_log": {"run_id": "RUN002", "state": "RUNNING"}},
+                {"run_log": {"run_id": "RUN003", "state": "COMPLETE"}},
             ]
         )
     counts = foca_client.get(URL).json()["system_state_counts"]
@@ -102,15 +103,33 @@ def test_post_service_info_not_allowed(foca_client: Client) -> None:
 
 @pytest.mark.usefixtures("app_context")
 def test_state_counts_unknown_state() -> None:
-    """Runs with unknown states are not counted, without failing."""
+    """Runs with unknown states are not counted, without failing.
+
+    Also runs without a state, and one without a run log (the unique index
+    on `run_log.run_id` allows one run without an identifier).
+    """
     get_collection(RUN_DB, RUN_COLLECTION).insert_many(
-        [{"run_log": {"state": "PREEMPTED"}}, {"run_log": {"state": "RUNNING"}}, {}]
+        [
+            {"run_log": {"run_id": "RUN001", "state": "OTHER"}},
+            {"run_log": {"run_id": "RUN002", "state": "RUNNING"}},
+            {"run_log": {"run_id": "RUN003"}},
+            {},
+        ]
     )
     counts = state_counts()
-    assert "PREEMPTED" not in counts
+    assert "OTHER" not in counts
     assert counts["RUNNING"] == 1
     assert sum(counts.values()) == 1
     assert runtime_fields() == {"system_state_counts": counts}
+
+
+@pytest.mark.usefixtures("app_context")
+def test_state_counts_preempted() -> None:
+    """Preempted runs (WES 1.1.0) are counted."""
+    get_collection(RUN_DB, RUN_COLLECTION).insert_one(
+        {"run_log": {"state": "PREEMPTED"}}
+    )
+    assert state_counts()["PREEMPTED"] == 1
 
 
 def test_state_counts_not_configurable(add_overlay: Callable[[str], None]) -> None:
@@ -129,6 +148,9 @@ def test_state_counts_not_configurable(add_overlay: Callable[[str], None]) -> No
         "service_info:\n  service:\n    auth_instructions_url: null\n",
         "service_info:\n  service:\n    tags: not a mapping\n",
         "service_info:\n  service:\n    contactUrl: support@example.org\n",
+        # WES 1.0.1 form of the engine versions (strings)
+        "service_info:\n  service:\n    workflow_engine_versions:\n"
+        "      cwl-engine: 1.2.3\n",
     ],
 )
 def test_init_app_checks_service_info(
@@ -168,7 +190,7 @@ def test_workflow_type_versions_without_service_info(
 ) -> None:
     """Without service info (which FOCA doesn't allow), no types are known."""
     monkeypatch.setattr(
-        service_info, "get_config", lambda: SimpleNamespace(service_info=None)
+        config_utils, "get_config", lambda: SimpleNamespace(service_info=None)
     )
     with pytest.raises(RuntimeError):
         workflow_type_versions()

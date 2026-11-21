@@ -11,21 +11,36 @@ workflow URL, and, in final states only, a standard output of its own
 sees what proWES forwarded and that it fetched the final run log.
 `GET /runs` lists all runs it received.
 
-proWES sends all runs to a hard-coded WES (`run_workflow()` in
-`pro_wes/ga4gh/wes/workflow_runs.py`, until #118), so the fake WES takes its
-place: it serves HTTPS on port 443, with a certificate for that host
-(`HOSTS`) issued by a certificate authority of its own, and Docker Compose
-resolves the host to it (`compose.yaml` of this directory). proWES trusts
-only that authority (`REQUESTS_CA_BUNDLE`), so that no run reaches the real
-WES. It also serves plain HTTP on port 8080, for the health check and the
-checks of the smoke test inside the container.
+It implements WES 1.0.1, or the version of the environment variable
+`FAKE_WES_VERSION` (`1.1.0`), in its service info (`service_info()`). As
+WES 1.0.1, it rejects run requests with fields that WES 1.0.1 doesn't have
+(`400`), as some WES instances do, so that the smoke test sees that proWES
+forwards runs in the version of each WES instance.
+
+proWES sends runs to the WES instance of the smoke test's config
+(`custom.wes.backends` in `config.yaml` of this directory): the fake WES,
+at its service name in Docker Compose. It serves HTTPS on port 443, with a
+certificate for that host (`HOSTS`) issued by a certificate authority of
+its own, which proWES trusts instead of the public ones
+(`REQUESTS_CA_BUNDLE`, `compose.yaml` of this directory), so that the
+smoke test forwards runs with TLS verification on, as deployments do. It
+also serves plain HTTP on port 8080, for the health check and the checks of
+the smoke test inside the container.
+
+It is also the identity provider of the smoke test (`ISSUER`, trusted by
+proWES in `config.yaml` of this directory): it serves its OpenID Connect
+discovery document and keys below `/oidc/`, and access tokens of any user,
+for the audience `AUDIENCE`, at `GET /oidc/token?sub=<user>` (no login; for
+the smoke test only). Its WES API needs no token (proWES has no credentials
+for WES instances yet, #182).
 
 Run it with `python fake_wes.py certs <dir>` to create the certificates in
 `<dir>` (`ca.pem`, `server.pem`, `server-key.pem`), then with
 `python fake_wes.py serve <dir>` to serve; `python fake_wes.py verify
 <count> <key>=<value>...` checks the runs that a running fake WES got
-(see `verify()`). It depends on the standard
-library and cryptography (a dependency of FOCA).
+(see `verify()`), and `python fake_wes.py token <user>` prints an access
+token of a user. It depends on the standard library, cryptography and PyJWT
+(dependencies of FOCA).
 """
 
 import datetime
@@ -35,6 +50,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
+import os
 from pathlib import Path
 import ssl
 import sys
@@ -47,19 +63,33 @@ import uuid
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+import jwt
 
 BASE_PATH = "/ga4gh/wes/v1"
-# Host names of the certificate: the WES that proWES sends all runs to (#118;
-# also the network alias of the fake WES in `compose.yaml`), the service name
-# in Docker Compose and the loopback host
-HOSTS = ["wes-na.cloud.e-infra.cz", "fake-wes", "localhost"]
+# Host names of the certificate: the service names in Docker Compose (the
+# WES instances of the smoke test's config, `config.yaml`: of WES 1.0.1 and
+# 1.1.0) and the loopback host
+HOSTS = ["fake-wes", "fake-wes-11", "localhost"]
 HTTP_PORT = 8080
 HTTPS_PORT = 443
 RUN_SECONDS = 2.0
+# Identity provider: issuer (over HTTPS, at the service name), audience of
+# its tokens (both as trusted by proWES, `security.auth` in `config.yaml`),
+# lifetime of tokens in seconds, and its signing key (new for each start, so
+# tokens of an earlier start are rejected). Its token endpoint issues tokens
+# to anyone who reaches it: never publish the fake WES outside the Compose
+# network of the smoke test
+ISSUER = "https://fake-wes/oidc/"
+IDP_PATH = "/oidc/"
+AUDIENCE = "prowes-smoke"
+TOKEN_SECONDS = 3600
+KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+# New for each start too, so that proWES fetches the new key after a restart
+KEY_ID = uuid.uuid4().hex
 CANCEL_SECONDS = 1.0
-SERVICE_INFO = {
+SERVICE_INFO: dict[str, Any] = {
     "id": "org.example.fake-wes",
     "name": "Fake WES",
     "type": {"group": "org.ga4gh", "artifact": "wes", "version": "1.0.1"},
@@ -74,6 +104,46 @@ SERVICE_INFO = {
     "auth_instructions_url": "https://example.org/auth",
     "tags": {},
 }
+
+# Form fields of run requests of WES 1.0.1 (WES 1.1.0 adds the workflow
+# engine and its version)
+FIELDS_1_0 = frozenset(
+    {
+        "workflow_params",
+        "workflow_type",
+        "workflow_type_version",
+        "tags",
+        "workflow_engine_parameters",
+        "workflow_url",
+        "workflow_attachment",
+    }
+)
+
+
+def version() -> str:
+    """Get the WES version of the fake WES.
+
+    Returns:
+        The version: `1.0.1`, unless `FAKE_WES_VERSION` sets `1.1.0`.
+    """
+    return "1.1.0" if os.environ.get("FAKE_WES_VERSION") == "1.1.0" else "1.0.1"
+
+
+def service_info() -> dict[str, Any]:
+    """Get the service info, in the WES version of the fake WES.
+
+    Returns:
+        The service info (WES 1.1.0: the versions of each engine as objects).
+    """
+    if version() == "1.0.1":
+        return SERVICE_INFO
+    return {
+        **SERVICE_INFO,
+        "type": {**SERVICE_INFO["type"], "version": "1.1.0"},
+        "supported_wes_versions": ["1.1.0"],
+        "workflow_engine_versions": {"fake": {"workflow_engine_version": ["1.0.0"]}},
+    }
+
 
 # Standard output of runs in final states, which only final run logs have
 FINAL_STDOUT = {"COMPLETE": "fake complete", "CANCELED": "fake canceled"}
@@ -193,13 +263,54 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return [part for part in path[len(BASE_PATH) :].split("/") if part]
 
+    def _serve_idp(self) -> bool:
+        """Serve a request to the identity provider, if it is one.
+
+        Returns:
+            Whether the request was one to the identity provider.
+        """
+        path, _, query = self.path.partition("?")
+        if not path.startswith(IDP_PATH):
+            return False
+        name = path[len(IDP_PATH) :]
+        if name == ".well-known/openid-configuration":
+            self._send(
+                HTTPStatus.OK,
+                {
+                    "issuer": ISSUER,
+                    "jwks_uri": f"{ISSUER}jwks",
+                    "token_endpoint": f"{ISSUER}token",
+                },
+            )
+        elif name == "jwks":
+            key = jwt.algorithms.RSAAlgorithm.to_jwk(KEY.public_key(), as_dict=True)
+            self._send(HTTPStatus.OK, {"keys": [{**key, "kid": KEY_ID, "use": "sig"}]})
+        elif name == "token" and parse_qs(query).get("sub"):
+            now = int(time.time())
+            claims = {
+                "iss": ISSUER,
+                "sub": parse_qs(query)["sub"][-1],
+                "aud": AUDIENCE,
+                "iat": now,
+                "exp": now + TOKEN_SECONDS,
+            }
+            token = jwt.encode(
+                claims, KEY, algorithm="RS256", headers={"kid": KEY_ID, "typ": "at+jwt"}
+            )
+            self._send(HTTPStatus.OK, {"access_token": token})
+        else:
+            self._error(HTTPStatus.NOT_FOUND, "not found")
+        return True
+
     def do_GET(self) -> None:
-        """Serve the service info, the runs, a run log or a run status."""
+        """Serve the identity provider, service info, runs, run log or status."""
+        if self._serve_idp():
+            return
         parts = self._parts()
         now = time.time()
         with LOCK:
             if parts == ["service-info"]:
-                self._send(HTTPStatus.OK, SERVICE_INFO)
+                self._send(HTTPStatus.OK, service_info())
             elif parts == ["runs"]:
                 runs = [
                     {"run_id": run_id, "state": state_of(run, now)}
@@ -243,6 +354,10 @@ class Handler(BaseHTTPRequestHandler):
                 ]
                 if missing:
                     self._error(HTTPStatus.BAD_REQUEST, f"missing fields: {missing}")
+                    return
+                unknown = sorted(set(form) - FIELDS_1_0)
+                if unknown and version() == "1.0.1":
+                    self._error(HTTPStatus.BAD_REQUEST, f"unknown fields: {unknown}")
                     return
                 try:
                     tags = json.loads(form.get("tags") or "{}")
@@ -439,13 +554,24 @@ def verify(expected: dict[str, str], count: int) -> None:
         raise SystemExit(f"Runs not finished at the fake WES: {unfinished}")
 
 
+def print_token(user: str) -> None:
+    """Print an access token of a user, from a running fake WES, via plain HTTP.
+
+    Args:
+        user: Subject of the token.
+    """
+    url = f"http://localhost:{HTTP_PORT}{IDP_PATH}token?sub={user}"
+    with urllib.request.urlopen(url, timeout=10) as response:
+        print(json.load(response)["access_token"])
+
+
 def main(args: list[str]) -> None:
     """Create the certificates, serve or verify, as the arguments say.
 
     Args:
         args: Command-line arguments: `certs <dir>`, `serve <dir>` or
             `verify <count> <key>=<value>...` (the number of runs and form
-            fields of their requests).
+            fields of their requests), or `token <user>`.
 
     Raises:
         SystemExit: The arguments are invalid.
@@ -461,9 +587,12 @@ def main(args: list[str]) -> None:
         create_certificates(Path(args[1]))
     elif len(args) == 2 and args[0] == "serve":
         serve(Path(args[1]))
+    elif len(args) == 2 and args[0] == "token" and args[1].isalnum():
+        print_token(args[1])
     else:
         raise SystemExit(
             "usage: fake_wes.py certs|serve <dir> | verify <count> <key>=<value>..."
+            " | token <user>"
         )
 
 

@@ -1,6 +1,26 @@
 # Config overlay for the Compose smoke test (`tests/smoke/compose.yaml`):
-# the Celery worker polls the fake WES every second (instead of every 3
-# seconds), so that the smoke test sees state changes quickly
+# runs go to the fake WES (`fake_wes.py`), the first WES instance of the
+# backend list, of WES 1.0.1, at its service name in Docker Compose (HTTPS,
+# with the certificate authority of the fake WES, `REQUESTS_CA_BUNDLE`),
+# unless only WES 1.1.0 can run them: then to the second, a fake WES of
+# WES 1.1.0; proWES reads their versions from their service infos; the Celery
+# worker polls it every second (instead of every 3 seconds), so that the
+# smoke test sees state changes quickly. The fake WES is also the identity
+# provider whose access tokens proWES requires (`security.auth`), reached
+# over HTTPS as the WES API (`ISSUER` and `AUDIENCE` in `fake_wes.py`, which
+# must match)
+security:
+  auth:
+    issuers:
+      - https://fake-wes/oidc/
+    audience:
+      - prowes-smoke
 custom:
   post_runs:
     polling_wait: 1
+  wes:
+    backends:
+      - type: ga4gh-wes
+        url: https://fake-wes
+      - type: ga4gh-wes
+        url: https://fake-wes-11

@@ -9,19 +9,36 @@
 # Server configuration; `host` and `port` apply to Flask's development server
 # only (`python -m pro_wes.app`): the image serves the app with Gunicorn, on
 # the address of FOCA's settings, `foca.gunicorn_config` (port 8080, or the
-# environment variable `PORT`)
+# environment variable `PORT`). The development server listens on the loopback
+# interface only
 # Cf. https://foca.readthedocs.io/en/latest/configuration/server/
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8080
   # Debug mode allows executing arbitrary code; only enable it for local
   # development, on a loopback host
   debug: False
   testing: False
+  # Maximum size of request bodies (10 MiB), with all workflow attachments;
+  # larger requests are rejected with `413 Content Too Large` before they
+  # are parsed. A reverse proxy in front of the app must allow at least as
+  # much (e.g., ingress-nginx allows 1 MiB by default)
+  max_content_length: 10485760
 
-# Security configuration: the WES API is served without authentication
-# (`api.specs[].disable_auth`); authentication follows with its own issue.
-# Without trusted `issuers`, FOCA rejects all bearer tokens
+# Security configuration: the WES API requires access tokens of the trusted
+# issuers (`issuers`), sent as bearer tokens, for all operations but `GET
+# /service-info` (public, as the specification and the Swagger UI). Without
+# trusted issuers (the default), all tokens are rejected (`401`), so
+# deployments set them, and `audience`: only tokens for the apps calling
+# proWES (e.g., the client IDs of its front ends) are accepted, e.g.:
+#   issuers:
+#     - https://login.example.org/oidc/
+#   audience:
+#     - my-portal-client-id
+# Each run belongs to the caller that created it, the subject of its token
+# namespaced by its issuer (`<issuer>|<subject>`, or the issuer's
+# `namespace`); callers list, read and cancel their own runs only. Cf.
+# `docs/access-control.md`
 # Cf. https://foca.readthedocs.io/en/latest/configuration/auth/
 security:
   auth:
@@ -29,6 +46,9 @@ security:
     algorithms:
       - RS256
     allow_expired: False
+    # Only access tokens as per RFC 9068 (`typ` header `at+jwt`); other
+    # tokens of the issuers, such as ID tokens, are rejected
+    verify_token_type: True
     issuers: []
 
 # Database configuration
@@ -44,30 +64,41 @@ db:
     runStore:
       collections:
         runs:
+          # Created at start if missing; existing indexes are kept (see
+          # "Database indexes" in `docs/operations.md`)
           indexes:
+            # Run identifiers are unique: a duplicate is rejected on insert,
+            # and `POST /runs` tries another identifier
             - keys:
-                run_id: 1
-                task_id: 1
+                run_log.run_id: 1
               options:
                 "unique": True
-                "sparse": True
+            # `GET /runs` with authentication: the runs of a user, newest
+            # first
+            - keys:
+                user_id: 1
+                _id: -1
 
 # API configuration
 # Cf. https://foca.readthedocs.io/en/latest/configuration/api/
 api:
   specs:
     - path:
-        - api/20201124.tag_1_0_1.workflow_execution_service.openapi.yaml
+        - api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml
         - api/additions.openapi.yaml
       add_operation_fields:
         x-openapi-router-controller: pro_wes.ga4gh.wes.controllers
       add_security_fields:
         x-bearerInfoFunc: foca.security.auth.validate_token
-      disable_auth: True
+      # Access tokens required (cf. `security.auth`); disabling it serves the
+      # WES API to anyone, and runs have no owner
+      disable_auth: False
       connexion:
         strict_validation: True
-        # workaround until cwl-WES responses are fixed
-        validate_responses: False
+        # Responses are checked against the specification, so that no
+        # unchecked data (e.g., of the remote WES) reaches clients; invalid
+        # ones become `500` errors
+        validate_responses: True
         base_path: /ga4gh/wes/v1
         options:
           swagger_ui: True
@@ -110,7 +141,8 @@ jobs:
 # the system state counts (`system_state_counts`), computed for each request
 # by `runtime_fields`, and the version of the package (`pro-wes`), unless
 # `service` sets `version`; set `id`, `name`, `organization` and the URLs to
-# describe the deployment. The WES fields are checked on startup
+# describe the deployment. The WES fields (of WES 1.1.0: the versions of each
+# engine in `workflow_engine_versions` as objects) are checked on startup
 # Cf. https://foca.readthedocs.io/en/latest/configuration/service-info/
 service_info:
   package: pro-wes
@@ -123,7 +155,7 @@ service_info:
     type:
       group: "org.ga4gh"
       artifact: "wes"
-      version: "1.0.1"
+      version: "1.1.0"
     description: "WES gateway service"
     organization:
       name: "Example organization"
@@ -138,11 +170,13 @@ service_info:
     supported_filesystem_protocols:
       - https
     supported_wes_versions:
-      - 1.0.1
+      - 1.1.0
     tags:
       key: "value"
     workflow_engine_versions:
-      cwl-engine: "1.2.3"
+      cwl-engine:
+        workflow_engine_version:
+          - "1.2.3"
     workflow_type_versions:
       CWL:
         workflow_type_version:
@@ -158,6 +192,10 @@ exceptions:
 
 # Custom configuration (cf. `pro_wes.config_models.CustomConfig`)
 custom:
+  # Timeouts of requests to WES instances, in seconds, for each request as
+  # a whole (positive numbers; they can't be switched off): status and
+  # cancellation (`defaults.timeout`), forwarding runs and reading run logs
+  # (`post_runs.timeout_post`)
   defaults:
     timeout: 2
   post_runs:
@@ -170,5 +208,41 @@ custom:
     storage_path: "/data"
     timeout_job: null
     timeout_post: 30
+    # Workflow attachments: at most 100 per run, of at most 1 MiB each
+    # (`413 Content Too Large` otherwise)
+    max_attachments: 100
+    max_attachment_size: 1048576
+    # Tags: at most 16 KiB of JSON text, as stored (`400 Bad Request`
+    # otherwise); `GET /runs` lists stored runs with larger tags with `{}`
+    max_tags_size: 16384
+    # Runs with credentials in URLs (`https://user:password@host/...`):
+    # `reject` (`400 Bad Request`) or `strip` (remove the credentials)
+    url_credentials: reject
+  # `GET /runs`
   list_runs:
+    # Runs per page of requests without `page_size` (1 to `max_page_size`)
     default_page_size: 5
+    # Largest `page_size`; larger ones, and those below 1, get `400 Bad
+    # Request`
+    max_page_size: 100
+  # WES instances that runs are forwarded to, in order: WES instances
+  # (`type: ga4gh-wes`, with `url`, optionally `api_path`, `id`, `labels`,
+  # `location`, `url_schemes`) and service registries whose verified WES
+  # instances are used (`type: ga4gh-service-registry`); new runs go to the
+  # first. None by default: `POST /runs` is refused (`503 Service
+  # Unavailable`) until a deployment configures them, e.g.:
+  #   backends:
+  #     - type: ga4gh-wes
+  #       url: https://wes.example.org
+  # Cf. "WES instances" in `docs/configuration.md`
+  # Responses of WES instances are read up to `max_response_size` bytes
+  # (16 MiB); larger ones fail the request
+  # Runs go to WES instances that can run them, in their WES version (1.0
+  # or 1.1): the label `wes.version` of an entry (e.g., `labels:
+  # {wes.version: "1.1"}`), else the version of their service info, read
+  # without credentials and cached for `version_cache_ttl` seconds; cf. "WES
+  # versions" in `docs/configuration.md`
+  wes:
+    backends: []
+    max_response_size: 16777216
+    version_cache_ttl: 3600

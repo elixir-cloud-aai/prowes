@@ -1,15 +1,45 @@
-"""Tests of the endpoints of workflow runs (`POST /runs`, `GET /runs`)."""
+"""Tests of the endpoints of workflow runs (`POST /runs`, `GET /runs`, ...).
 
+Also the error paths of the controllers (`WorkflowRuns`): remote errors,
+inconsistent stored runs, run identifiers and storage that aren't available,
+access checks, and the paging of `GET /runs`.
+"""
+
+from collections.abc import Callable, Iterator
+from json import dumps
+from pathlib import Path
 from typing import Any
 
+from connexion import App
+from foca.errors import InvalidFieldsProblem
 from foca.testing import Client
+from foca.utils.http import HttpResponse
+from jsonschema import Draft4Validator
 from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
 import pytest
 
+from pro_wes.config_models import ListRuns, PostRuns
+from pro_wes.exceptions import (
+    EngineOutcomeUnknown,
+    EngineRequestNotSent,
+    EngineUnavailable,
+    Forbidden,
+)
+from pro_wes.ga4gh.wes import workflow_runs
 from pro_wes.ga4gh.wes.client_wes import WesClient
-from pro_wes.ga4gh.wes.models import ErrorResponse, RunId
+from pro_wes.ga4gh.wes.models import (
+    DbDocument,
+    ErrorResponse,
+    RunId,
+    State,
+    WesEndpoint,
+)
+from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.tasks.track_run_progress import task__track_run_progress
+from pro_wes.utils.db import DbDocumentConnector
 from pro_wes.utils.db_names import RUN_COLLECTION, RUN_DB
+from tests.conftest import BACKEND_URL, OWNER, TokenClient
 
 BASE_PATH = "/ga4gh/wes/v1"
 REMOTE_RUN_ID = "REMOTE1"
@@ -143,6 +173,48 @@ def test_post_run(
             "task_id": stored["task_id"],
         }
     ]
+    # the WES version that the run was forwarded in
+    assert stored["wes_endpoint"]["wes_version"] == "1.1"
+
+
+def test_post_run_wes_10(
+    add_overlay: Callable[[str], None],
+    mongodb: MongoClient[dict[str, Any]],
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+    token: str,
+) -> None:
+    """Runs for WES instances of WES 1.0 are forwarded in WES 1.0."""
+    from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
+
+    add_overlay(
+        "custom:\n  wes:\n    backends:\n      - type: ga4gh-wes\n"
+        f'        url: {BACKEND_URL}\n        labels: {{wes.version: "1.0"}}\n'
+    )
+    with TokenClient(init_app(), token) as client:
+        response = _post_run(client, RUN_REQUEST)
+    assert response.status_code == 200
+    assert remote_wes == [
+        {**RUN_REQUEST, "tags": "{}", "workflow_engine_parameters": "{}"}
+    ]
+    stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
+    assert stored is not None
+    assert stored["wes_endpoint"]["wes_version"] == "1.0"
+    assert "remote_wes_version" not in queued[0]["kwargs"]
+
+
+@pytest.mark.usefixtures("queued")
+def test_post_run_url_encoded(
+    foca_client: Client, remote_wes: list[dict[str, str]]
+) -> None:
+    """URL-encoded run requests, without attachments, are forwarded, too."""
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        data=RUN_REQUEST,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    assert remote_wes[0]["workflow_url"] == RUN_REQUEST["workflow_url"]
 
 
 def test_post_run_unsupported_workflow_type(
@@ -175,6 +247,7 @@ def test_post_run_remote_error(
     stored = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
     assert stored is not None
     assert stored["run_log"]["state"] == "SYSTEM_ERROR"
+    assert stored["system_error_by_prowes"] is True
     assert not queued
 
 
@@ -191,7 +264,7 @@ def test_list_runs(
     body = response.json()
     assert len(body["runs"]) == 2
     assert {run["state"] for run in body["runs"]} == {"UNKNOWN"}
-    assert body["next_page_token"]
+    assert body["next_page_token"] == ""
     page = foca_client.get(f"{BASE_PATH}/runs", params={"page_size": 1})
     assert len(page.json()["runs"]) == 1
     assert page.json()["runs"][0] == body["runs"][0]
@@ -214,3 +287,1299 @@ def test_get_run_log_and_status(
     response = foca_client.get(f"{BASE_PATH}/runs/{run_id}/status")
     assert response.status_code == 200
     assert response.json() == {"run_id": run_id, "state": "UNKNOWN"}
+
+
+@pytest.mark.parametrize("path", ["/runs/ABC123/tasks", "/runs/ABC123/tasks/task1"])
+def test_task_endpoints_not_implemented(foca_client: Client, path: str) -> None:
+    """The task endpoints of WES 1.1.0 aren't served yet (#124): `501`."""
+    response = foca_client.get(f"{BASE_PATH}{path}")
+    assert response.status_code == 501
+    assert response.json()["status"] == 501
+    assert "tasks" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"workflow_engine": "cwltool"},
+        {"workflow_engine_version": "3.1"},
+        {"workflow_engine": "cwltool", "workflow_engine_version": "3.1"},
+        # only empty values choose no engine
+        {"workflow_engine": " "},
+    ],
+)
+def test_post_run_workflow_engine_refused(
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+    fields: dict[str, str],
+) -> None:
+    """Runs that choose a workflow engine are refused until it is forwarded.
+
+    Neither stored nor forwarded (#66), instead of losing the engine choice.
+    """
+    response = _post_run(foca_client, {**RUN_REQUEST, **fields})
+    assert response.status_code == 400
+    assert "workflow_engine" in response.json()["detail"]
+    assert mongodb[RUN_DB][RUN_COLLECTION].count_documents({}) == 0
+    assert not remote_wes
+    assert not queued
+
+
+def test_post_run_empty_workflow_engine(
+    foca_client: Client,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """Empty workflow engine fields (no choice) are accepted, not forwarded."""
+    fields = {"workflow_engine": "", "workflow_engine_version": ""}
+    response = _post_run(foca_client, {**RUN_REQUEST, **fields})
+    assert response.status_code == 200
+    assert "workflow_engine" not in remote_wes[0]
+    assert "workflow_engine_version" not in remote_wes[0]
+
+
+def test_post_run_workflow_engine_as_file_refused(
+    foca_client: Client,
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+) -> None:
+    """A workflow engine sent as a file part is refused, too."""
+    fields = _multipart(RUN_REQUEST)[: -len(f"--{BOUNDARY}--\r\n")]
+    part = (
+        f"--{BOUNDARY}\r\nContent-Disposition: form-data;"
+        ' name="workflow_engine"; filename="engine.txt"\r\n\r\n'
+        f"cwltool\r\n--{BOUNDARY}--\r\n"
+    )
+    response = foca_client.post(
+        f"{BASE_PATH}/runs",
+        content=fields + part.encode(),
+        headers={"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"},
+    )
+    assert response.status_code == 400
+    assert not remote_wes
+
+
+def _stored(mongodb: MongoClient[dict[str, Any]]) -> dict[str, Any]:
+    """Get the only stored run.
+
+    Args:
+        mongodb: Database of the test.
+
+    Returns:
+        The stored run document.
+    """
+    document = mongodb[RUN_DB][RUN_COLLECTION].find_one({})
+    assert document is not None
+    return document
+
+
+@pytest.fixture
+def app_context(foca_app: App) -> Iterator[None]:
+    """Enter the app context of the app.
+
+    Args:
+        foca_app: The app.
+
+    Yields:
+        Nothing; within the app context.
+    """
+    with foca_app.app.app_context():
+        yield
+
+
+@pytest.mark.usefixtures("queued")
+def test_post_run_remote_unavailable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Runs that can't be sent to the remote WES fail with `SYSTEM_ERROR`."""
+
+    def _unavailable(*_args: Any, **_kwargs: Any) -> None:
+        """Fail like an unreachable WES.
+
+        Args:
+            *_args: Positional arguments; ignored.
+            **_kwargs: Keyword arguments; ignored.
+
+        Raises:
+            EngineUnavailable: Always.
+        """
+        raise EngineUnavailable
+
+    monkeypatch.setattr(WesClient, "post_run", _unavailable)
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 500
+    assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored(mongodb)["system_error_by_prowes"] is True
+
+
+@pytest.mark.usefixtures("queued")
+@pytest.mark.parametrize(("remote", "expected"), [(400, 400), (401, 401), (502, 500)])
+def test_post_run_remote_error_status(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    remote: int,
+    expected: int,
+) -> None:
+    """Errors of the remote WES become errors of proWES, the run fails."""
+    monkeypatch.setattr(
+        WesClient,
+        "post_run",
+        lambda *_args, **_kwargs: ErrorResponse(msg="no", status_code=remote),
+    )
+    assert _post_run(foca_client, RUN_REQUEST).status_code == expected
+    assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"
+    assert _stored(mongodb)["system_error_by_prowes"] is True
+
+
+@pytest.mark.usefixtures("queued")
+@pytest.mark.parametrize(
+    ("update", "detail"),
+    [
+        ({"wes_endpoint": None}, "An unexpected error occurred."),
+        (
+            {"wes_endpoint": WesEndpoint(host="https://h", base_path=None)},
+            "An unexpected error occurred.",
+        ),
+        ({"task_id": None}, "No/few unique run identifiers available."),
+    ],
+    ids=["no endpoint", "no base path", "no task"],
+)
+def test_post_run_incomplete_document(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    remote_wes: list[dict[str, str]],
+    update: dict[str, Any],
+    detail: str,
+) -> None:
+    """Runs stored without endpoint, base path or task fail with `500`."""
+    create = WorkflowRuns._create_run_environment
+
+    def _create(self: WorkflowRuns, **kwargs: Any) -> DbDocument:
+        """Store a run, then drop fields of the returned document.
+
+        Args:
+            self: Controllers.
+            **kwargs: Arguments of `_create_run_environment()`.
+
+        Returns:
+            The stored document, without the fields of `update`.
+        """
+        return create(self, **kwargs).model_copy(update=update)
+
+    monkeypatch.setattr(WorkflowRuns, "_create_run_environment", _create)
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 500
+    assert response.json()["detail"] == detail
+    # refused before forwarding
+    assert not remote_wes
+
+
+@pytest.mark.usefixtures("queued", "remote_wes")
+@pytest.mark.parametrize(
+    ("update", "detail"),
+    [
+        (
+            lambda doc: doc.model_copy(update={"wes_endpoint": None}),
+            "An unexpected error occurred.",
+        ),
+        (
+            lambda doc: doc.model_copy(
+                update={"wes_endpoint": WesEndpoint(host="https://h", base_path=None)}
+            ),
+            "An unexpected error occurred.",
+        ),
+        (
+            lambda doc: doc.model_copy(
+                update={"wes_endpoint": WesEndpoint(host="https://h", run_id=None)}
+            ),
+            "No/few requirements provided for WES endpoint.",
+        ),
+        (
+            lambda doc: doc.model_copy(
+                update={"run_log": doc.run_log.model_copy(update={"run_id": None})}
+            ),
+            "No/few unique run identifiers available.",
+        ),
+    ],
+    ids=["no endpoint", "no base path", "no remote run id", "no run id"],
+)
+def test_post_run_incomplete_update(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    update: Callable[[DbDocument], DbDocument],
+    detail: str,
+) -> None:
+    """Runs without endpoint or identifiers after forwarding fail with `500`."""
+    upsert = DbDocumentConnector.upsert_fields_in_root_object
+
+    def _upsert(self: DbDocumentConnector, **kwargs: Any) -> DbDocument:
+        """Store the remote identifier, then drop fields of the result.
+
+        Args:
+            self: Database connector.
+            **kwargs: Arguments of `upsert_fields_in_root_object()`.
+
+        Returns:
+            The updated document, changed by `update`.
+        """
+        return update(upsert(self, **kwargs))
+
+    monkeypatch.setattr(DbDocumentConnector, "upsert_fields_in_root_object", _upsert)
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 500
+    assert response.json()["detail"] == detail
+
+
+@pytest.mark.usefixtures("remote_wes")
+def test_post_run_timeout_job(
+    add_overlay: Callable[[str], None],
+    queued: list[dict[str, Any]],
+    token: str,
+) -> None:
+    """With `timeout_job`, the tracking task gets a soft time limit."""
+    from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
+
+    add_overlay("custom:\n  post_runs:\n    timeout_job: 60\n")
+    with TokenClient(init_app(), token) as client:
+        assert _post_run(client, RUN_REQUEST).status_code == 200
+    assert queued[0]["soft_time_limit"] == 60
+
+
+@pytest.mark.usefixtures("queued", "remote_wes")
+def test_post_run_id_taken(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    storage_path: Path,
+) -> None:
+    """Identifiers whose working directory exists are skipped."""
+    ids = iter(["TAKEN1", "FREE01"])
+    monkeypatch.setattr(workflow_runs, "generate_id", lambda **_kwargs: next(ids))
+    (storage_path / "TAKEN1").mkdir(parents=True)
+    assert _post_run(foca_client, RUN_REQUEST).json() == {"run_id": "FREE01"}
+    assert _stored(mongodb)["run_log"]["run_id"] == "FREE01"
+
+
+@pytest.mark.usefixtures("queued", "remote_wes")
+def test_post_run_id_stored(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    storage_path: Path,
+) -> None:
+    """Identifiers of stored runs are skipped, also without a working directory.
+
+    E.g., runs stored by another instance that shares the database, but not
+    the storage. The unique index on `run_log.run_id` rejects the duplicate;
+    its working directory is removed again.
+
+    Args:
+        foca_client: Test client of the app.
+        monkeypatch: Monkeypatch fixture of the test.
+        mongodb: Database of the test (FOCA's fixture).
+        storage_path: Storage directory of the runs.
+    """
+    collection = mongodb[RUN_DB][RUN_COLLECTION]
+    collection.insert_one({"run_log": {"run_id": "TAKEN1", "state": "QUEUED"}})
+    ids = iter(["TAKEN1", "FREE01"])
+    monkeypatch.setattr(workflow_runs, "generate_id", lambda **_kwargs: next(ids))
+    assert _post_run(foca_client, RUN_REQUEST).json() == {"run_id": "FREE01"}
+    assert collection.count_documents({"run_log.run_id": "TAKEN1"}) == 1
+    assert [path.name for path in storage_path.iterdir()] == ["FREE01"]
+
+
+def test_runs_indexes(foca_app: App, mongodb: MongoClient[dict[str, Any]]) -> None:
+    """The app creates the indexes of the runs collection at start.
+
+    Run identifiers are unique; the runs of a user are found by user and
+    newest first (`GET /runs` with authentication). The names are those of
+    the docs (operations, upgrading); the previous index on `run_id` and
+    `task_id` is no longer configured.
+
+    Args:
+        foca_app: The app, which created the indexes.
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    indexes = mongodb[RUN_DB][RUN_COLLECTION].index_information()
+    keys = {
+        name: [(key, int(direction)) for key, direction in index["key"]]
+        for name, index in indexes.items()
+    }
+    assert keys == {
+        "_id_": [("_id", 1)],
+        "run_log.run_id_1": [("run_log.run_id", 1)],
+        "user_id_1__id_-1": [("user_id", 1), ("_id", -1)],
+    }
+    assert indexes["run_log.run_id_1"].get("unique") is True
+    assert not indexes["run_log.run_id_1"].get("sparse")
+
+
+@pytest.mark.usefixtures("queued", "remote_wes")
+def test_post_run_storage_missing(foca_client: Client, storage_path: Path) -> None:
+    """Runs fail with `500` if the storage directory is gone."""
+    storage_path.rmdir()
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Storage is not accessible."
+
+
+@pytest.mark.usefixtures("queued", "remote_wes")
+def test_post_run_ids_unavailable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    storage_path: Path,
+) -> None:
+    """Runs fail with `500` if no identifier can be stored; no directories stay."""
+
+    def _duplicate(*_args: Any, **_kwargs: Any) -> None:
+        """Fail like an identifier that is taken.
+
+        Args:
+            *_args: Positional arguments; ignored.
+            **_kwargs: Keyword arguments; ignored.
+
+        Raises:
+            DuplicateKeyError: Always.
+        """
+        raise DuplicateKeyError("taken")
+
+    monkeypatch.setattr(
+        mongodb[RUN_DB][RUN_COLLECTION].__class__, "insert_one", _duplicate
+    )
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 500
+    assert response.json()["detail"] == "No/few unique run identifiers available."
+    assert not list(storage_path.iterdir())
+
+
+@pytest.mark.usefixtures("queued", "remote_wes")
+def test_list_runs_pages(foca_client: Client) -> None:
+    """The next page token gives the older runs, until they are exhausted."""
+    for _ in range(2):
+        assert _post_run(foca_client, RUN_REQUEST).status_code == 200
+    first = foca_client.get(f"{BASE_PATH}/runs", params={"page_size": 1}).json()
+    second = foca_client.get(
+        f"{BASE_PATH}/runs",
+        params={"page_size": 1, "page_token": first["next_page_token"]},
+    ).json()
+    assert len(second["runs"]) == 1
+    assert second["runs"][0]["run_id"] != first["runs"][0]["run_id"]
+    assert second["next_page_token"] == ""
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "parameter", "code"),
+    [
+        ({"page_size": -1}, "page_size", "too-small"),
+        ({"page_size": 0}, "page_size", "too-small"),
+        ({"page_size": 101}, "page_size", "too-large"),
+        # beyond what MongoDB takes (8-byte integers); Connexion doesn't
+        # check the range of `int64`
+        ({"page_size": 2**63 - 1}, "page_size", "too-large"),
+        ({"page_size": 2**63}, "page_size", "too-large"),
+        ({"page_size": 10**20}, "page_size", "too-large"),
+        ({"page_token": "zzz"}, "page_token", "invalid-value"),
+        ({"page_token": "abcdefghijkl"}, "page_token", "invalid-value"),
+        ({"page_token": "g" * 24}, "page_token", "invalid-value"),
+    ],
+)
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_invalid_page(
+    kwargs: dict[str, Any], parameter: str, code: str
+) -> None:
+    """Page sizes out of range and malformed page tokens are invalid fields.
+
+    Page sizes must be 1 to `custom.list_runs.max_page_size` (100).
+
+    Args:
+        kwargs: Query parameters.
+        parameter: The invalid parameter.
+        code: Code of the field error.
+    """
+    with pytest.raises(InvalidFieldsProblem) as exc_info:
+        WorkflowRuns().list_runs(**kwargs)
+    errors = exc_info.value.field_errors
+    assert [(error.parameter, error.code) for error in errors] == [(parameter, code)]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_max_page_size(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """Pages have up to `custom.list_runs.max_page_size` runs, and no more.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [{"run_log": {"run_id": f"RUN{i:03}", "state": "QUEUED"}} for i in range(3)]
+    )
+    runs = WorkflowRuns()
+    runs.config = runs.config.model_copy(
+        update={"list_runs": ListRuns(default_page_size=1, max_page_size=2)}
+    )
+    page = runs.list_runs(page_size=2)
+    assert [run["run_id"] for run in page["runs"]] == ["RUN002", "RUN001"]
+    assert page["next_page_token"]
+    with pytest.raises(InvalidFieldsProblem) as exc_info:
+        runs.list_runs(page_size=3)
+    assert exc_info.value.field_errors[0].detail == "Must be at most 2."
+    assert len(runs.list_runs()["runs"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("page_size", "detail", "code"),
+    [
+        (0, "Must be at least 1.", "too-small"),
+        (101, "Must be at most 100.", "too-large"),
+    ],
+)
+def test_list_runs_page_size_refused(
+    foca_client: Client, page_size: int, detail: str, code: str
+) -> None:
+    """`GET /runs` answers page sizes out of range with `400`, naming them.
+
+    Args:
+        foca_client: Test client of the app.
+        page_size: Page size out of range (1 to 100 by default).
+        detail: Expected detail of the field error.
+        code: Expected code of the field error.
+    """
+    response = foca_client.get(f"{BASE_PATH}/runs", params={"page_size": page_size})
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {"detail": detail, "parameter": "page_size", "code": code}
+    ]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_unknown_page_token(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """Well-formed page tokens of no run list the runs older than them.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"run_log": {"run_id": "RUN001", "state": "QUEUED"}}
+    )
+    assert WorkflowRuns().list_runs(page_token="f" * 24)["runs"] == [
+        {"run_id": "RUN001", "state": "QUEUED", "tags": {}}
+    ]
+    assert WorkflowRuns().list_runs(page_token="0" * 24)["runs"] == []
+
+
+@pytest.mark.parametrize("page_size", [1, 2, 3, 10])
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_last_page(
+    mongodb: MongoClient[dict[str, Any]], page_size: int
+) -> None:
+    """The last page has no next page token, also if it is full.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        page_size: Number of runs per page.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [{"run_log": {"run_id": f"RUN{i:03}", "state": "QUEUED"}} for i in range(3)]
+    )
+    runs: list[dict[str, Any]] = []
+    page = WorkflowRuns().list_runs(page_size=page_size)
+    runs += page["runs"]
+    while page["next_page_token"]:
+        page = WorkflowRuns().list_runs(
+            page_size=page_size, page_token=page["next_page_token"]
+        )
+        assert page["runs"]
+        runs += page["runs"]
+    assert [run["run_id"] for run in runs] == ["RUN002", "RUN001", "RUN000"]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_last_page_of_user(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """Older runs of other users give no next page token.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {"user_id": "bob", "run_log": {"run_id": "RUNB01", "state": "QUEUED"}},
+            {"user_id": "alice", "run_log": {"run_id": "RUNA01", "state": "QUEUED"}},
+            {"user_id": "alice", "run_log": {"run_id": "RUNA02", "state": "QUEUED"}},
+        ]
+    )
+    first = WorkflowRuns().list_runs(user_id="alice", page_size=1)
+    assert first["next_page_token"]
+    second = WorkflowRuns().list_runs(
+        user_id="alice", page_size=1, page_token=first["next_page_token"]
+    )
+    assert second["runs"] == [{"run_id": "RUNA01", "state": "QUEUED", "tags": {}}]
+    assert second["next_page_token"] == ""
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_empty() -> None:
+    """Without runs, the list and the next page token are empty."""
+    assert WorkflowRuns().list_runs() == {"next_page_token": "", "runs": []}
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_of_user(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """With a user, only the runs of that user are listed."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {"user_id": "alice", "run_log": {"run_id": "RUNA01", "state": "QUEUED"}},
+            {"user_id": "bob", "run_log": {"run_id": "RUNB01", "state": "QUEUED"}},
+        ]
+    )
+    runs = WorkflowRuns().list_runs(user_id="alice")["runs"]
+    assert runs == [{"run_id": "RUNA01", "state": "QUEUED", "tags": {}}]
+
+
+def test_list_runs_summaries(
+    foca_client: Client, mongodb: MongoClient[dict[str, Any]]
+) -> None:
+    """Runs are listed as `RunSummary`, as the served specification defines it.
+
+    Start and end time come from the engine log of the run, and are left out
+    while the WES instance hasn't reported them; tags come from the run
+    request, as an object, and are empty for runs without them.
+
+    Args:
+        foca_client: Test client of the app.
+        mongodb: Database of the test (FOCA's fixture).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {
+                "user_id": OWNER,
+                "run_log": {
+                    "run_id": "DONE01",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": '{"project": "demo"}'},
+                    "run_log": {
+                        "name": "engine",
+                        "start_time": "2026-11-19T10:00:00Z",
+                        "end_time": "2026-11-19T11:00:00Z",
+                    },
+                },
+            },
+            {
+                "user_id": OWNER,
+                "run_log": {
+                    "run_id": "RUNS01",
+                    "state": "RUNNING",
+                    "request": RUN_REQUEST,
+                    "run_log": {"start_time": "2026-11-19T12:00:00Z", "end_time": None},
+                },
+            },
+            {"user_id": OWNER, "run_log": {"run_id": "NEW001", "state": "UNKNOWN"}},
+        ]
+    )
+    response = foca_client.get(f"{BASE_PATH}/runs")
+    assert response.status_code == 200
+    runs = response.json()["runs"]
+    assert runs == [
+        {"run_id": "NEW001", "state": "UNKNOWN", "tags": {}},
+        {
+            "run_id": "RUNS01",
+            "state": "RUNNING",
+            "start_time": "2026-11-19T12:00:00Z",
+            "tags": {},
+        },
+        {
+            "run_id": "DONE01",
+            "state": "COMPLETE",
+            "start_time": "2026-11-19T10:00:00Z",
+            "end_time": "2026-11-19T11:00:00Z",
+            "tags": {"project": "demo"},
+        },
+    ]
+    spec = foca_client.get(f"{BASE_PATH}/openapi.json").json()
+    # Draft 4 resolves `$ref` against the root, which has the components
+    validator = Draft4Validator(
+        {
+            "components": spec["components"],
+            **spec["components"]["schemas"]["RunSummary"],
+        }
+    )
+    for run in runs:
+        validator.validate(run)
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        # stored by versions that didn't check the values of tags
+        (
+            '{"count": 1, "flag": true, "none": null}',
+            {"count": "1", "flag": "true", "none": "null"},
+        ),
+        ('{"nested": {"key": "value"}}', {"nested": '{"key": "value"}'}),
+        # stored by versions that didn't check credentials in URLs
+        (
+            '{"source": "https://user:secret@example.org/data"}',
+            {"source": "https://example.org/data"},
+        ),
+        (None, {}),
+        ("", {}),
+    ],
+)
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_stored_tags(
+    mongodb: MongoClient[dict[str, Any]], tags: str | None, expected: dict[str, str]
+) -> None:
+    """Tags of stored runs are listed as objects of strings, without credentials.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        tags: Tags, as stored.
+        expected: Tags, as listed.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "run_log": {
+                "run_id": "OLD001",
+                "state": "COMPLETE",
+                "request": {**RUN_REQUEST, "tags": tags},
+            }
+        }
+    )
+    assert WorkflowRuns().list_runs()["runs"] == [
+        {"run_id": "OLD001", "state": "COMPLETE", "tags": expected}
+    ]
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        '{"source": "https://[malformed/data"}',
+        "not JSON",
+        '["not", "an", "object"]',
+        "[" * 100_000 + "]" * 100_000,
+        {"stored": "as object"},
+    ],
+)
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_unreadable_tags(
+    mongodb: MongoClient[dict[str, Any]], caplog: pytest.LogCaptureFixture, tags: Any
+) -> None:
+    """Tags that can't be listed are empty, with an error logged.
+
+    The other runs of the list are listed as usual.
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        caplog: Pytest fixture capturing log records.
+        tags: Tags, as stored.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {
+                "run_log": {
+                    "run_id": "BAD001",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": tags},
+                }
+            },
+            {
+                "run_log": {
+                    "run_id": "GOOD01",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": '{"project": "demo"}'},
+                }
+            },
+        ]
+    )
+    # tags of any size (e.g., deeply nested ones, larger than the default
+    # limit) are decoded
+    runs = WorkflowRuns()
+    runs.config = runs.config.model_copy(
+        update={"post_runs": PostRuns(max_tags_size=10**6)}
+    )
+    assert runs.list_runs()["runs"] == [
+        {"run_id": "GOOD01", "state": "COMPLETE", "tags": {"project": "demo"}},
+        {"run_id": "BAD001", "state": "COMPLETE", "tags": {}},
+    ]
+    errors = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert [record.getMessage() for record in errors] == [
+        "Tags of run 'BAD001' can't be listed; returned as {}."
+    ]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_list_runs_tags_too_large(
+    mongodb: MongoClient[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Stored tags larger than `custom.post_runs.max_tags_size` are empty.
+
+    Runs stored before the limit (or with a larger one) are listed with
+    `{}` as tags, with a warning logged; tags at the limit are listed. The
+    size is that of the stored JSON text, in bytes (UTF-8).
+
+    Args:
+        mongodb: Database of the test (FOCA's fixture).
+        caplog: Pytest fixture capturing log records.
+    """
+    at_limit = '{"k": "' + "\u00e9" * 4 + '"}'
+    assert len(at_limit.encode()) == 17
+    over_limit = '{"k": "' + "\u00e9" * 5 + '"}'
+    mongodb[RUN_DB][RUN_COLLECTION].insert_many(
+        [
+            {
+                "run_log": {
+                    "run_id": f"RUN00{i}",
+                    "state": "COMPLETE",
+                    "request": {**RUN_REQUEST, "tags": tags},
+                }
+            }
+            for i, tags in enumerate([at_limit, over_limit])
+        ]
+    )
+    runs = WorkflowRuns()
+    runs.config = runs.config.model_copy(
+        update={"post_runs": PostRuns(max_tags_size=17)}
+    )
+    assert runs.list_runs()["runs"] == [
+        {"run_id": "RUN001", "state": "COMPLETE", "tags": {}},
+        {"run_id": "RUN000", "state": "COMPLETE", "tags": {"k": "\u00e9" * 4}},
+    ]
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert [record.getMessage() for record in warnings] == [
+        "Tags of run 'RUN001' are larger than custom.post_runs.max_tags_size"
+        " (17 bytes); returned as {}."
+    ]
+
+
+def test_get_run_status_not_found(foca_client: Client) -> None:
+    """The status of unknown runs is not found."""
+    assert foca_client.get(f"{BASE_PATH}/runs/UNKNWN/status").status_code == 404
+
+
+def test_get_run_log_without_request(
+    foca_client: Client, mongodb: MongoClient[dict[str, Any]]
+) -> None:
+    """Run logs without run request are returned as stored."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"user_id": OWNER, "run_log": {"run_id": "NOREQ1", "state": "QUEUED"}}
+    )
+    response = foca_client.get(f"{BASE_PATH}/runs/NOREQ1")
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "NOREQ1", "state": "QUEUED", "task_logs": []}
+
+
+@pytest.mark.parametrize(
+    ("owner", "requester"), [("alice", None), (None, None), ("alice", "alice")]
+)
+def test_access_allowed(owner: str | None, requester: str | None) -> None:
+    """The owner, and requests without requester, have access."""
+    WorkflowRuns._check_access_permission("RUN001", owner, requester)
+
+
+@pytest.mark.parametrize(("owner", "requester"), [("alice", "bob"), (None, "bob")])
+def test_access_forbidden(owner: str | None, requester: str | None) -> None:
+    """Requesters other than the owner are refused."""
+    with pytest.raises(Forbidden):
+        WorkflowRuns._check_access_permission("RUN001", owner, requester)
+
+
+@pytest.mark.usefixtures("app_context")
+@pytest.mark.parametrize("operation", ["get_run_log", "get_run_status", "cancel_run"])
+def test_run_of_other_user_forbidden(
+    mongodb: MongoClient[dict[str, Any]], operation: str
+) -> None:
+    """Runs of other users can't be read or canceled."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"user_id": "alice", "run_log": {"run_id": "RUNA01", "state": "QUEUED"}}
+    )
+    with pytest.raises(Forbidden):
+        getattr(WorkflowRuns(), operation)(run_id="RUNA01", user_id="bob")
+
+
+def test_cancel_run_forwarded(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Cancellations are forwarded with the remote run identifier."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "CANCEL", "state": "RUNNING"},
+            "wes_endpoint": {
+                "host": "https://wes.example.org",
+                "base_path": "/ga4gh/wes/v1",
+                "run_id": REMOTE_RUN_ID,
+            },
+        }
+    )
+    canceled: list[str] = []
+    monkeypatch.setattr(
+        WesClient,
+        "cancel_run",
+        lambda _self, run_id, **_kwargs: canceled.append(run_id),
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/CANCEL/cancel")
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "CANCEL"}
+    assert canceled == [REMOTE_RUN_ID]
+
+
+def _fail_cancel(_self: WesClient, run_id: str, **_kwargs: Any) -> None:
+    """Fail on any attempt to forward a cancellation.
+
+    Args:
+        _self: WES client; ignored.
+        run_id: Identifier of the remote run.
+        **_kwargs: Keyword arguments; ignored.
+
+    Raises:
+        AssertionError: Always.
+    """
+    raise AssertionError(f"cancellation of {run_id} forwarded")
+
+
+# Stored endpoint of a run that has been forwarded (a remote run)
+REMOTE_ENDPOINT: dict[str, str] = {
+    "host": "https://wes.example.org",
+    "base_path": "/ga4gh/wes/v1",
+    "run_id": REMOTE_RUN_ID,
+}
+# Stored run logs of unknown state: without, `null` or an invalid state
+UNKNOWN_RUN_LOGS: dict[str, dict[str, Any]] = {
+    "UNKNOWN": {"state": "UNKNOWN"},
+    "no state": {},
+    "null state": {"state": None},
+    "invalid state": {"state": "INVALID"},
+    "unhashable state": {"state": ["RUNNING"]},
+}
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        state
+        for state in State
+        if not state.is_cancelable and state is not State.UNKNOWN
+    ],
+)
+def test_cancel_run_not_cancelable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    state: State,
+) -> None:
+    """Finished runs and runs being canceled get `409`, without contacting the WES."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "DONE01", "state": state.value},
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
+    )
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/DONE01/cancel")
+    assert response.status_code == 409
+    assert response.json() == {
+        "title": "Conflict",
+        "status": 409,
+        "detail": "The run can't be canceled in its current state.",
+    }
+
+
+@pytest.mark.parametrize(
+    "run_log", UNKNOWN_RUN_LOGS.values(), ids=UNKNOWN_RUN_LOGS.keys()
+)
+def test_cancel_run_unknown_without_remote_run(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    run_log: dict[str, Any],
+) -> None:
+    """Runs of unknown state without remote run (not forwarded yet) get `409`."""
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {"user_id": OWNER, "run_log": {"run_id": "NOSTAT", **run_log}}
+    )
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/NOSTAT/cancel")
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "run_log",
+    [
+        *({"state": state.value} for state in State if state.is_cancelable),
+        *UNKNOWN_RUN_LOGS.values(),
+    ],
+    ids=[
+        *(state.value for state in State if state.is_cancelable),
+        *(f"{name} with remote run" for name in UNKNOWN_RUN_LOGS),
+    ],
+)
+def test_cancel_run_cancelable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    run_log: dict[str, Any],
+) -> None:
+    """Cancellations of cancelable runs are forwarded.
+
+    Runs in a cancelable state, and runs of unknown state that have a remote
+    run (e.g., not tracked yet, or reported as `UNKNOWN` by the WES).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "ACTIVE", **run_log},
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
+    )
+    canceled: list[str] = []
+    monkeypatch.setattr(
+        WesClient,
+        "cancel_run",
+        lambda _self, run_id, **_kwargs: canceled.append(run_id),
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/ACTIVE/cancel")
+    assert response.status_code == 200
+    assert canceled == [REMOTE_RUN_ID]
+
+
+def test_cancel_run_system_error_by_prowes(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Runs that proWES set to `SYSTEM_ERROR` (lost track of) can be canceled.
+
+    The cancellation is forwarded; the stored state is kept, as proWES doesn't
+    track the run any longer.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "LOST01", "state": "SYSTEM_ERROR"},
+            "system_error_by_prowes": True,
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
+    )
+    canceled: list[str] = []
+    monkeypatch.setattr(
+        WesClient,
+        "cancel_run",
+        lambda _self, run_id, **_kwargs: canceled.append(run_id),
+    )
+    response = foca_client.post(f"{BASE_PATH}/runs/LOST01/cancel")
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "LOST01"}
+    assert canceled == [REMOTE_RUN_ID]
+    assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"system_error_by_prowes": False, "wes_endpoint": REMOTE_ENDPOINT},
+        {"wes_endpoint": REMOTE_ENDPOINT},
+        {"system_error_by_prowes": None, "wes_endpoint": REMOTE_ENDPOINT},
+        {"system_error_by_prowes": True},
+        {
+            "system_error_by_prowes": True,
+            "wes_endpoint": {**REMOTE_ENDPOINT, "run_id": None},
+        },
+    ],
+    ids=[
+        "reported by WES",
+        "unmarked (earlier versions)",
+        "null mark",
+        "by proWES without endpoint",
+        "by proWES without remote run",
+    ],
+)
+def test_cancel_run_system_error_refused(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    document: dict[str, Any],
+) -> None:
+    """Other `SYSTEM_ERROR`s get `409`, without contacting the WES.
+
+    Those reported by the WES instance, and those of proWES without a remote
+    run (e.g., the run request failed).
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "FAILED", "state": "SYSTEM_ERROR"},
+            **document,
+        }
+    )
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/FAILED/cancel")
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        {},
+        {"wes_endpoint": None},
+        {
+            "wes_endpoint": {
+                "host": "https://wes.example.org",
+                "base_path": "/ga4gh/wes/v1",
+            }
+        },
+        {"wes_endpoint": {**REMOTE_ENDPOINT, "run_id": None}},
+        {"wes_endpoint": {**REMOTE_ENDPOINT, "base_path": None}},
+    ],
+    ids=[
+        "no endpoint",
+        "null endpoint",
+        "no remote run",
+        "null remote run",
+        "null base path",
+    ],
+)
+def test_cancel_run_without_remote_run(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    endpoint: dict[str, Any],
+) -> None:
+    """Cancelable runs without remote run get `500`, without contacting the WES."""
+    document: dict[str, Any] = {
+        "user_id": OWNER,
+        "run_log": {"run_id": "NOREMO", "state": "RUNNING"},
+        **endpoint,
+    }
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(document)
+    monkeypatch.setattr(WesClient, "cancel_run", _fail_cancel)
+    response = foca_client.post(f"{BASE_PATH}/runs/NOREMO/cancel")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "No/few requirements provided for WES endpoint."
+
+
+def test_cancel_run_not_found(foca_client: Client) -> None:
+    """Unknown runs can't be canceled."""
+    assert foca_client.post(f"{BASE_PATH}/runs/UNKNWN/cancel").status_code == 404
+
+
+def _insert_running(mongodb: MongoClient[dict[str, Any]]) -> None:
+    """Store a running run that has a remote run (`RUNNIN`).
+
+    Args:
+        mongodb: Database of the test.
+    """
+    mongodb[RUN_DB][RUN_COLLECTION].insert_one(
+        {
+            "user_id": OWNER,
+            "run_log": {"run_id": "RUNNIN", "state": "RUNNING"},
+            "wes_endpoint": REMOTE_ENDPOINT,
+        }
+    )
+
+
+# Problem details of errors of the remote WES that proWES passes on
+PASSED_ON_PROBLEMS: dict[int, dict[str, Any]] = {
+    400: {"title": "Bad request", "detail": "The request is malformed."},
+    401: {"title": "Unauthorized", "detail": "The request is unauthorized."},
+    403: {
+        "title": "Forbidden",
+        "detail": "The requester is not authorized to perform this action.",
+    },
+}
+# Problem details of the other errors of the remote WES
+REMOTE_REFUSED: dict[str, Any] = {
+    "title": "Internal server error",
+    "detail": "The remote WES service answered with an error.",
+    "status": 500,
+}
+
+
+def _answer(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: Any
+) -> list[tuple[str, str]]:
+    """Let the remote WES answer every request with a canned HTTP response.
+
+    Only sending is replaced: the WES client reads the response.
+
+    Args:
+        monkeypatch: Monkeypatch fixture of the test.
+        status: HTTP status of the response.
+        body: Body of the response, as is if bytes, else encoded as JSON.
+
+    Returns:
+        Method and path of the requests sent, in order (filled as they are
+        sent).
+    """
+    requests: list[tuple[str, str]] = []
+    content = body if isinstance(body, bytes) else dumps(body).encode()
+
+    def _send(
+        _self: WesClient, method: str, path: str, *_args: Any, **_kwargs: Any
+    ) -> HttpResponse:
+        """Record a request and answer it.
+
+        Args:
+            _self: WES client; ignored.
+            method: HTTP method.
+            path: Path of the endpoint.
+            *_args: Further arguments; ignored.
+            **_kwargs: Further keyword arguments; ignored.
+
+        Returns:
+            Canned response.
+        """
+        requests.append((method, path))
+        return HttpResponse(status=status, content=content)
+
+    monkeypatch.setattr(WesClient, "_send", _send)
+    return requests
+
+
+# Bodies of error responses of WES instances: WES `ErrorResponse`, problem
+# details (e.g., of FOCA-based services), no JSON, and bodies that contradict
+# the status
+ERROR_BODIES: dict[str, Any] = {
+    "WES error": {"msg": "refused", "status_code": 404},
+    "problem details": {"title": "Not found", "status": 404, "detail": "x"},
+    "no JSON": b"<html>Bad gateway</html>",
+    "run identifier": {"run_id": REMOTE_RUN_ID},
+    "other WES error": {"msg": "refused", "status_code": 400},
+}
+
+
+@pytest.mark.parametrize(
+    ("remote", "expected"),
+    [
+        *(
+            (status, {**problem, "status": status})
+            for status, problem in PASSED_ON_PROBLEMS.items()
+        ),
+        *((status, REMOTE_REFUSED) for status in (404, 409, 500, 502, 503)),
+    ],
+)
+@pytest.mark.parametrize("body", ERROR_BODIES.values(), ids=ERROR_BODIES.keys())
+def test_cancel_run_remote_error(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    remote: int,
+    expected: dict[str, Any],
+    body: Any,
+) -> None:
+    """Errors of the remote WES become errors of proWES, not `200`.
+
+    By the HTTP status of the response, whatever its body: `400`, `401` and
+    `403` are passed on (as for `POST /runs`), other errors (e.g., the remote
+    run is unknown or has finished there) become `500`; the stored state is
+    kept.
+    """
+    _insert_running(mongodb)
+    requests = _answer(monkeypatch, remote, body)
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.status_code == expected["status"]
+    assert response.json() == expected
+    assert requests == [("POST", f"/runs/{REMOTE_RUN_ID}/cancel")]
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"unexpected": True},
+        ["not", "an", "object"],
+        {"run_id": 1},
+        {"msg": "refused", "status_code": 404},
+    ],
+    ids=["unknown object", "no object", "invalid run identifier", "WES error"],
+)
+def test_cancel_run_remote_invalid_response(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    body: Any,
+) -> None:
+    """Successful responses without run identifier get `500` with own details."""
+    _insert_running(mongodb)
+    _answer(monkeypatch, 200, body)
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.json() == {
+        "title": "Internal server error",
+        "detail": "The remote WES service sent an invalid response.",
+        "status": 500,
+    }
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        EngineUnavailable("unavailable"),
+        EngineRequestNotSent("TLS handshake failed", reason="tls_error"),
+        EngineOutcomeUnknown("response timed out", reason="read_timeout"),
+    ],
+    ids=["unavailable", "not sent", "outcome unknown"],
+)
+def test_cancel_run_remote_unavailable(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    error: EngineUnavailable,
+) -> None:
+    """Cancellations that don't reach the remote WES get `500`, the state is kept."""
+    _insert_running(mongodb)
+
+    def _unavailable(*_args: Any, **_kwargs: Any) -> None:
+        """Fail like an unreachable WES.
+
+        Args:
+            *_args: Positional arguments; ignored.
+            **_kwargs: Keyword arguments; ignored.
+
+        Raises:
+            EngineUnavailable: Always.
+        """
+        raise error
+
+    monkeypatch.setattr(WesClient, "_send", _unavailable)
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.json() == {
+        "title": "Internal server error",
+        "detail": "Could not reach remote WES service.",
+        "status": 500,
+    }
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+def test_cancel_run_remote_no_json(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+) -> None:
+    """Successful responses that are no JSON leave the outcome unknown (`500`)."""
+    _insert_running(mongodb)
+    _answer(monkeypatch, 200, b"canceled")
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.json()["detail"] == "Could not reach remote WES service."
+    assert _stored(mongodb)["run_log"]["state"] == "RUNNING"
+
+
+@pytest.mark.parametrize("status", [200, 202])
+def test_cancel_run_remote_accepted(
+    foca_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    mongodb: MongoClient[dict[str, Any]],
+    status: int,
+) -> None:
+    """Cancellations that the remote WES accepts get `200` with the run's own ID."""
+    _insert_running(mongodb)
+    _answer(monkeypatch, status, {"run_id": REMOTE_RUN_ID})
+    response = foca_client.post(f"{BASE_PATH}/runs/RUNNIN/cancel")
+    assert response.status_code == 200
+    assert response.json() == {"run_id": "RUNNIN"}

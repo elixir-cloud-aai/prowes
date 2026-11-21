@@ -77,13 +77,12 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["pro_wes"]
-# The app factory, which needs MongoDB; the image test in CI starts it
-omit = ["pro_wes/app.py"]
 
-# 100% coverage is the goal (#81); reported in CI without a threshold until
-# then
+# All code is covered by the unit tests (#81); `coverage report` fails
+# below 100%
 [tool.coverage.report]
 show_missing = true
+fail_under = 100
 
 [project]
 name = "pro-wes"
@@ -125,10 +124,13 @@ dev = [
     "ast-grep-cli>=0.51",
     "celery-types>=0.20.0",
     "coverage>=7.16",
+    # Validates error responses against the served specification (tests)
+    "jsonschema>=4.26",
     "mongomock>=4.3",
     "mypy>=2.4",
     "pre-commit>=4.6",
     "pytest>=9.1",
+    "types-jsonschema>=4.26",
     "types-PyYAML>=6.0.12",
     "types-requests>=2.33",
     # Locks the dependencies (`uv lock`, checked by pre-commit); also the

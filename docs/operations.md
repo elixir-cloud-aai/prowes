@@ -25,11 +25,64 @@ For each forwarded run, the app starts a Celery task that polls the state of
 the run at the WES instance every `custom.post_runs.polling_wait` seconds
 (default: 3). If the WES instance doesn't answer with a valid state
 `custom.post_runs.polling_attempts` times in a row (default: 100), the run
-gets the state `SYSTEM_ERROR`. Once the run has finished, the worker stores
-the outputs, the engine log and the task logs of the remote run log, each if
-it is valid (invalid ones, and run logs that can't be read, are logged as
-warnings); the run keeps its own identifier and state. Tasks run without a
-time limit unless `custom.post_runs.timeout_job` is set (in seconds).
+gets the state `SYSTEM_ERROR`. Once the run has a final state (see [Run
+states](api.md#run-states)), the worker stores the outputs, the engine log
+and the task logs of the remote run log, each if it is valid (invalid ones,
+and run logs that can't be read, are logged as warnings); the run keeps its
+own identifier and state. Tasks run without a time limit unless
+`custom.post_runs.timeout_job` is set (in seconds); runs whose tracking
+takes longer get the state `SYSTEM_ERROR`, too, unless they have finished
+already (e.g., the limit is hit while the final run log is read). Runs
+that proWES sets to `SYSTEM_ERROR` this way may still run at the WES
+instance and can still be canceled (see [Run states](api.md#run-states)).
+
+## Failed requests to WES instances
+
+Requests to WES instances that fail answer `500 Internal Server Error`
+("Could not reach remote WES service"; `POST /runs` also sets the run to
+`SYSTEM_ERROR`), and the worker counts them as failed polls. Besides WES
+instances that are down, causes are the limits of the guarded HTTP client
+(see [WES instances](configuration.md#wes-instances)): redirects, responses
+larger than `custom.wes.max_response_size` (logged as errors), timeouts,
+`http` URLs and private addresses where they aren't allowed, and
+certificates that `REQUESTS_CA_BUNDLE` or the public certificate
+authorities don't verify. The worker logs failed polls as warnings, with
+the error: `EngineOutcomeUnknown` if the WES instance may have got the
+request, `EngineRequestNotSent` if it certainly didn't, each caused by the
+error of the guarded client that names the cause. After
+`EngineOutcomeUnknown` on `POST /runs` (e.g., a timeout, a redirect or an
+answer that is no JSON), the run is `SYSTEM_ERROR` in proWES, but the WES
+instance may still have created and run it.
+
+## Database indexes
+
+The app creates the indexes of the collection `runs` at start if they are
+missing (`db.dbs.runStore.collections.runs.indexes` in
+[`pro_wes/config.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/pro_wes/config.yaml)):
+
+| Index | Keys | Purpose |
+| --- | --- | --- |
+| `run_log.run_id_1` | `run_log.run_id` (unique, not sparse) | Run identifiers are unique, also across instances of the app that share the database but not the storage: `POST /runs` tries another identifier if one is taken |
+| `user_id_1__id_-1` | `user_id`, `_id` descending | `GET /runs` with authentication finds the runs of the caller, newest first, without reading the runs of other users |
+
+Existing indexes are kept, also ones that are no longer configured (see
+[Upgrading](upgrading.md#database-indexes)). The app doesn't start if a
+configured index can't be created: e.g., if stored runs share an identifier
+(as the index is not sparse, runs without `run_log.run_id` count as runs of
+the same identifier), or the database user may not create indexes. On large
+collections, the index builds make the first start take longer.
+
+With `db.create_indexes_on_startup: false` (FOCA; default: `true`), the app
+creates no indexes: create them by hand before the first start, e.g., in
+`mongosh`, connected to the database of proWES (default: `runStore`):
+
+```javascript
+db.runs.createIndex({ "run_log.run_id": 1 }, { unique: true })
+db.runs.createIndex({ user_id: 1, _id: -1 })
+```
+
+Without the unique index, run identifiers are unique only by the working
+directory of each run in the storage.
 
 ## Logs
 

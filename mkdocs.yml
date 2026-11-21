@@ -90,6 +90,7 @@ nav:
   - Getting started: getting-started.md
   - Configuration: configuration.md
   - API: api.md
+  - WES versions: wes-versions.md
   - Access control: access-control.md
   - Deployment: deployment.md
   - Operations: operations.md

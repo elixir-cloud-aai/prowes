@@ -1,14 +1,11 @@
-"""Tests of the database connector and the WES client's run logs."""
+"""Tests of the database connector and of setting run states."""
 
 from typing import Any
 
 import mongomock
 from pymongo.errors import PyMongoError
 import pytest
-import requests
 
-from pro_wes.exceptions import EngineUnavailable
-from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.tasks.utils import set_run_state
 from pro_wes.utils.db import DbDocumentConnector
 
@@ -74,6 +71,27 @@ def test_update_run_state_unknown(collection: Any) -> None:
         connector.update_run_state(state="OTHER")
 
 
+def test_set_system_error(collection: Any) -> None:
+    """`SYSTEM_ERROR`s that proWES itself sets are marked as such."""
+    connector = DbDocumentConnector(collection=collection, task_id=TASK_ID)
+    connector.set_system_error()
+    document = collection.find_one({"task_id": TASK_ID})
+    assert document["run_log"]["state"] == "SYSTEM_ERROR"
+    assert document["system_error_by_prowes"] is True
+    assert connector.get_document().system_error_by_prowes is True
+
+
+@pytest.mark.parametrize("state", ["RUNNING", "SYSTEM_ERROR"])
+def test_update_run_state_clears_system_error(collection: Any, state: str) -> None:
+    """States reported by the WES instance clear the mark of proWES's errors."""
+    connector = DbDocumentConnector(collection=collection, task_id=TASK_ID)
+    connector.set_system_error()
+    connector.update_run_state(state=state)
+    document = collection.find_one({"task_id": TASK_ID})
+    assert document["run_log"]["state"] == state
+    assert document["system_error_by_prowes"] is False
+
+
 def test_set_run_state_database_error(
     collection: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -94,47 +112,3 @@ def test_set_run_state_database_error(
     monkeypatch.setattr(DbDocumentConnector, "update_run_state", _fail)
     set_run_state(collection=collection, run_id="RUN001", task_id=TASK_ID)
     assert "Could not update state" in caplog.text
-
-
-class _Response:
-    """Response of the fake session.
-
-    Args:
-        body: JSON body, or an exception to raise when it is read.
-    """
-
-    def __init__(self, body: Any) -> None:
-        """Create the response."""
-        self.body = body
-
-    def json(self) -> Any:
-        """Get the JSON body.
-
-        Returns:
-            JSON body.
-
-        Raises:
-            Exception: The body is an exception.
-        """
-        if isinstance(self.body, Exception):
-            raise self.body
-        return self.body
-
-
-def test_get_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run logs are returned as sent."""
-    client = WesClient(host="https://wes.example.org")
-    log = {"run_id": "R1", "state": "WEIRD", "extra": 1}
-    monkeypatch.setattr(client.session, "get", lambda *_a, **_k: _Response(log))
-    assert client.get_run(run_id="R1") == log
-
-
-@pytest.mark.parametrize(
-    "body", [["not", "an", "object"], ValueError("no JSON"), requests.ConnectionError()]
-)
-def test_get_run_unavailable(monkeypatch: pytest.MonkeyPatch, body: Any) -> None:
-    """Run logs that aren't JSON objects mean the WES is unavailable."""
-    client = WesClient(host="https://wes.example.org")
-    monkeypatch.setattr(client.session, "get", lambda *_a, **_k: _Response(body))
-    with pytest.raises(EngineUnavailable):
-        client.get_run(run_id="R1")

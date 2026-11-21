@@ -25,11 +25,15 @@ HTTP API, see [API](api.md) and the Swagger UI of a deployment.
 
 ::: pro_wes.ga4gh.wes.models
 
-::: pro_wes.ga4gh.wes.states
-
 ::: pro_wes.ga4gh.service_info.models
 
-## WES client
+## WES instances and client
+
+::: pro_wes.ga4gh.wes.backends
+
+::: pro_wes.ga4gh.wes.routing
+
+::: pro_wes.ga4gh.wes.versions
 
 ::: pro_wes.ga4gh.wes.client_wes
 
@@ -46,6 +50,8 @@ HTTP API, see [API](api.md) and the Swagger UI of a deployment.
 ::: pro_wes.utils.db
 
 ::: pro_wes.utils.db_names
+
+::: pro_wes.utils.config
 
 ## Errors
 
