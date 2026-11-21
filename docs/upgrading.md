@@ -345,6 +345,23 @@ writable too, run `chown -R 1000:1000 /data` as root on the volume (e.g.,
 from a debug pod). The image now has a health check (the Swagger UI) and a
 default command (Gunicorn, see above).
 
+### Image tags
+
+Images of commits on `dev` are tagged `dev` and `sha-<commit>` (the full
+commit hash), and are scanned, signed and attested (see [Verifying
+images](operations.md#verifying-images)); `latest` and tags by date
+(`YYYYMMDD`) are no longer pushed for them. `latest` keeps the last image
+pushed that way until the first release
+([#116](https://github.com/elixir-cloud-aai/prowes/issues/116)), from which
+on it points to the newest release. Deployments that pull `latest` to follow
+`dev` (e.g., releases of the legacy Helm chart, whose default was
+`elixircloud/prowes:latest`, with `imagePullPolicy: Always`) need to pull
+`dev` instead (the default of the rebuilt chart, see [Helm
+chart](#helm-chart-breaking)), or better an existing `sha-<commit>` tag,
+which never moves (commits that a newer push overtook before their image was
+published have none). The tag `dev` exists from the first commit published
+this way.
+
 ### Docker Compose
 
 [`docker-compose.yaml`](https://github.com/elixir-cloud-aai/prowes/blob/dev/docker-compose.yaml)
