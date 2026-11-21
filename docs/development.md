@@ -318,6 +318,38 @@ Where Sapporo 2.4.2 differs from WES 1.1.0, the test accommodates it:
   which can't choose the engine: its entry has the label `wes.version:
   "1.1"` (`tests/integration/config.yaml`).
 
+### WES implementations not covered
+
+These WES implementations were checked for the integration test but can't
+run in it yet, in CI or locally. We don't test interoperability with them for
+now; they can join the test once the gaps listed here are closed upstream.
+
+[metis](https://github.com/JaeAeich/metis), checked at commit
+[`676c442`](https://github.com/JaeAeich/metis/commit/676c442ec36fac15bf635f0c589ddb720617ba53)
+(the head of its `dev` branch on 21 November 2026), with its API,
+PostgreSQL, Valkey and NATS as in its `docker-compose.yaml`:
+
+- It accepts run requests (`POST /runs`) as JSON only. WES 1.1.0 specifies
+  `multipart/form-data`, which proWES sends: metis rejects such requests,
+  and URL-encoded forms, with `400` (`Expected request with Content-Type:
+  application/json`). So proWES can't create runs there, and none of the
+  checks of the test (run states, run logs, run lists, cancellation) can
+  run ([metis#23](https://github.com/JaeAeich/metis/issues/23)).
+- Its service info has none of the fields of the GA4GH service info (`id`,
+  `name`, `type`, `organization`, `version`), only the WES fields. It
+  reports `supported_wes_versions: ["1.1.0"]` but no `type.version`, so
+  proWES counts it as WES 1.0 (see [WES versions](wes-versions.md)): an
+  entry for it needs the label `wes.version: "1.1"`, as Sapporo's has
+  ([metis#24](https://github.com/JaeAeich/metis/issues/24)).
+- It has no releases and publishes no images, and its repository has no
+  `Cargo.lock` (Git ignores it). Its Dockerfiles copy the lock file, so
+  its images can't be built from a checkout of a commit, and the versions
+  of its dependencies aren't pinned
+  ([metis#25](https://github.com/JaeAeich/metis/issues/25)).
+- It runs Nextflow workflows only (workflow type `NFL`, version `DSL2`,
+  engine `Nextflow`), so it needs workflows of its own, not the CWL
+  workflows of the test.
+
 ## Dependencies
 
 After changing dependencies in `pyproject.toml`, update the lock with `uv
