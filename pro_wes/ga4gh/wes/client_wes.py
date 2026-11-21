@@ -102,10 +102,11 @@ they are tried again (not, e.g., `response_too_large` or `redirect`, which
 another try wouldn't change)."""
 
 NOT_RETRIED_REASONS = frozenset(
-    {"not_public", "invalid_url", "invalid_request", "invalid_header"}
+    {"not_public", "invalid_url", "invalid_request", "invalid_header", "local_error"}
 )
 """Reasons of requests not sent that another try wouldn't change (the host
-has no allowed address, the URL or the request is invalid)."""
+has no allowed address, the URL or the request is invalid, or proWES failed
+before sending, e.g., to read the CA bundle)."""
 
 _sleep = time.sleep
 """Function that waits between two tries (replaced in tests)."""
@@ -782,7 +783,8 @@ class WesClient:
             # e.g., a CA bundle that doesn't exist (`cert_verify()` of
             # requests), before anything is sent
             raise EngineRequestNotSent(
-                f"{method} {url} not sent: {type(exc).__name__}"
+                f"{method} {url} not sent: {type(exc).__name__}",
+                reason="local_error",
             ) from exc
         # the WES instance (or a proxy in front of it) got the request and may
         # have processed it, but sent no usable answer

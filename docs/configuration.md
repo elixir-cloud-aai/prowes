@@ -222,7 +222,8 @@ long as another try can't make the WES instance do anything twice:
   also not after `502`, `503` and `504`, which gateways in front of a WES
   instance may send after it got the request.
 - Failures that another try wouldn't change are not tried again: hosts
-  without allowed addresses, invalid URLs, redirects, responses larger
+  without allowed addresses, invalid URLs, local errors (e.g., a CA bundle
+  that can't be read), redirects, responses larger
   than `custom.wes.max_response_size`, and other answers (e.g., `404` or
   `500`).
 
@@ -230,7 +231,10 @@ Before the second try, proWES waits `custom.wes.retry.backoff` seconds
 (default: 1), and twice as long before each further one, but at most
 `custom.wes.retry.max_backoff` seconds (default: 10); each try has the
 full timeout of its request (see [WES instances](#wes-instances)), and each
-retry is logged as a warning. Reads of the service info for the WES version
+retry is logged as a warning. Only new runs have a limit as a whole
+(`custom.post_runs.forward_timeout`, below): other requests may take up to
+`attempts` times their timeout plus the waits, so keep `attempts` and
+`max_backoff` small. Reads of the service info for the WES version
 are tried once: their failures are cached (see [WES
 versions](#wes-versions)).
 
@@ -244,8 +248,10 @@ instances](operations.md#failed-requests-to-wes-instances)). Once
 the first try, no further try or WES instance starts (the first try always
 does); a try that started may still take its timeout
 (`custom.post_runs.timeout_post`), and the next WES instance's service info
-may be read first (within 5 seconds), so `POST /runs` takes up to about the
-sum of these (65 seconds by default): keep the timeouts of proxies in front
+may be read first (within 5 seconds, as for the first WES instance before
+`forward_timeout` starts), so `POST /runs` takes up to about
+`forward_timeout` plus `timeout_post` plus 10 seconds (70 seconds by
+default): keep the timeouts of proxies in front
 of proWES longer.
 
 ```yaml

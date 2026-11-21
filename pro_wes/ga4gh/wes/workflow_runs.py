@@ -439,7 +439,7 @@ class WorkflowRuns:
                 )
             except EngineRequestNotSent as exc:
                 tried.add(backend.url)
-                following = self._next_backend(form_fields, tried, deadline)
+                following = self._next_backend(run_id, form_fields, tried, deadline)
                 if following is None:
                     db_connector.set_system_error()
                     raise
@@ -471,11 +471,15 @@ class WorkflowRuns:
 
     @staticmethod
     def _next_backend(
-        form_fields: dict[str, Any], tried: set[str], deadline: float
+        run_id: str | None,
+        form_fields: dict[str, Any],
+        tried: set[str],
+        deadline: float,
     ) -> SelectedBackend | None:
         """Choose the next WES instance for a run that none got so far.
 
         Args:
+            run_id: Identifier of the run, for logs.
             form_fields: Form fields of the run request, in the canonical WES
                 version.
             tried: Base URLs of the WES instances tried.
@@ -488,14 +492,17 @@ class WorkflowRuns:
         """
         if time.monotonic() >= deadline:
             logger.warning(
-                "No further WES instance tried: custom.post_runs.forward_timeout"
-                " passed."
+                "No further WES instance tried for workflow run '%s':"
+                " custom.post_runs.forward_timeout passed",
+                run_id,
             )
             return None
         try:
             return select_backend(form_fields, exclude=tried)
         except (InvalidFieldsProblem, NoBackendAvailable) as exc:
-            logger.warning("No further WES instance can run the run: %s", exc)
+            logger.warning(
+                "No further WES instance can run workflow run '%s': %s", run_id, exc
+            )
             return None
 
     def list_runs(

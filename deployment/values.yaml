@@ -263,7 +263,9 @@ prowes:
     timeout: 30
     # Seconds that workers get to finish requests on shutdown (after
     # `preStopSleepSeconds`); the pod's termination grace period is both
-    # plus 10 seconds
+    # plus 10 seconds. `POST /runs` may take longer (see docs/deployment.md,
+    # Request timeouts): raise it, e.g., to 70, so that runs being forwarded
+    # on shutdown are not cut off
     gracefulTimeout: 20
     # Seconds after which idle keep-alive connections are closed (0: no
     # keep-alive); keep it longer than the upstream keep-alive timeout of the
