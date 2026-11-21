@@ -226,6 +226,19 @@ def _string_values(decoded: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _forward_timeout_passed(run_id: str | None) -> None:
+    """Log that no further WES instance is tried for a run.
+
+    Args:
+        run_id: Identifier of the run.
+    """
+    logger.warning(
+        "No further WES instance tried for workflow run '%s':"
+        " custom.post_runs.forward_timeout passed",
+        run_id,
+    )
+
+
 class WorkflowRuns:
     """Class for WES API server-side controller methods.
 
@@ -488,22 +501,23 @@ class WorkflowRuns:
 
         Returns:
             The first WES instance not tried yet that can run the run, if
-            any, and time is left.
+            any, and time is left before and after choosing it (which may
+            read service infos).
         """
         if time.monotonic() >= deadline:
-            logger.warning(
-                "No further WES instance tried for workflow run '%s':"
-                " custom.post_runs.forward_timeout passed",
-                run_id,
-            )
+            _forward_timeout_passed(run_id)
             return None
         try:
-            return select_backend(form_fields, exclude=tried)
+            selected = select_backend(form_fields, exclude=tried)
         except (InvalidFieldsProblem, NoBackendAvailable) as exc:
             logger.warning(
                 "No further WES instance can run workflow run '%s': %s", run_id, exc
             )
             return None
+        if time.monotonic() >= deadline:
+            _forward_timeout_passed(run_id)
+            return None
+        return selected
 
     def list_runs(
         self,

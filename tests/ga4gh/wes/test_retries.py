@@ -438,6 +438,19 @@ def test_no_try_after_deadline(
 
 
 @pytest.mark.usefixtures("foca_app")
+def test_no_try_after_late_wait(
+    monkeypatch: pytest.MonkeyPatch, waits: list[float]
+) -> None:
+    """No retry starts if its wait ended after the deadline (e.g., late)."""
+    _fake_clock(monkeypatch, client_wes, 0, 2)
+    http = ScriptedHttp(Answer(error=NOT_SENT))
+    with pytest.raises(EngineRequestNotSent):
+        _client(http, RETRY).post_run(form_data=FORM_DATA, timeout=1, deadline=1.5)
+    assert len(http.calls) == 1
+    assert waits == [1]
+
+
+@pytest.mark.usefixtures("foca_app")
 def test_service_info_probe_not_retried(
     monkeypatch: pytest.MonkeyPatch, waits: list[float]
 ) -> None:
@@ -738,27 +751,31 @@ def test_failover_only_to_eligible(
 
 
 @pytest.mark.parametrize(
-    ("elapsed", "hosts"),
-    [(29.9, [BACKEND_URL, SECOND_URL]), (30, [BACKEND_URL])],
-    ids=["before", "passed"],
+    ("times", "hosts"),
+    [
+        ((0, 29.9, 29.9, 30), [BACKEND_URL, SECOND_URL]),
+        ((0, 30), [BACKEND_URL]),
+        ((0, 10, 30), [BACKEND_URL]),
+    ],
+    ids=["before", "passed", "passed while choosing"],
 )
 def test_failover_within_forward_timeout(
     monkeypatch: pytest.MonkeyPatch,
     three_backends: Callable[[str], TokenClient],
     remotes: dict[str, Any],
     mongodb: MongoClient[dict[str, Any]],
-    elapsed: float,
+    times: tuple[float, ...],
     hosts: list[str],
 ) -> None:
     """No further WES instance is tried once the forward timeout passed.
 
-    The run starts at 0 and fails at the first WES instance after
-    `elapsed` seconds (`forward_timeout: 30`).
+    The clock reads `times` in turn (`forward_timeout: 30`): when the run
+    starts, and before and after choosing each next WES instance.
     """
     remotes["outcomes"][BACKEND_URL] = EngineRequestNotSent("refused")
     remotes["outcomes"][SECOND_URL] = EngineRequestNotSent("refused")
     remotes["outcomes"][THIRD_URL] = EngineRequestNotSent("refused")
-    _fake_clock(monkeypatch, workflow_runs, 0, elapsed, 30)
+    _fake_clock(monkeypatch, workflow_runs, *times)
     with three_backends("  post_runs:\n    forward_timeout: 30\n") as client:
         response = _post_run(client)
     assert response.status_code == 500

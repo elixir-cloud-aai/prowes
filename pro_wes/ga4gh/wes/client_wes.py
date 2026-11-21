@@ -703,7 +703,8 @@ class WesClient:
         Returns:
             Whether there is a next try: tries are left (`retry.attempts`),
             and the wait (`retry.backoff`, doubled for each further try, up
-            to `retry.max_backoff`) ends before the deadline.
+            to `retry.max_backoff`) ended before the deadline (checked
+            before and after it).
         """
         if attempt >= self.retry.attempts:
             return False
@@ -721,7 +722,8 @@ class WesClient:
             self.retry.attempts,
         )
         _sleep(wait)
-        return True
+        # e.g., after a sleep that ended late
+        return deadline is None or time.monotonic() < deadline
 
     def _send_once(
         self,
