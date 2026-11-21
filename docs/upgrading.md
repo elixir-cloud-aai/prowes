@@ -422,11 +422,13 @@ proWES serves WES 1.1.0 instead of 1.0.1 (see [API](api.md#wes-110)):
 - `workflow_engine` and `workflow_engine_version` in `POST /runs` are
   stored and forwarded to WES instances of WES 1.1 only (see [WES
   versions](wes-versions.md#routing)); empty fields choose no engine, as
-  with WES 1.0.1, whose specification didn't have them. Label WES instances
-  of WES 1.1 whose service info reports no version of the WES
-  specification (`wes.version: "1.1"`), or runs that choose the engine
-  are refused with `400 Bad Request` if no other WES instance of WES 1.1
-  is configured.
+  with WES 1.0.1, whose specification didn't have them. If a WES instance
+  of WES 1.1 reports no version of the WES specification in its service
+  info (e.g., Sapporo), label it `wes.version: "1.1"`: it counts as WES
+  1.0 otherwise, and runs that choose the engine are refused if no other
+  WES instance of WES 1.1 is configured (`400 Bad Request`, or `503
+  Service Unavailable` while a WES instance hasn't answered yet, or if its
+  version changed meanwhile).
 - Run and task logs keep the `system_logs` of the WES instance (runs
   tracked from now on).
 - Runs that the WES instance preempts get the final state `PREEMPTED`

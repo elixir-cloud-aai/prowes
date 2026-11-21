@@ -320,8 +320,9 @@ def select_backend(request: dict[str, Any]) -> SelectedBackend:
             (`400`), naming the fields.
         pro_wes.exceptions.NoBackendAvailable: The list has no backend
             (e.g., none is configured, or the registries list none yet), or
-            none that can run the request, but some didn't answer so far
-            (`503`, as retrying may help).
+            none that can run the request, but some didn't answer so far,
+            or the versions of all eligible ones changed since they were
+            found eligible (`503`, as retrying may help).
     """
     backend_list = get_backend_list()
     backends = backend_list.expand()
@@ -346,10 +347,24 @@ def select_backend(request: dict[str, Any]) -> SelectedBackend:
                 ]
             )
         raise NoBackendAvailable("No available WES instance can run this run unchanged")
-    backend = eligible[0]
-    # read for the WES instance that the run goes to, unless cached
-    return SelectedBackend(
-        url=backend.url,
-        api_path=api_path(backend, backend_list),
-        version=backend_version(backend),
-    )
+    if not incompatibilities(request):
+        backend = eligible[0]
+        # read for the WES instance that the run goes to, unless cached
+        return SelectedBackend(
+            url=backend.url,
+            api_path=api_path(backend, backend_list),
+            version=backend_version(backend),
+        )
+    # for runs that not all versions can express, the version that made the
+    # WES instance eligible (not read again), so that the run isn't forwarded
+    # in a version that drops what it chose; one whose version changed
+    # meanwhile (e.g., read by another request) is skipped
+    for backend in eligible:
+        version = backend_version(backend, probe=False)
+        if not incompatibilities(request, version):
+            return SelectedBackend(
+                url=backend.url,
+                api_path=api_path(backend, backend_list),
+                version=version,
+            )
+    raise NoBackendAvailable("No available WES instance can run this run unchanged")

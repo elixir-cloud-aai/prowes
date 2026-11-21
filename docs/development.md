@@ -306,8 +306,8 @@ Where Sapporo 2.4.2 differs from WES 1.1.0, the test accommodates it:
 
 - Sapporo requires the field `workflow_engine` in run requests, which
   WES 1.1.0 makes optional: the test sends `workflow_engine=cwltool`, which
-  proWES forwards. It checks that Sapporo rejects runs without the field,
-  so that its runs show that proWES forwards it.
+  proWES forwards. It also checks that Sapporo rejects runs without the
+  field: so each run that Sapporo accepts proves that proWES forwarded it.
 - Its run logs list the outputs as an array of files, not as an object:
   proWES leaves them out of the run log, as it does with any invalid field,
   so the test checks the output file in the engine's standard output

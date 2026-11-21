@@ -156,7 +156,10 @@ class RunRequest(BaseModel):
         """Ensure that a workflow engine version comes with its engine.
 
         The WES specification requires `workflow_engine` if
-        `workflow_engine_version` is set.
+        `workflow_engine_version` is set. Requests of `POST /runs` are
+        checked before, with an error that points at the field; this check
+        keeps the model consistent wherever else it is built (e.g., the
+        form data of `WesClient.post_run`).
 
         Returns:
             The validated model.

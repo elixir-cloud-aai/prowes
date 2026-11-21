@@ -403,6 +403,45 @@ def test_post_run_workflow_engine_wes_10(
     assert not queued
 
 
+def test_post_run_workflow_engine_skips_wes_10(
+    add_overlay: Callable[[str], None],
+    mongodb: MongoClient[dict[str, Any]],
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+    token: str,
+) -> None:
+    """Runs that choose the engine go to the first WES instance of WES 1.1.
+
+    Other runs go to the first WES instance of the list, of WES 1.0 here.
+    """
+    from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
+
+    url_11 = "https://wes11.example.org"
+    add_overlay(
+        "custom:\n  wes:\n    backends:\n"
+        f"      - type: ga4gh-wes\n        url: {BACKEND_URL}\n"
+        '        labels: {wes.version: "1.0"}\n'
+        f"      - type: ga4gh-wes\n        url: {url_11}\n"
+        '        labels: {wes.version: "1.1"}\n'
+    )
+    with TokenClient(init_app(), token) as client:
+        plain = _post_run(client, RUN_REQUEST)
+        engine = _post_run(client, {**RUN_REQUEST, "workflow_engine": "cwltool"})
+    assert (plain.status_code, engine.status_code) == (200, 200)
+    endpoints = {
+        run["run_log"]["run_id"]: run["wes_endpoint"]
+        for run in mongodb[RUN_DB][RUN_COLLECTION].find({})
+    }
+    assert (
+        endpoints[plain.json()["run_id"]]["wes_version"],
+        endpoints[engine.json()["run_id"]]["wes_version"],
+    ) == ("1.0", "1.1")
+    assert endpoints[plain.json()["run_id"]]["host"].startswith(BACKEND_URL)
+    assert endpoints[engine.json()["run_id"]]["host"].startswith(url_11)
+    assert "workflow_engine" not in remote_wes[0]
+    assert remote_wes[1]["workflow_engine"] == "cwltool"
+
+
 def test_post_run_empty_workflow_engine(
     foca_client: Client,
     queued: list[dict[str, Any]],

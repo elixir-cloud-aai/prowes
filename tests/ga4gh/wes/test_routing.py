@@ -480,6 +480,92 @@ def test_select_first_eligible(
         assert select_backend(ENGINE_REQUEST).url == URL_11
 
 
+def test_select_keeps_eligible_version(
+    app_with: Callable[..., App],
+    service_infos: FakeServiceInfos,
+    clock: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The version that made a WES instance eligible is the one forwarded in.
+
+    Its service info isn't read again after the eligibility check, so that a
+    run that chooses the engine never goes out in WES 1.0, without the
+    engine. Here, its cached version (WES 1.1) has expired, the deadline of
+    the eligibility check passed while another WES instance was read, and it
+    would answer WES 1.0 now.
+    """
+    slow = "https://slow.example.org"
+    app = app_with((URL_11, None), (slow, None))
+
+    def _slow(backend: Backend, timeout: float) -> tuple[int, Any]:
+        """Read a service info, taking the whole time for `slow`.
+
+        Args:
+            backend: Backend.
+            timeout: Timeout of the read, in seconds.
+
+        Returns:
+            Its status and service info.
+        """
+        if backend.url == slow:
+            clock[0] += timeout
+        return service_infos(backend, timeout)
+
+    with app.app.app_context():
+        backend_versions.get(_backend(URL_11))
+        clock[0] += 3600
+        service_infos.answers[URL_11] = (200, _service_info("1.0.1"))
+        monkeypatch.setattr(routing, "read_service_info", _slow)
+        selected = select_backend(ENGINE_REQUEST)
+    assert (selected.url, selected.version) == (URL_11, V11)
+
+
+def test_select_rechecks_version(
+    app_with: Callable[..., App],
+    service_infos: FakeServiceInfos,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A WES instance whose version changed meanwhile isn't chosen: `503`.
+
+    E.g., if another request read its service info in between.
+    """
+    app = app_with((URL_11, None))
+    # eligible as WES 1.1, then known as WES 1.0
+    monkeypatch.setattr(
+        routing, "eligible_backends", lambda request, backends: backends
+    )
+    monkeypatch.setattr(routing, "backend_version", lambda backend, **kwargs: V10)
+    with app.app.app_context(), pytest.raises(NoBackendAvailable):
+        select_backend(ENGINE_REQUEST)
+
+
+def test_select_next_if_version_changed(
+    app_with: Callable[..., App],
+    service_infos: FakeServiceInfos,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The next eligible WES instance is chosen if the first one's changed."""
+    app = app_with((URL_11, None), (BACKEND_URL, "1.1"))
+    # both eligible as WES 1.1; the first one is known as WES 1.0 since
+    monkeypatch.setattr(
+        routing, "eligible_backends", lambda request, backends: backends
+    )
+    with app.app.app_context():
+        selected = select_backend(ENGINE_REQUEST)
+    assert (selected.url, selected.version) == (BACKEND_URL, V11)
+
+
+def test_select_reads_version_of_plain_run(
+    app_with: Callable[..., App], service_infos: FakeServiceInfos
+) -> None:
+    """Runs that every version can express read the chosen one's version."""
+    app = app_with((URL_11, None))
+    with app.app.app_context():
+        selected = select_backend(REQUEST)
+    assert selected.version == V11
+    assert service_infos.reads == [URL_11]
+
+
 def test_select_none_eligible(
     app_with: Callable[..., App], service_infos: FakeServiceInfos
 ) -> None:

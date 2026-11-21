@@ -33,10 +33,15 @@ WES 1.0), so that runs that choose the engine can go to them.
 
 Runs for which no WES instance remains are rejected with `400 Bad
 Request`, naming the fields (`errors`, with a `pointer` to each field),
-and are not stored. If a WES
-instance didn't answer so far and no other can run the run, the answer is
-`503 Service Unavailable` instead, as retrying may help. A WES instance
-whose version was read once keeps that version if it fails to answer later.
+and are not stored. If a WES instance didn't answer so far and no other can
+run the run, the answer is `503 Service Unavailable` instead, as retrying
+may help. A WES instance whose version was read once keeps that version if
+it fails to answer later. A run that chooses the engine is forwarded in the
+version that made its WES instance eligible: its service info isn't read
+again in between, so that the run never goes out without what it chose. If
+that version changed meanwhile (e.g., read by a concurrent request), the
+next eligible WES instance is chosen, or, if none is left, the answer is
+`503 Service Unavailable`.
 
 A WES instance of WES 1.1.0 may still reject a run (e.g., an engine that it
 doesn't support); the run then fails as for any rejected run (see

@@ -277,7 +277,10 @@ class WorkflowRuns:
 
         # choose and attach the WES instance (`custom.wes.backends`) that can
         # run the request, by its WES version, before anything is stored
-        backend = select_backend(document.run_log.request.model_dump(exclude_none=True))
+        # form fields of the run request; unset (`None`) fields are left out,
+        # e.g., engine fields that choose nothing
+        form_fields = document.run_log.request.model_dump(exclude_none=True)
+        backend = select_backend(form_fields)
         document.wes_endpoint = WesEndpoint(
             host=backend.url,
             base_path=backend.api_path,
@@ -341,10 +344,7 @@ class WorkflowRuns:
         try:
             # in the WES version of the WES instance
             response = wes_client.post_run(
-                form_data=downgrade_run_request(
-                    document.run_log.request.model_dump(exclude_none=True),
-                    backend.version,
-                ),
+                form_data=downgrade_run_request(form_fields, backend.version),
                 timeout=controller_config.timeout_post,
             )
         except EngineUnavailable:
