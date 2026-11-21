@@ -327,6 +327,8 @@ class WesClient:
                 The following form fields are optional:
                 * `tags`
                 * `workflow_engine_parameters`
+                * `workflow_engine` and `workflow_engine_version` (WES
+                  1.1.0; left out for WES 1.0)
             files: Files to be attached, by form field: file name and
                 content.
             timeout: Timeout of the request as a whole, in seconds; by

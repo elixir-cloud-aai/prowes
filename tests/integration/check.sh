@@ -6,8 +6,8 @@
 # logs and the run list as clients see them, and the states that Sapporo
 # reports for them. Requests carry an access token of the smoke test's fake
 # identity provider. It also reports the WES version of Sapporo's service
-# info (to the job summary in CI), and checks that Sapporo still requires
-# the workflow engine that `engine_proxy.py` adds (#66).
+# info (to the job summary in CI), and checks that Sapporo requires the
+# workflow engine, which proWES forwards (`workflow_engine`).
 #
 # Run it from the repository root, with the base URL of proWES's WES API as
 # argument (default `http://localhost:8090/ga4gh/wes/v1`), after starting
@@ -165,12 +165,13 @@ container_running() {
   [ "$(docker inspect --format '{{.State.Running}}' "$1" 2> /dev/null)" = true ]
 }
 
-# Create a run of a workflow of `workflows/` with parameters; the identifier
-# is in `${id}`
+# Create a run of a workflow of `workflows/` with parameters, with the
+# workflow engine `cwltool`, which Sapporo requires; the identifier is in
+# `${id}`
 create() {
   check POST /runs 200 '.run_id | length > 0' \
     "workflow_params=$2" 'workflow_type=CWL' 'workflow_type_version=v1.0' \
-    "workflow_url=${workflows}/$1"
+    "workflow_url=${workflows}/$1" 'workflow_engine=cwltool'
   id="$(jq -r .run_id "${body}")"
 }
 
@@ -183,14 +184,14 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   echo "${summary}" >> "${GITHUB_STEP_SUMMARY}"
 fi
 
-# Sapporo rejects runs without workflow engine, which proWES doesn't forward
-# yet (#66); `engine_proxy.py` adds it. Once this fails, drop the proxy
+# Sapporo rejects runs without workflow engine, so runs of proWES that
+# Sapporo accepts show that proWES forwards it
 echo "Sapporo: runs without workflow engine are rejected"
 rejected="$(sapporo POST /runs 'workflow_params={}' 'workflow_type=CWL' \
   'workflow_type_version=v1.0' "workflow_url=${workflows}/hello.cwl")"
 if ! jq -e '.status == 400 and (.body.msg | test("workflow_engine"))' \
     <<< "${rejected}" > /dev/null; then
-  echo "::error::Sapporo doesn't reject runs without workflow engine as expected: drop engine_proxy.py if it accepts them"
+  echo "::error::Sapporo doesn't reject runs without workflow engine as expected: the test no longer shows that proWES forwards it"
   echo "${rejected}"
   exit 1
 fi
@@ -211,6 +212,7 @@ check GET "/runs/${done_id}" 200 "
   .run_id == \"${done_id}\"
   and .state == \"COMPLETE\"
   and .request.workflow_url == \"${workflows}/hello.cwl\"
+  and .request.workflow_engine == \"cwltool\"
   and .run_log.exit_code == 0
   and (.run_log.stdout | fromjson | .greeting.basename == \"greeting.txt\"
     and .greeting.size == $(( ${#message} + 1 )))

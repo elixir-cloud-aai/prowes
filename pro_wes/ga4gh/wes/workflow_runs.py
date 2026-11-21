@@ -40,7 +40,6 @@ from pro_wes.exceptions import (
     TooManyAttachments,
     Unauthorized,
     WesEndpointProblem,
-    WorkflowEngineNotSupported,
 )
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import (
@@ -74,9 +73,31 @@ JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
 # return as their JSON text (cf. `_string_values()`)
 STRING_OBJECT_FIELDS = ("workflow_engine_parameters", "tags")
 
-# The fields of WES 1.1.0 run requests that choose the workflow engine
-# (`ENGINE_FIELDS`) are refused until they are forwarded (#66), so that the
-# choice isn't lost
+
+def _refuse_engine_files(files: ImmutableMultiDict[str, Any]) -> None:
+    """Refuse workflow engine fields sent as files of a run request.
+
+    They would be ignored, so that the run would run with an engine that the
+    WES instance chooses.
+
+    Args:
+        files: Files of the request, by form field.
+
+    Raises:
+        foca.errors.InvalidFieldsProblem: A field of `ENGINE_FIELDS` is sent
+            as a file (`400`).
+    """
+    errors = [
+        FieldError(
+            detail="Must be a form field, not a file.",
+            code="invalid-value",
+            pointer=json_pointer(field),
+        )
+        for field in ENGINE_FIELDS
+        if field in files
+    ]
+    if errors:
+        raise InvalidFieldsProblem(errors)
 
 
 def _page_token_id(page_token: str) -> ObjectId:
@@ -240,9 +261,9 @@ class WorkflowRuns:
         document: DbDocument = DbDocument()
         controller_config = self.config.post_runs
 
-        # engine fields sent as files are refused, too (cf. `ENGINE_FIELDS`)
-        if any(field in request.files for field in ENGINE_FIELDS):
-            raise WorkflowEngineNotSupported
+        # engine fields sent as files are refused, so that the choice isn't
+        # lost (cf. `ENGINE_FIELDS`)
+        _refuse_engine_files(request.files)
 
         # validate and attach request, without credentials in URLs
         document.run_log.request = self._validate_run_request(
@@ -256,7 +277,10 @@ class WorkflowRuns:
 
         # choose and attach the WES instance (`custom.wes.backends`) that can
         # run the request, by its WES version, before anything is stored
-        backend = select_backend(document.run_log.request.model_dump())
+        # form fields of the run request; unset (`None`) fields are left out,
+        # e.g., engine fields that choose nothing
+        form_fields = document.run_log.request.model_dump(exclude_none=True)
+        backend = select_backend(form_fields)
         document.wes_endpoint = WesEndpoint(
             host=backend.url,
             base_path=backend.api_path,
@@ -320,9 +344,7 @@ class WorkflowRuns:
         try:
             # in the WES version of the WES instance
             response = wes_client.post_run(
-                form_data=downgrade_run_request(
-                    document.run_log.request.model_dump(), backend.version
-                ),
+                form_data=downgrade_run_request(form_fields, backend.version),
                 timeout=controller_config.timeout_post,
             )
         except EngineUnavailable:
@@ -820,9 +842,9 @@ class WorkflowRuns:
             The run request, without credentials in URLs.
 
         Raises:
-            pro_wes.exceptions.WorkflowEngineNotSupported: The request
-                chooses a workflow engine or its version (`ENGINE_FIELDS`,
-                not empty).
+            foca.errors.InvalidFieldsProblem: The request sets
+                `workflow_engine_version` without `workflow_engine` (empty
+                fields choose none; `400`).
             pro_wes.exceptions.UrlCredentials: A URL has credentials, and
                 `url_credentials` is `reject`.
             pro_wes.exceptions.MalformedUrl: A URL is malformed.
@@ -836,10 +858,20 @@ class WorkflowRuns:
         }
         # remove 'workflow_attachment' field
         dict_atomic.pop("workflow_attachment", None)
-        # empty engine fields choose no engine; others are refused
-        for field in ENGINE_FIELDS:
-            if dict_atomic.pop(field, "") != "":
-                raise WorkflowEngineNotSupported
+        # empty engine fields choose no engine; a version needs its engine,
+        # as specified
+        if dict_atomic.get("workflow_engine_version", "") != "" and (
+            dict_atomic.get("workflow_engine", "") == ""
+        ):
+            raise InvalidFieldsProblem(
+                [
+                    FieldError(
+                        detail="Required if workflow_engine_version is set.",
+                        code="required",
+                        pointer=json_pointer("workflow_engine"),
+                    )
+                ]
+            )
         model_instance = RunRequest(**dict_atomic)
         updates: dict[str, str] = {}
         stripped = sanitize_url(

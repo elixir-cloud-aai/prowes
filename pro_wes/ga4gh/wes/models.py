@@ -76,9 +76,10 @@ class Attachment(BaseModel):
 class RunRequest(BaseModel):
     """Model for WES API `RunRequest` schema.
 
-    `workflow_engine` and `workflow_engine_version` of WES 1.1.0 are not
-    modeled: requests that set them are refused before the model is built
-    (`pro_wes.ga4gh.wes.versions.ENGINE_FIELDS`, #66).
+    `workflow_engine` and `workflow_engine_version` of WES 1.1.0
+    (`pro_wes.ga4gh.wes.versions.ENGINE_FIELDS`) are `None` unless set:
+    empty fields choose no engine. Only WES instances of WES 1.1 can run
+    requests that set them (cf. `pro_wes.ga4gh.wes.versions`).
 
     Args:
         workflow_params: Workflow parameters. Cf.
@@ -92,6 +93,10 @@ class RunRequest(BaseModel):
         workflow_engine_parameters: Workflow engine parameters. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_url: Workflow URL. Cf.
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+        workflow_engine: Workflow engine. Cf.
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+        workflow_engine_version: Workflow engine version. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Attributes:
@@ -107,6 +112,10 @@ class RunRequest(BaseModel):
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
         workflow_url: Workflow URL. Cf.
             `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+        workflow_engine: Workflow engine. Cf.
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
+        workflow_engine_version: Workflow engine version. Cf.
+            `pro_wes/api/20230914.tag_1_1_0.workflow_execution_service.openapi.yaml`
 
     Raises:
         pro_wes.exceptions.ValidationError: The class was instantianted with an
@@ -119,10 +128,49 @@ class RunRequest(BaseModel):
     tags: str | None = "{}"
     workflow_engine_parameters: str | None = "{}"
     workflow_url: str
+    workflow_engine: str | None = None
+    workflow_engine_version: str | None = None
 
     # Validation errors, which are logged, without the values, which may hold
     # credentials (cf. `custom.post_runs.url_credentials`)
     model_config = ConfigDict(hide_input_in_errors=True)
+
+    @field_validator("workflow_engine", "workflow_engine_version")
+    @classmethod
+    def empty_engine_field_chooses_none(cls, value: str | None) -> str | None:
+        """Treat empty workflow engine fields as not set.
+
+        Empty fields choose no engine (version), so they are neither stored
+        nor forwarded.
+
+        Args:
+            value: Field value to be validated.
+
+        Returns:
+            The value, or `None` if it is empty.
+        """
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def workflow_engine_set_with_version(self) -> "RunRequest":
+        """Ensure that a workflow engine version comes with its engine.
+
+        The WES specification requires `workflow_engine` if
+        `workflow_engine_version` is set. Requests of `POST /runs` are
+        checked before, with an error that points at the field; this check
+        keeps the model consistent wherever else it is built (e.g., the
+        form data of `WesClient.post_run`).
+
+        Returns:
+            The validated model.
+
+        Raises:
+            ValueError: The workflow engine version is set without the
+                workflow engine.
+        """
+        if self.workflow_engine_version is not None and self.workflow_engine is None:
+            raise ValueError("workflow_engine required with workflow_engine_version")
+        return self
 
     @field_validator(
         "workflow_type",
