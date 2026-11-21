@@ -207,8 +207,8 @@ how to run them locally:
 | `lint` | Lint | `uv run pre-commit run --all-files`, `pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff`, `uv build` |
 | `docs` | Docs | `uv run --extra docs mkdocs build --strict` (see [Documentation](#documentation)) |
 | `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
-| `chart` | Chart | `helm dependency build deployment`, `helm lint deployment --strict -f deployment/ci/test-values.yaml`, `uv run pytest tests/test_chart.py` |
-| `chart-install` | Chart install | `tests/chart/install.sh` against a kind cluster |
+| `chart` | Chart | `helm dependency build deployment`, `(cd deployment && sha256sum -c charts.sha256)`, `helm lint deployment --strict -f deployment/ci/test-values.yaml` (also with `-f deployment/ci/optional-values.yaml` and with MongoDB auth off; see the job), `uv run pytest tests/test_chart.py` |
+| `chart-install` | Chart install | `tests/chart/install.sh` on a kind cluster `chart-testing` (see [Testing the chart](deployment.md#testing-the-chart)) |
 | `smoke` | Smoke test | `tests/smoke/check.sh` (see [Smoke test](#smoke-test)) |
 | `integration` | Integration | `tests/integration/check.sh` (see [Integration test](#integration-test)) |
 | `push` | Push image | Pushes to `dev` only (and fork dry runs, see below): builds the image and pushes it by digest |
@@ -218,9 +218,10 @@ how to run them locally:
 
 `CI passed` is the only required check. Add every new job to its `needs`.
 
-`push` and `publish` run on pushes to `dev` of this repository only, in the
-environment `dev-images` (Docker Hub secrets, branch `dev` only); they are
-skipped on pull requests and in forks, which the gate allows. A fork can dry
+`push` and `publish` run on pushes to `dev` of this repository (and of forks
+that set `DOCKERHUB_ORG`, see below), in the environment `dev-images` (Docker
+Hub secrets, branch `dev` only); they are skipped on pull requests and in
+other forks, which the gate allows. A fork can dry
 run them by setting the repository variable `DOCKERHUB_ORG` to its own
 Docker Hub organization (and the secrets `DOCKERHUB_LOGIN` and
 `DOCKERHUB_TOKEN`, in an environment `dev-images`): the image is then

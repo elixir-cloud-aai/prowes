@@ -350,7 +350,7 @@ on it points to the newest release. Deployments that pull `latest` to follow
 chart](#helm-chart-breaking)), or better an existing `sha-<commit>` tag,
 which never moves (commits that a newer push overtook before their image was
 published have none). The tag `dev` exists from the first commit published
-this way; `latest` predates the changes listed here.
+this way.
 
 ### Docker Compose
 

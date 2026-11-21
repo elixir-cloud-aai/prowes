@@ -83,7 +83,8 @@ def test_job_names_unique() -> None:
 def test_docs_list_all_jobs() -> None:
     """The jobs table of `docs/development.md` lists every job, by name."""
     text = (ROOT / "docs" / "development.md").read_text(encoding="utf-8")
-    rows = re.findall(r"^\| `([a-z-]+)` \| ([^|]+?) \|", text, re.MULTILINE)
+    rows = re.findall(r"^\| `([\w-]+)` \| ([^|]+?) \|", text, re.MULTILINE)
+    assert len(rows) == len(dict(rows))
     assert dict(rows) == {job_id: job["name"] for job_id, job in _jobs().items()}
 
 
