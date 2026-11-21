@@ -593,6 +593,18 @@ def test_select_none_answered(
         select_backend(ENGINE_REQUEST)
 
 
+def test_select_excluded(
+    app_with: Callable[..., App], service_infos: FakeServiceInfos
+) -> None:
+    """Excluded WES instances are not chosen; unknown URLs change nothing."""
+    app = app_with((URL_10, None), (URL_11, None))
+    with app.app.app_context():
+        assert select_backend(REQUEST, exclude={URL_10}).url == URL_11
+        assert select_backend(REQUEST, exclude={"https://other.org"}).url == URL_10
+        with pytest.raises(NoBackendAvailable):
+            select_backend(REQUEST, exclude={URL_10, URL_11})
+
+
 def test_select_no_backend(app_with: Callable[..., App]) -> None:
     """Without WES instances, no run is forwarded: `503`."""
     app = app_with()

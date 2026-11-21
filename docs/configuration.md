@@ -30,6 +30,10 @@ The settings that deployments usually change:
 | `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds, for each request as a whole; required, a positive number |
 | `custom.wes.max_response_size` | `16777216` (16 MiB) | Maximum size of each response of a WES instance, in bytes; larger responses fail the request, see [WES instances](#wes-instances) |
 | `custom.wes.version_cache_ttl` | `3600` | Seconds that the WES version of a WES instance, as read from its service info, is cached, see [WES versions](#wes-versions) |
+| `custom.wes.retry.attempts` | `3` | Tries of each request to a WES instance (1 to 100; `1`: no retries), see [Retries](#retries) |
+| `custom.wes.retry.backoff` | `1` | Seconds to wait before the second try, doubled for each further one (`0`: no wait; at most 3600), see [Retries](#retries) |
+| `custom.wes.retry.max_backoff` | `10` | Longest wait between two tries, in seconds (at most 3600), see [Retries](#retries) |
+| `custom.post_runs.forward_timeout` | `30` | Seconds for forwarding a new run as a whole: all tries at all WES instances that can run it (a positive number, at most 86400), see [Retries](#retries) |
 
 ## WES instances
 
@@ -200,6 +204,68 @@ The label of a registry entry applies to all WES instances that it
 discovers. To tell the versions in a registry apart, use one entry per
 version, with its `versions` and label (`versions: ["1.1"]` and
 `wes.version: "1.1"`).
+
+### Retries
+
+Requests to WES instances that fail in a way that another try may change
+are tried again, up to `custom.wes.retry.attempts` times (default: 3), as
+long as another try can't make the WES instance do anything twice:
+
+- Reads (status, run logs, run lists) are tried again after connection
+  errors (e.g., a refused connection, a failed DNS lookup or TLS
+  handshake), timeouts, lost connections and answers with `502 Bad
+  Gateway`, `503 Service Unavailable` and `504 Gateway Timeout`; after the
+  last try, its answer or error counts.
+- Requests that change something (new runs, cancellations) are tried again
+  only if the WES instance certainly didn't get them (e.g., the connection
+  was refused): never after a timeout, a lost connection or any answer,
+  also not after `502`, `503` and `504`, which gateways in front of a WES
+  instance may send after it got the request.
+- Failures that another try wouldn't change are not tried again: hosts
+  without allowed addresses, invalid URLs, local errors (e.g., a CA bundle
+  that can't be read), redirects, responses larger
+  than `custom.wes.max_response_size`, and other answers (e.g., `404` or
+  `500`).
+
+Before the second try, proWES waits `custom.wes.retry.backoff` seconds
+(default: 1), and twice as long before each further one, but at most
+`custom.wes.retry.max_backoff` seconds (default: 10); each try has the
+full timeout of its request (see [WES instances](#wes-instances)), and each
+retry is logged as a warning. Only new runs have a limit as a whole
+(`custom.post_runs.forward_timeout`, below): other requests may take up to
+`attempts` times their timeout plus the waits, so keep `attempts` and
+`max_backoff` small. Reads of the service info for the WES version
+are tried once: their failures are cached (see [WES
+versions](#wes-versions)).
+
+A new run that a WES instance certainly didn't get after all its tries goes
+to the next WES instance of the backend list that can run it (see [WES
+versions](#wes-versions)), which the run is then stored with, in that WES
+instance's WES version; never if the WES instance may have got it or
+answered (then the run is `SYSTEM_ERROR`, see [Failed requests to WES
+instances](operations.md#failed-requests-to-wes-instances)). Once
+`custom.post_runs.forward_timeout` seconds (default: 30) have passed since
+the first try, no further try or WES instance starts (the first try always
+does); a try that started may still take its timeout
+(`custom.post_runs.timeout_post`), and the next WES instance's service info
+may be read first (within 5 seconds, as for the first WES instance before
+`forward_timeout` starts), so `POST /runs` takes up to about
+`forward_timeout` plus `timeout_post` plus 10 seconds (70 seconds by
+default): keep the timeouts of proxies in front
+of proWES longer.
+
+```yaml
+custom:
+  post_runs:
+    forward_timeout: 30
+  wes:
+    retry:
+      attempts: 3
+      backoff: 1
+      max_backoff: 10
+```
+
+Set `attempts: 1` to try each request once.
 
 ## Environment variables and overlays
 

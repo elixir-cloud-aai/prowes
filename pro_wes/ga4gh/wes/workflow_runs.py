@@ -3,6 +3,7 @@
 from json import dumps, loads
 import logging
 from pathlib import Path
+import time
 from typing import Any, NamedTuple
 
 from bson.errors import InvalidId
@@ -29,11 +30,13 @@ from pro_wes.exceptions import (
     BadRequest,
     EngineInvalidResponse,
     EngineRefused,
+    EngineRequestNotSent,
     EngineUnavailable,
     Forbidden,
     IdsUnavailableProblem,
     InternalServerError,
     InvalidAttachmentName,
+    NoBackendAvailable,
     RunNotCancelable,
     RunNotFound,
     StorageUnavailableProblem,
@@ -47,12 +50,13 @@ from pro_wes.ga4gh.wes.models import (
     Attachment,
     DbDocument,
     ErrorResponse,
+    RunId,
     RunLog,
     RunRequest,
     State,
     WesEndpoint,
 )
-from pro_wes.ga4gh.wes.routing import select_backend
+from pro_wes.ga4gh.wes.routing import SelectedBackend, select_backend
 from pro_wes.ga4gh.wes.versions import ENGINE_FIELDS, downgrade_run_request
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db import DbDocumentConnector
@@ -222,6 +226,19 @@ def _string_values(decoded: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _forward_timeout_passed(run_id: str | None) -> None:
+    """Log that no further WES instance is tried for a run.
+
+    Args:
+        run_id: Identifier of the run.
+    """
+    logger.warning(
+        "No further WES instance tried for workflow run '%s':"
+        " custom.post_runs.forward_timeout passed",
+        run_id,
+    )
+
+
 class WorkflowRuns:
     """Class for WES API server-side controller methods.
 
@@ -317,42 +334,24 @@ class WorkflowRuns:
         if document_stored.task_id is None:
             raise IdsUnavailableProblem
 
-        # instantiate WES client
-        wes_client: WesClient = WesClient(
-            host=document_stored.wes_endpoint.host,
-            base_path=document_stored.wes_endpoint.base_path,
-            # no credentials for WES instances (`auth: none`) until #120;
-            # the client's token is never passed on
-            token=None,
-        )
-
         # instantiate database connector
         db_connector = DbDocumentConnector(
             collection=self.db_client,
             task_id=document_stored.task_id,
         )
 
-        # forward incoming WES request and validate response
-        url = wes_client.url
-        logger.info(
-            "Sending workflow run '%s' with task identifier '%s' to WES"
-            " endpoint hosted at: %s",
-            document_stored.run_log.run_id,
-            document_stored.task_id,
-            url,
+        # forward incoming WES request and validate response, to the next WES
+        # instance that can run it while they certainly don't get it
+        response = self._forward(
+            run_id=document_stored.run_log.run_id,
+            backend=SelectedBackend(
+                url=document_stored.wes_endpoint.host,
+                api_path=document_stored.wes_endpoint.base_path,
+                version=backend.version,
+            ),
+            form_fields=form_fields,
+            db_connector=db_connector,
         )
-        try:
-            # in the WES version of the WES instance
-            response = wes_client.post_run(
-                form_data=downgrade_run_request(form_fields, backend.version),
-                timeout=controller_config.timeout_post,
-            )
-        except EngineUnavailable:
-            db_connector.set_system_error()
-            raise
-        if isinstance(response, ErrorResponse):
-            db_connector.set_system_error()
-            raise REMOTE_ERRORS.get(response.status_code, InternalServerError)
         updated_document_stored: DbDocument = db_connector.upsert_fields_in_root_object(
             root="wes_endpoint",
             run_id=response.run_id,
@@ -389,6 +388,136 @@ class WorkflowRuns:
         if updated_document_stored.run_log.run_id is None:
             raise IdsUnavailableProblem
         return {"run_id": updated_document_stored.run_log.run_id}
+
+    def _forward(
+        self,
+        run_id: str | None,
+        backend: SelectedBackend,
+        form_fields: dict[str, Any],
+        db_connector: DbDocumentConnector,
+    ) -> RunId:
+        """Forward a new run, to the next WES instance if one didn't get it.
+
+        The run is sent to the WES instance it is stored with, in its WES
+        version, tried again as `custom.wes.retry` says (cf.
+        :py:class:`pro_wes.ga4gh.wes.client_wes.WesClient`). Only if that WES
+        instance certainly didn't get the run, it goes to the next one that
+        can run it (cf. :py:func:`pro_wes.ga4gh.wes.routing.select_backend`),
+        which the run is then stored with; never if it may have got it, or
+        answered. No further try, or WES instance, starts once
+        `custom.post_runs.forward_timeout` seconds have passed.
+
+        Args:
+            run_id: Identifier of the run, for logs.
+            backend: WES instance that the run is stored with.
+            form_fields: Form fields of the run request, in the canonical WES
+                version.
+            db_connector: Connector of the stored run.
+
+        Returns:
+            Identifier of the run at the WES instance that accepted it.
+
+        Raises:
+            pro_wes.exceptions.EngineUnavailable: No WES instance got the run
+                (:py:class:`pro_wes.exceptions.EngineRequestNotSent`, of the
+                last one tried), or one may have got it
+                (:py:class:`pro_wes.exceptions.EngineOutcomeUnknown`); the run
+                is set to `SYSTEM_ERROR`.
+            pro_wes.exceptions.BadRequest: The WES instance answered with
+                `400`; and `401` and `403` likewise (cf. `REMOTE_ERRORS`);
+                other errors are `500`. The run is set to `SYSTEM_ERROR`.
+        """
+        controller_config = self.config.post_runs
+        deadline = time.monotonic() + controller_config.forward_timeout
+        tried: set[str] = set()
+        while True:
+            wes_client = WesClient(
+                host=backend.url,
+                base_path=backend.api_path,
+                # no credentials for WES instances (`auth: none`) until #120;
+                # the client's token is never passed on
+                token=None,
+            )
+            logger.info(
+                "Sending workflow run '%s' to WES endpoint hosted at: %s",
+                run_id,
+                wes_client.url,
+            )
+            try:
+                # in the WES version of the WES instance
+                response = wes_client.post_run(
+                    form_data=downgrade_run_request(form_fields, backend.version),
+                    timeout=controller_config.timeout_post,
+                    deadline=deadline,
+                )
+            except EngineRequestNotSent as exc:
+                tried.add(backend.url)
+                following = self._next_backend(run_id, form_fields, tried, deadline)
+                if following is None:
+                    db_connector.set_system_error()
+                    raise
+                logger.warning(
+                    "Workflow run '%s' not sent to WES endpoint hosted at %s"
+                    " (%s); sending it to the next WES instance, at %s",
+                    run_id,
+                    wes_client.url,
+                    exc.reason,
+                    following.url,
+                )
+                backend = following
+                # stored before it is sent, so that the run never points at
+                # a WES instance other than the last one it was sent to
+                db_connector.upsert_fields_in_root_object(
+                    root="wes_endpoint",
+                    host=backend.url,
+                    base_path=backend.api_path,
+                    wes_version=str(backend.version),
+                )
+                continue
+            except EngineUnavailable:
+                db_connector.set_system_error()
+                raise
+            if isinstance(response, ErrorResponse):
+                db_connector.set_system_error()
+                raise REMOTE_ERRORS.get(response.status_code, InternalServerError)
+            return response
+
+    @staticmethod
+    def _next_backend(
+        run_id: str | None,
+        form_fields: dict[str, Any],
+        tried: set[str],
+        deadline: float,
+    ) -> SelectedBackend | None:
+        """Choose the next WES instance for a run that none got so far.
+
+        Args:
+            run_id: Identifier of the run, for logs.
+            form_fields: Form fields of the run request, in the canonical WES
+                version.
+            tried: Base URLs of the WES instances tried.
+            deadline: `time.monotonic()` value after which no WES instance
+                is tried (`custom.post_runs.forward_timeout`).
+
+        Returns:
+            The first WES instance not tried yet that can run the run, if
+            any, and time is left before and after choosing it (which may
+            read service infos).
+        """
+        if time.monotonic() >= deadline:
+            _forward_timeout_passed(run_id)
+            return None
+        try:
+            selected = select_backend(form_fields, exclude=tried)
+        except (InvalidFieldsProblem, NoBackendAvailable) as exc:
+            logger.warning(
+                "No further WES instance can run workflow run '%s': %s", run_id, exc
+            )
+            return None
+        if time.monotonic() >= deadline:
+            _forward_timeout_passed(run_id)
+            return None
+        return selected
 
     def list_runs(
         self,

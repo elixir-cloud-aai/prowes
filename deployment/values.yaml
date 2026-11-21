@@ -154,6 +154,10 @@ prowes:
       # nginx.ingress.kubernetes.io/limit-rps: "10"
       # nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
       # nginx.ingress.kubernetes.io/limit-connections: "20"
+      # Timeouts of ingress-nginx (60 s by default); keep them longer than
+      # `POST /runs` may take (see docs/deployment.md, Request timeouts), e.g.:
+      # nginx.ingress.kubernetes.io/proxy-read-timeout: "90"
+      # nginx.ingress.kubernetes.io/proxy-send-timeout: "90"
     https:
       # Request a certificate from cert-manager (via `issuer`, a
       # ClusterIssuer) and serve HTTPS
@@ -196,6 +200,9 @@ prowes:
     # request bodies), e.g.:
     # haproxy.router.openshift.io/rate-limit-connections: "true"
     # haproxy.router.openshift.io/rate-limit-connections.rate-http: "100"
+    # and for the router's timeout (30 s by default), which should be longer
+    # than `POST /runs` may take (see docs/deployment.md, Request timeouts):
+    # haproxy.router.openshift.io/timeout: 90s
     annotations: {}
   # NetworkPolicy allowing connections to the app only from `ingressFrom`
   # (and the kubelet's probes; see docs/deployment.md, Network policies);
@@ -256,7 +263,9 @@ prowes:
     timeout: 30
     # Seconds that workers get to finish requests on shutdown (after
     # `preStopSleepSeconds`); the pod's termination grace period is both
-    # plus 10 seconds
+    # plus 10 seconds. `POST /runs` may take longer (see docs/deployment.md,
+    # Request timeouts): raise it, e.g., to 70, so that runs being forwarded
+    # on shutdown are not cut off
     gracefulTimeout: 20
     # Seconds after which idle keep-alive connections are closed (0: no
     # keep-alive); keep it longer than the upstream keep-alive timeout of the

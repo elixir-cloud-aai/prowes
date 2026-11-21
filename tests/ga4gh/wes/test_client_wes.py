@@ -446,7 +446,7 @@ def test_invalid_response(call: Call, body: Any) -> None:
         ),
         (RequestMaybeSent("lost"), EngineOutcomeUnknown, "connection_lost"),
         (ResponseTooLarge("too large"), EngineOutcomeUnknown, "response_too_large"),
-        (OSError("no CA bundle"), EngineRequestNotSent, "connect_error"),
+        (OSError("no CA bundle"), EngineRequestNotSent, "local_error"),
     ],
     ids=["not sent", "address", "read timeout", "lost", "too large", "os error"],
 )

@@ -25,11 +25,30 @@ certainly didn't get the request, and
 :py:class:`pro_wes.exceptions.EngineOutcomeUnknown` if it may have got (and
 processed) it, e.g., after a read timeout, or after a redirect or a
 response that is no JSON.
+
+Requests are tried again as `custom.wes.retry` says
+(:py:class:`pro_wes.config_models.Retry`), after a wait that doubles with
+each try, as long as another try may succeed and can't make the WES instance
+do anything twice:
+
+- requests that the WES instance certainly didn't get
+  (:py:class:`pro_wes.exceptions.EngineRequestNotSent`), whatever their
+  method, unless another try can't change that (`NOT_RETRIED_REASONS`, e.g.,
+  hosts without allowed addresses);
+- reads (`SAFE_METHODS`) also after read timeouts and lost connections, and
+  after answers of the statuses of `RETRIED_STATUSES` (e.g., `503`); the
+  answer of the last try is returned.
+
+Requests that change something (`POST`) are never tried again once the WES
+instance may have got them: e.g., after a read timeout, a lost connection or
+any answer, also `502`, `503` and `504`, which gateways in front of WES
+instances send also after the WES instance got the request.
 """
 
 from collections.abc import Callable
 import logging
 import os
+import time
 from typing import Any
 
 from foca import get_custom_config
@@ -45,7 +64,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 import requests
 from urllib3 import encode_multipart_formdata
 
-from pro_wes.config_models import CustomConfig, Timeout
+from pro_wes.config_models import CustomConfig, Retry, Timeout
 from pro_wes.exceptions import (
     EngineOutcomeUnknown,
     EngineRequestNotSent,
@@ -69,6 +88,60 @@ WES instances are verified with, instead of the public ones (a file or a
 directory, as for requests)."""
 
 _TIMEOUT: TypeAdapter[float] = TypeAdapter(Timeout)
+
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+"""Methods of requests that change nothing (RFC 9110, section 9.2.1), which
+are tried again also if the WES instance may have got them."""
+
+RETRIED_STATUSES = frozenset({502, 503, 504})
+"""Statuses of answers to reads after which they are tried again."""
+
+RETRIED_MAYBE_SENT = frozenset({"read_timeout", "connection_lost"})
+"""Reasons of failed reads that the WES instance may have got after which
+they are tried again (not, e.g., `response_too_large` or `redirect`, which
+another try wouldn't change)."""
+
+NOT_RETRIED_REASONS = frozenset(
+    {"not_public", "invalid_url", "invalid_request", "invalid_header", "local_error"}
+)
+"""Reasons of requests not sent that another try wouldn't change (the host
+has no allowed address, the URL or the request is invalid, or proWES failed
+before sending, e.g., to read the CA bundle)."""
+
+_sleep = time.sleep
+"""Function that waits between two tries (replaced in tests)."""
+
+
+def _retried(method: str, error: EngineRequestNotSent | EngineOutcomeUnknown) -> bool:
+    """Tell whether a failed request may be tried again.
+
+    Args:
+        method: HTTP method of the request.
+        error: Error of the request.
+
+    Returns:
+        Whether another try may succeed and can't make the WES instance do
+        anything twice: for requests that the WES instance certainly didn't
+        get, unless their reason is one of `NOT_RETRIED_REASONS`; for reads
+        (`SAFE_METHODS`) also after the reasons of `RETRIED_MAYBE_SENT`.
+    """
+    if isinstance(error, EngineRequestNotSent):
+        return error.reason not in NOT_RETRIED_REASONS
+    return method in SAFE_METHODS and error.reason in RETRIED_MAYBE_SENT
+
+
+def _retried_status(method: str, status: int) -> bool:
+    """Tell whether a request answered with a status may be tried again.
+
+    Args:
+        method: HTTP method of the request.
+        status: Status of the answer.
+
+    Returns:
+        Whether the request is a read (`SAFE_METHODS`) and the status one of
+        `RETRIED_STATUSES`.
+    """
+    return method in SAFE_METHODS and status in RETRIED_STATUSES
 
 
 class _GuardedHttp(GuardedClient):
@@ -222,6 +295,8 @@ class WesClient:
         token: Bearer token to send along with any WES API requests. Set if
             required by WES instance. Alternatively, use `set_token()` method
             to set.
+        retry: Retries of the requests; by default those of the config
+            (`custom.wes.retry`).
 
     Attributes:
         url: URL to WES endpoints, built from `url` and `base_path`,
@@ -229,6 +304,7 @@ class WesClient:
         token: Bearer token for gaining access to WES endpoints.
         timeout: Timeout of requests without one of their own, in seconds
             (`custom.defaults.timeout`).
+        retry: Retries of the requests.
         http: Guarded HTTP client of the requests.
     """
 
@@ -237,6 +313,7 @@ class WesClient:
         host: str,
         base_path: str = "/ga4gh/wes/v1",
         token: str | None = None,
+        retry: Retry | None = None,
     ) -> None:
         """Class constructor."""
         # without the separator for an empty base path (the API at `host`)
@@ -246,6 +323,7 @@ class WesClient:
         self.set_token(token)
         config = get_custom_config(CustomConfig)
         self.timeout: float = config.defaults.timeout
+        self.retry: Retry = config.wes.retry if retry is None else retry
         allow_http, allow_private_addresses = _access(host)
         self.http: GuardedClient = _GuardedHttp(
             ca_bundle=os.environ.get(CA_BUNDLE_ENV) or None,
@@ -310,6 +388,7 @@ class WesClient:
         form_data: dict[str, str],
         files: dict[str, tuple[str, bytes]] | None = None,
         timeout: float | None = None,
+        deadline: float | None = None,
     ) -> ErrorResponse | RunId:
         """Send workflow run request.
 
@@ -333,6 +412,8 @@ class WesClient:
                 content.
             timeout: Timeout of the request as a whole, in seconds; by
                 default the client's (`custom.defaults.timeout`).
+            deadline: `time.monotonic()` value after which the request is
+                not tried again, if any (the first try is always made).
 
         Returns:
             WES API schema `RunId`. Cf.
@@ -352,7 +433,12 @@ class WesClient:
         fields.extend((files or {}).items())
         data, content_type = encode_multipart_formdata(fields)
         body = self._request(
-            "POST", "/runs", timeout=timeout, data=data, content_type=content_type
+            "POST",
+            "/runs",
+            timeout=timeout,
+            data=data,
+            content_type=content_type,
+            deadline=deadline,
         )
         return _validate(body, RunId)
 
@@ -511,16 +597,19 @@ class WesClient:
         timeout: float | None = None,
         data: bytes | None = None,
         content_type: str | None = None,
+        deadline: float | None = None,
     ) -> Any:
         """Send a request to the WES API and parse the response.
 
         Args:
             method: HTTP method.
             path: Path of the endpoint, relative to the WES API.
-            timeout: Timeout of the request as a whole, in seconds; by
-                default the client's.
+            timeout: Timeout of each try as a whole, in seconds; by default
+                the client's.
             data: Body, if any.
             content_type: Type of the body, if any.
+            deadline: `time.monotonic()` value after which the request is
+                not tried again, if any.
 
         Returns:
             Parsed JSON body of the response, whatever its status.
@@ -533,7 +622,7 @@ class WesClient:
                 JSON.
             pydantic.ValidationError: The timeout is invalid (cf. `_send()`).
         """
-        return _json(self._send(method, path, timeout, data, content_type))
+        return _json(self._send(method, path, timeout, data, content_type, deadline))
 
     def _send(
         self,
@@ -542,8 +631,109 @@ class WesClient:
         timeout: float | None = None,
         data: bytes | None = None,
         content_type: str | None = None,
+        deadline: float | None = None,
     ) -> HttpResponse:
-        """Send a request to the WES API.
+        """Send a request to the WES API, and try again as `retry` says.
+
+        Each try has the timeout of its own. Failed tries are tried again if
+        another try may succeed and can't make the WES instance do anything
+        twice (cf. :py:mod:`pro_wes.ga4gh.wes.client_wes`), up to
+        `retry.attempts` tries, unless the wait before the next try would end
+        after the deadline.
+
+        Args:
+            method: HTTP method.
+            path: Path of the endpoint, relative to the WES API.
+            timeout: Timeout of each try as a whole, in seconds; by default
+                the client's.
+            data: Body, if any.
+            content_type: Type of the body, if any.
+            deadline: `time.monotonic()` value after which no try starts,
+                if any (the first try is always made).
+
+        Returns:
+            Response of the last try, of any status but a redirect.
+
+        Raises:
+            pro_wes.exceptions.EngineRequestNotSent: The WES instance
+                certainly didn't get the last try (cf. `_send_once()`).
+            pro_wes.exceptions.EngineOutcomeUnknown: The WES instance may
+                have got the last try (cf. `_send_once()`).
+            pydantic.ValidationError: The timeout is invalid (cf.
+                `_send_once()`).
+        """
+        attempt = 1
+        while True:
+            try:
+                response = self._send_once(method, path, timeout, data, content_type)
+            except (EngineRequestNotSent, EngineOutcomeUnknown) as exc:
+                if not (
+                    _retried(method, exc)
+                    and self._wait(attempt, deadline, method, path, exc.reason)
+                ):
+                    raise
+            else:
+                if not (
+                    _retried_status(method, response.status)
+                    and self._wait(
+                        attempt, deadline, method, path, f"status {response.status}"
+                    )
+                ):
+                    return response
+            attempt += 1
+
+    def _wait(
+        self,
+        attempt: int,
+        deadline: float | None,
+        method: str,
+        path: str,
+        cause: str,
+    ) -> bool:
+        """Wait before the next try of a request, if there is one.
+
+        Args:
+            attempt: Number of the try that failed (from 1).
+            deadline: `time.monotonic()` value after which no try starts,
+                if any.
+            method: HTTP method of the request, for the log.
+            path: Path of the request, for the log.
+            cause: Why the try failed, for the log.
+
+        Returns:
+            Whether there is a next try: tries are left (`retry.attempts`),
+            and the wait (`retry.backoff`, doubled for each further try, up
+            to `retry.max_backoff`) ended before the deadline (checked
+            before and after it).
+        """
+        if attempt >= self.retry.attempts:
+            return False
+        wait = min(self.retry.backoff * 2 ** (attempt - 1), self.retry.max_backoff)
+        if deadline is not None and time.monotonic() + wait >= deadline:
+            return False
+        logger.warning(
+            "%s %s%s failed (%s); trying again in %s s (try %d of %d)",
+            method,
+            self.url,
+            path,
+            cause,
+            wait,
+            attempt + 1,
+            self.retry.attempts,
+        )
+        _sleep(wait)
+        # e.g., after a sleep that ended late
+        return deadline is None or time.monotonic() < deadline
+
+    def _send_once(
+        self,
+        method: str,
+        path: str,
+        timeout: float | None = None,
+        data: bytes | None = None,
+        content_type: str | None = None,
+    ) -> HttpResponse:
+        """Send a request to the WES API, once.
 
         Args:
             method: HTTP method.
@@ -595,7 +785,8 @@ class WesClient:
             # e.g., a CA bundle that doesn't exist (`cert_verify()` of
             # requests), before anything is sent
             raise EngineRequestNotSent(
-                f"{method} {url} not sent: {type(exc).__name__}"
+                f"{method} {url} not sent: {type(exc).__name__}",
+                reason="local_error",
             ) from exc
         # the WES instance (or a proxy in front of it) got the request and may
         # have processed it, but sent no usable answer

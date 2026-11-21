@@ -1,10 +1,10 @@
 """Shared fixtures.
 
 The tests create the app from `pro_wes/config.yaml` and a test overlay that
-moves the storage of the runs into a temporary directory, polls without
-waiting, configures one WES instance (`BACKEND_URL`, labeled as WES 1.1)
-and trusts the local
-identity provider of FOCA's fixture `issuer` (for tokens of `AUDIENCE`). They
+moves the storage of the runs into a temporary directory, polls and
+retries requests to WES instances without waiting, configures one WES
+instance (`BACKEND_URL`, labeled as WES 1.1) and trusts the local identity
+provider of FOCA's fixture `issuer` (for tokens of `AUDIENCE`). They
 use FOCA's pytest plugin (`foca.testing.pytest_plugin`): an in-memory
 database (mongomock) for each test, or the MongoDB at the URI of the
 environment variable `MONGODB_TEST_URI`, and no network access to other
@@ -161,6 +161,9 @@ def app_env(
         "    polling_wait: 0\n"
         "    polling_attempts: 2\n"
         "  wes:\n"
+        # retries without waiting
+        "    retry:\n"
+        "      backoff: 0\n"
         "    backends:\n"
         "      - type: ga4gh-wes\n"
         f"        url: {BACKEND_URL}\n"
