@@ -547,7 +547,7 @@ jobs:
   # exactly that digest, so that the published image is the scanned one; see
   # "Verifying images" in `docs/operations.md`. Waits for every check,
   # `integration` included: a commit that fails any of them is never signed
-  # or tagged (the former `push` didn't wait for `integration`)
+  # or tagged
   publish:
     name: Publish image
     runs-on: ubuntu-latest

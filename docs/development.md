@@ -207,11 +207,13 @@ how to run them locally:
 | `lint` | Lint | `uv run pre-commit run --all-files`, `pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff`, `uv build` |
 | `docs` | Docs | `uv run --extra docs mkdocs build --strict` (see [Documentation](#documentation)) |
 | `test` | Test | `uv run coverage run -m pytest && uv run coverage report` |
+| `chart` | Chart | `helm dependency build deployment`, `helm lint deployment --strict -f deployment/ci/test-values.yaml`, `uv run pytest tests/test_chart.py` |
+| `chart-install` | Chart install | `tests/chart/install.sh` against a kind cluster |
 | `smoke` | Smoke test | `tests/smoke/check.sh` (see [Smoke test](#smoke-test)) |
 | `integration` | Integration | `tests/integration/check.sh` (see [Integration test](#integration-test)) |
-| `push` | Push image | Pushes to `dev` only (see below): builds the image and pushes it by digest |
-| `scan` | Scan image | Pull requests: `docker build -t prowes:scan .`, then [Trivy](https://trivy.dev/) on `prowes:scan` with `.trivyignore.yaml`; pushes: the pushed digest |
-| `publish` | Publish image | Pushes to `dev` only, after all other checks passed: attests, signs and tags the scanned digest (`dev`, `sha-<commit>`) |
+| `push` | Push image | Pushes to `dev` only (and fork dry runs, see below): builds the image and pushes it by digest |
+| `scan` | Scan image | Where nothing is pushed (pull requests, forks): `docker build -t prowes:scan .`, then [Trivy](https://trivy.dev/) on `prowes:scan` with `.trivyignore.yaml`; otherwise the pushed digest |
+| `publish` | Publish image | Pushes to `dev` only (and fork dry runs), after all other checks passed: attests, signs and tags the scanned digest (`dev`, `sha-<commit>`) |
 | `passed` | CI passed | Passes if all other jobs passed or were skipped as intended |
 
 `CI passed` is the only required check. Add every new job to its `needs`.

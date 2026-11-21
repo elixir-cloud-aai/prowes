@@ -80,6 +80,13 @@ def test_job_names_unique() -> None:
     assert len(names) == len(set(names))
 
 
+def test_docs_list_all_jobs() -> None:
+    """The jobs table of `docs/development.md` lists every job, by name."""
+    text = (ROOT / "docs" / "development.md").read_text(encoding="utf-8")
+    rows = re.findall(r"^\| `([a-z-]+)` \| ([^|]+?) \|", text, re.MULTILINE)
+    assert dict(rows) == {job_id: job["name"] for job_id, job in _jobs().items()}
+
+
 def test_gate_needs_all_jobs() -> None:
     """The gate needs every other job and runs whatever their results."""
     jobs = _jobs()
