@@ -22,17 +22,18 @@ FOCA's gateway plugins choose and order the WES instances
 `route` phase will see only these WES instances, so that routing needs no
 knowledge of versions.
 
-For now, all runs that proWES accepts can run on WES 1.0: runs that choose
-the workflow engine (`workflow_engine`, `workflow_engine_version`, not
-empty), which only WES 1.1.0 can run, are still refused with `400 Bad
-Request` before routing, for all WES instances, until these fields are
-forwarded ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)). So
-runs go to the first WES instance of the list, and only the service info of
-that WES instance is read, for the version that the run is forwarded in.
+Runs that choose the workflow engine (`workflow_engine`,
+`workflow_engine_version`, not empty) can run on WES 1.1 only, and go to
+the first WES instance of WES 1.1 of the list; all other runs go to the
+first WES instance of the list. The service info of WES instances without
+the label `wes.version` is read as needed, for their versions (see [WES
+versions](configuration.md#wes-versions)): label WES instances whose
+service info reports no version of the WES specification (they count as
+WES 1.0), so that runs that choose the engine can go to them.
 
-Once runs that WES 1.0 can't express are accepted (#66), runs for which no
-WES instance remains are rejected with `400 Bad Request`, naming the fields
-(`errors`, with a `pointer` to each field), and are not stored. If a WES
+Runs for which no WES instance remains are rejected with `400 Bad
+Request`, naming the fields (`errors`, with a `pointer` to each field),
+and are not stored. If a WES
 instance didn't answer so far and no other can run the run, the answer is
 `503 Service Unavailable` instead, as retrying may help. A WES instance
 whose version was read once keeps that version if it fails to answer later.
@@ -45,7 +46,7 @@ doesn't support); the run then fails as for any rejected run (see
 
 | Field (WES 1.1.0) | Sent to WES 1.0 |
 | --- | --- |
-| `workflow_engine`, `workflow_engine_version`, not empty | Not eligible: the WES instance would run the workflow with an engine of its own choice. For now, proWES refuses them for all WES instances ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)). |
+| `workflow_engine`, `workflow_engine_version`, not empty | Not eligible: the WES instance would run the workflow with an engine of its own choice. Such runs go to WES instances of WES 1.1 only. |
 | `workflow_engine`, `workflow_engine_version`, empty | Not sent: they choose nothing (and are not stored). |
 | Other fields (`workflow_params`, `workflow_type`, `workflow_type_version`, `workflow_url`, `tags`, `workflow_engine_parameters`, `workflow_attachment`) | Sent as they are: WES 1.0 has them, too. |
 

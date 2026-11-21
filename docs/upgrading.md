@@ -420,8 +420,13 @@ proWES serves WES 1.1.0 instead of 1.0.1 (see [API](api.md#wes-110)):
 - `GET /runs/{run_id}/tasks` and `GET /runs/{run_id}/tasks/{task_id}` are
   part of the specification and answer `501 Not Implemented` for now.
 - `workflow_engine` and `workflow_engine_version` in `POST /runs` are
-  refused with `400 Bad Request` unless empty (as with WES 1.0.1, whose
-  specification didn't have them).
+  stored and forwarded to WES instances of WES 1.1 only (see [WES
+  versions](wes-versions.md#routing)); empty fields choose no engine, as
+  with WES 1.0.1, whose specification didn't have them. Label WES instances
+  of WES 1.1 whose service info reports no version of the WES
+  specification (`wes.version: "1.1"`), or runs that choose the engine
+  are refused with `400 Bad Request` if no other WES instance of WES 1.1
+  is configured.
 - Run and task logs keep the `system_logs` of the WES instance (runs
   tracked from now on).
 - Runs that the WES instance preempts get the final state `PREEMPTED`

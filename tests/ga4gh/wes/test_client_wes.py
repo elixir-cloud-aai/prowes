@@ -546,6 +546,22 @@ def test_post_run_multipart() -> None:
 
 
 @pytest.mark.usefixtures("foca_app")
+def test_post_run_workflow_engine() -> None:
+    """The workflow engine (version) is sent as form fields (WES 1.1.0)."""
+    http = FakeHttp(body={"run_id": RUN_ID})
+    form_data = {
+        **FORM_DATA,
+        "workflow_engine": "cwltool",
+        "workflow_engine_version": "3.1",
+    }
+    _client(http).post_run(form_data=form_data)
+    (call,) = http.calls
+    assert _form(call["data"], call["headers"]["Content-Type"]) == {
+        key: (None, value.encode()) for key, value in form_data.items()
+    }
+
+
+@pytest.mark.usefixtures("foca_app")
 def test_post_run_invalid_form_data() -> None:
     """Invalid form data raise `ValueError` without sending a request."""
     http = FakeHttp(body={"run_id": RUN_ID})

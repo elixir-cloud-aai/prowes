@@ -57,9 +57,30 @@ def test_run_request_optional_fields_default_to_empty_object() -> None:
 
 
 @pytest.mark.usefixtures("app_context")
+def test_run_request_workflow_engine() -> None:
+    """The workflow engine (version) is optional; empty fields choose none."""
+    request = RunRequest(**RUN_REQUEST)
+    assert (request.workflow_engine, request.workflow_engine_version) == (None, None)
+    request = RunRequest(**RUN_REQUEST, workflow_engine="", workflow_engine_version="")
+    assert (request.workflow_engine, request.workflow_engine_version) == (None, None)
+    request = RunRequest(
+        **RUN_REQUEST, workflow_engine="cwltool", workflow_engine_version="3.1"
+    )
+    assert (request.workflow_engine, request.workflow_engine_version) == (
+        "cwltool",
+        "3.1",
+    )
+    assert "workflow_engine" not in RunRequest(**RUN_REQUEST).model_dump(
+        exclude_none=True
+    )
+
+
+@pytest.mark.usefixtures("app_context")
 @pytest.mark.parametrize(
     "changes",
     [
+        {"workflow_engine_version": "3.1"},
+        {"workflow_engine": "", "workflow_engine_version": "3.1"},
         {"workflow_params": ""},
         {"workflow_params": "null"},
         {"workflow_params": "{"},

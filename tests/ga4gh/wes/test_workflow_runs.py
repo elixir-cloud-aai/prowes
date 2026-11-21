@@ -35,6 +35,7 @@ from pro_wes.ga4gh.wes.models import (
     State,
     WesEndpoint,
 )
+from pro_wes.ga4gh.wes.versions import ENGINE_FIELDS
 from pro_wes.ga4gh.wes.workflow_runs import WorkflowRuns
 from pro_wes.tasks.track_run_progress import task__track_run_progress
 from pro_wes.utils.db import DbDocumentConnector
@@ -298,30 +299,105 @@ def test_task_endpoints_not_implemented(foca_client: Client, path: str) -> None:
     assert "tasks" in response.json()["detail"]
 
 
+def _engine_fields(request: dict[str, Any]) -> dict[str, Any]:
+    """Get the workflow engine fields of a run request that it has.
+
+    Args:
+        request: Run request (form fields, or as stored or served).
+
+    Returns:
+        The fields of `ENGINE_FIELDS` of the request, with their values.
+    """
+    return {field: request[field] for field in ENGINE_FIELDS if field in request}
+
+
 @pytest.mark.parametrize(
     "fields",
     [
         {"workflow_engine": "cwltool"},
-        {"workflow_engine_version": "3.1"},
         {"workflow_engine": "cwltool", "workflow_engine_version": "3.1"},
+        {"workflow_engine": "cwltool", "workflow_engine_version": ""},
         # only empty values choose no engine
         {"workflow_engine": " "},
     ],
 )
-def test_post_run_workflow_engine_refused(
+def test_post_run_workflow_engine(
     foca_client: Client,
     mongodb: MongoClient[dict[str, Any]],
     queued: list[dict[str, Any]],
     remote_wes: list[dict[str, str]],
     fields: dict[str, str],
 ) -> None:
-    """Runs that choose a workflow engine are refused until it is forwarded.
+    """The workflow engine (version) of a run is stored, forwarded and served.
 
-    Neither stored nor forwarded (#66), instead of losing the engine choice.
+    Empty fields choose nothing: they are neither stored nor forwarded.
+    """
+    response = _post_run(foca_client, {**RUN_REQUEST, **fields})
+    assert response.status_code == 200
+    chosen = {field: value for field, value in fields.items() if value != ""}
+    assert _engine_fields(remote_wes[0]) == chosen
+    assert _engine_fields(_stored(mongodb)["run_log"]["request"]) == chosen
+    run = foca_client.get(f"{BASE_PATH}/runs/{response.json()['run_id']}")
+    assert run.status_code == 200
+    assert _engine_fields(run.json()["request"]) == chosen
+    assert len(queued) == 1
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"workflow_engine_version": "3.1"},
+        {"workflow_engine": "", "workflow_engine_version": "3.1"},
+    ],
+)
+def test_post_run_workflow_engine_version_without_engine(
+    foca_client: Client,
+    mongodb: MongoClient[dict[str, Any]],
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+    fields: dict[str, str],
+) -> None:
+    """A workflow engine version without the engine is refused, as specified.
+
+    Neither stored nor forwarded; the error points at the engine.
     """
     response = _post_run(foca_client, {**RUN_REQUEST, **fields})
     assert response.status_code == 400
-    assert "workflow_engine" in response.json()["detail"]
+    assert response.json()["errors"] == [
+        {
+            "detail": "Required if workflow_engine_version is set.",
+            "pointer": "#/workflow_engine",
+            "code": "required",
+        }
+    ]
+    assert mongodb[RUN_DB][RUN_COLLECTION].count_documents({}) == 0
+    assert not remote_wes
+    assert not queued
+
+
+def test_post_run_workflow_engine_wes_10(
+    add_overlay: Callable[[str], None],
+    mongodb: MongoClient[dict[str, Any]],
+    queued: list[dict[str, Any]],
+    remote_wes: list[dict[str, str]],
+    token: str,
+) -> None:
+    """Runs that choose the engine aren't sent to WES 1.0, which can't choose.
+
+    With only WES 1.0 instances, they are refused, naming the field.
+    """
+    from pro_wes.app import init_app  # noqa: PLC0415 (after the client patch)
+
+    add_overlay(
+        "custom:\n  wes:\n    backends:\n      - type: ga4gh-wes\n"
+        f'        url: {BACKEND_URL}\n        labels: {{wes.version: "1.0"}}\n'
+    )
+    with TokenClient(init_app(), token) as client:
+        response = _post_run(client, {**RUN_REQUEST, "workflow_engine": "cwltool"})
+    assert response.status_code == 400
+    assert [error["pointer"] for error in response.json()["errors"]] == [
+        "#/workflow_engine"
+    ]
     assert mongodb[RUN_DB][RUN_COLLECTION].count_documents({}) == 0
     assert not remote_wes
     assert not queued
@@ -332,12 +408,18 @@ def test_post_run_empty_workflow_engine(
     queued: list[dict[str, Any]],
     remote_wes: list[dict[str, str]],
 ) -> None:
-    """Empty workflow engine fields (no choice) are accepted, not forwarded."""
+    """Empty workflow engine fields (no choice) are accepted, not forwarded.
+
+    Nor are they served in the run log.
+    """
     fields = {"workflow_engine": "", "workflow_engine_version": ""}
     response = _post_run(foca_client, {**RUN_REQUEST, **fields})
     assert response.status_code == 200
     assert "workflow_engine" not in remote_wes[0]
     assert "workflow_engine_version" not in remote_wes[0]
+    run = foca_client.get(f"{BASE_PATH}/runs/{response.json()['run_id']}")
+    assert "workflow_engine" not in run.json()["request"]
+    assert "workflow_engine_version" not in run.json()["request"]
 
 
 def test_post_run_workflow_engine_as_file_refused(
@@ -345,7 +427,7 @@ def test_post_run_workflow_engine_as_file_refused(
     queued: list[dict[str, Any]],
     remote_wes: list[dict[str, str]],
 ) -> None:
-    """A workflow engine sent as a file part is refused, too."""
+    """A workflow engine sent as a file part is refused, not lost."""
     fields = _multipart(RUN_REQUEST)[: -len(f"--{BOUNDARY}--\r\n")]
     part = (
         f"--{BOUNDARY}\r\nContent-Disposition: form-data;"
@@ -358,6 +440,13 @@ def test_post_run_workflow_engine_as_file_refused(
         headers={"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"},
     )
     assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {
+            "detail": "Must be a form field, not a file.",
+            "pointer": "#/workflow_engine",
+            "code": "invalid-value",
+        }
+    ]
     assert not remote_wes
 
 

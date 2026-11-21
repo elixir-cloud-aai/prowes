@@ -51,7 +51,6 @@ __all__ = [
     "UrlCredentials",
     "UrlEncodedAttachment",
     "WesEndpointProblem",
-    "WorkflowEngineNotSupported",
     "exceptions",
 ]
 
@@ -135,13 +134,6 @@ class NoBackendAvailable(ServiceUnavailable):
 
 class NoSuitableEngine(BadRequest):
     """No suitable workflow engine known."""
-
-
-class WorkflowEngineNotSupported(BadRequest):
-    """A run request chooses a workflow engine, which proWES can't forward yet.
-
-    `workflow_engine` and `workflow_engine_version` of WES 1.1.0 (#66).
-    """
 
 
 class TasksNotServed(InternalServerError):
@@ -309,14 +301,6 @@ exceptions = {
     NoSuitableEngine: {
         "title": "Bad request",
         "detail": "No suitable workflow engine known.",
-        "status": 400,
-    },
-    WorkflowEngineNotSupported: {
-        "title": "Bad request",
-        "detail": (
-            "Choosing a workflow engine (workflow_engine,"
-            " workflow_engine_version) is not supported yet."
-        ),
         "status": 400,
     },
     ValidationError: {

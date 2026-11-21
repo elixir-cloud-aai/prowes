@@ -305,20 +305,18 @@ running, for inspection, and the test can run again on it.
 Where Sapporo 2.4.2 differs from WES 1.1.0, the test accommodates it:
 
 - Sapporo requires the field `workflow_engine` in run requests, which
-  proWES doesn't forward yet
-  ([#66](https://github.com/elixir-cloud-aai/prowes/issues/66)). Until it
-  does, runs go to Sapporo through a proxy that adds
-  `workflow_engine=cwltool` (`tests/integration/engine_proxy.py`). The test
-  checks that Sapporo still rejects runs without the field, so that the
-  proxy is dropped once it doesn't.
+  WES 1.1.0 makes optional: the test sends `workflow_engine=cwltool`, which
+  proWES forwards. It checks that Sapporo rejects runs without the field,
+  so that its runs show that proWES forwards it.
 - Its run logs list the outputs as an array of files, not as an object:
   proWES leaves them out of the run log, as it does with any invalid field,
   so the test checks the output file in the engine's standard output
   (cwltool's output object).
 - Its service info reports the WES version `sapporo-wes-2.1.0` (Sapporo's
   extension of WES 1.1.0) in `type.version` and `supported_wes_versions`,
-  not a version of the WES specification (relevant for routing by WES
-  version, [#122](https://github.com/elixir-cloud-aai/prowes/issues/122)).
+  not a version of the WES specification, so it would count as WES 1.0,
+  which can't choose the engine: its entry has the label `wes.version:
+  "1.1"` (`tests/integration/config.yaml`).
 
 ## Dependencies
 

@@ -28,7 +28,7 @@ x-integration: &integration
   depends_on:
     fake-wes:
       condition: service_healthy
-    engine-proxy:
+    sapporo:
       condition: service_healthy
 
 services:
@@ -59,24 +59,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 5s
-
-  # Adds the workflow engine to the run requests that proWES forwards to
-  # Sapporo, which requires it (`engine_proxy.py`, until #66), in the app's
-  # image, whose health check probes Sapporo's service info through it
-  engine-proxy:
-    image: prowes:smoke
-    pull_policy: never
-    command: ["python", "/integration/engine_proxy.py"]
-    environment:
-      HEALTHCHECK_URL: http://localhost:1122/service-info
-    volumes:
-      - ./tests/integration:/integration:ro
-    depends_on:
-      sapporo:
-        condition: service_healthy
-    healthcheck:
-      interval: 5s
       start_period: 5s
 
   # The workflows of the test, over plain HTTP, in the app's image (built
