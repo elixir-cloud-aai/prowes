@@ -12,7 +12,7 @@ instead of slept.
 from collections.abc import Callable
 import json
 import logging
-import time
+from types import SimpleNamespace
 from typing import Any
 
 from foca.testing import Client
@@ -33,7 +33,7 @@ from pro_wes.exceptions import (
     EngineOutcomeUnknown,
     EngineRequestNotSent,
 )
-from pro_wes.ga4gh.wes import client_wes, routing
+from pro_wes.ga4gh.wes import client_wes, routing, workflow_runs
 from pro_wes.ga4gh.wes.client_wes import WesClient
 from pro_wes.ga4gh.wes.models import ErrorResponse, RunId, RunStatus
 from pro_wes.ga4gh.wes.routing import backend_versions
@@ -172,13 +172,22 @@ def test_retry_defaults() -> None:
     "values",
     [
         {"attempts": 0},
+        {"attempts": 101},
         {"backoff": -1},
         {"backoff": float("inf")},
         {"max_backoff": -1},
         {"max_backoff": 3601},
         {"other": 1},
     ],
-    ids=["no attempts", "negative", "infinite", "negative max", "large max", "extra"],
+    ids=[
+        "no attempts",
+        "many attempts",
+        "negative",
+        "infinite",
+        "negative max",
+        "large max",
+        "extra",
+    ],
 )
 def test_retry_invalid(values: dict[str, Any]) -> None:
     """Invalid retry settings stop the app."""
@@ -382,21 +391,50 @@ def test_post_not_retried_if_maybe_sent(
     assert not waits
 
 
-@pytest.mark.usefixtures("foca_app")
-def test_no_try_after_deadline(waits: list[float]) -> None:
-    """No retry starts after the deadline, and no wait passes it.
+def _fake_clock(monkeypatch: pytest.MonkeyPatch, module: Any, *times: float) -> None:
+    """Replace `time.monotonic()` of a module with a scripted clock.
 
-    The first try is always made.
+    Args:
+        monkeypatch: Monkeypatch fixture of the test.
+        module: Module whose `time` is replaced.
+        *times: Values returned in turn; the last one repeats.
     """
+    values = list(times)
+
+    def _monotonic() -> float:
+        """Get the next scripted time.
+
+        Returns:
+            The time.
+        """
+        return values.pop(0) if len(values) > 1 else values[0]
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=_monotonic))
+
+
+@pytest.mark.usefixtures("foca_app")
+@pytest.mark.parametrize(
+    ("deadline", "calls", "expected_waits"),
+    [(0, 1, []), (1, 1, []), (1.5, 2, [1]), (None, 3, [1, 2])],
+    ids=["passed", "wait ends at deadline", "wait ends before", "no deadline"],
+)
+def test_no_try_after_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    waits: list[float],
+    deadline: float | None,
+    calls: int,
+    expected_waits: list[float],
+) -> None:
+    """No retry starts whose wait would end at or after the deadline.
+
+    The first try is always made. The clock stands still at 0.
+    """
+    _fake_clock(monkeypatch, client_wes, 0)
     http = ScriptedHttp(Answer(error=NOT_SENT))
-    client = _client(http, Retry(attempts=3, backoff=5))
     with pytest.raises(EngineRequestNotSent):
-        client.post_run(form_data=FORM_DATA, timeout=1, deadline=time.monotonic() + 1)
-    assert len(http.calls) == 1
-    with pytest.raises(EngineRequestNotSent):
-        client.post_run(form_data=FORM_DATA, timeout=1, deadline=time.monotonic())
-    assert len(http.calls) == 2
-    assert not waits
+        _client(http, RETRY).post_run(form_data=FORM_DATA, timeout=1, deadline=deadline)
+    assert len(http.calls) == calls
+    assert waits == expected_waits
 
 
 @pytest.mark.usefixtures("foca_app")
@@ -590,6 +628,7 @@ def _stored(mongodb: MongoClient[dict[str, Any]]) -> dict[str, Any]:
 
 
 def test_failover_if_not_sent(
+    monkeypatch: pytest.MonkeyPatch,
     three_backends: Callable[[str], TokenClient],
     remotes: dict[str, Any],
     queued: list[dict[str, Any]],
@@ -597,9 +636,15 @@ def test_failover_if_not_sent(
 ) -> None:
     """Runs go to the next WES instance if one certainly didn't get them.
 
-    The run is stored with the WES instance that accepted it, in its WES
-    version, and tracked there.
+    Each WES instance gets the run in its WES version (marked by a fake
+    downgrade). The run is stored with the WES instance that accepted it, in
+    its WES version, and tracked there.
     """
+    monkeypatch.setattr(
+        workflow_runs,
+        "downgrade_run_request",
+        lambda fields, version: {**fields, "version": str(version)},
+    )
     remotes["outcomes"][BACKEND_URL] = EngineRequestNotSent("refused")
     remotes["outcomes"][SECOND_URL] = EngineRequestNotSent("refused")
     with three_backends("") as client:
@@ -616,7 +661,11 @@ def test_failover_if_not_sent(
     assert stored["wes_endpoint"]["run_id"] == f"REMOTE-{THIRD_URL}"
     assert stored["run_log"]["state"] != "SYSTEM_ERROR"
     assert queued[0]["remote_host"] == THIRD_URL
-    # in the WES version of each WES instance (1.0 has no `tags` default)
+    assert [form["version"] for _, form, _ in remotes["sent"]] == [
+        "1.1",
+        "1.1",
+        "1.0",
+    ]
     deadlines = {deadline for _, _, deadline in remotes["sent"]}
     assert len(deadlines) == 1
     assert None not in deadlines
@@ -688,15 +737,30 @@ def test_failover_only_to_eligible(
     assert not queued
 
 
+@pytest.mark.parametrize(
+    ("elapsed", "hosts"),
+    [(29.9, [BACKEND_URL, SECOND_URL]), (30, [BACKEND_URL])],
+    ids=["before", "passed"],
+)
 def test_failover_within_forward_timeout(
+    monkeypatch: pytest.MonkeyPatch,
     three_backends: Callable[[str], TokenClient],
     remotes: dict[str, Any],
     mongodb: MongoClient[dict[str, Any]],
+    elapsed: float,
+    hosts: list[str],
 ) -> None:
-    """No further WES instance is tried once the forward timeout passed."""
+    """No further WES instance is tried once the forward timeout passed.
+
+    The run starts at 0 and fails at the first WES instance after
+    `elapsed` seconds (`forward_timeout: 30`).
+    """
     remotes["outcomes"][BACKEND_URL] = EngineRequestNotSent("refused")
-    with three_backends("  post_runs:\n    forward_timeout: 0.000001\n") as client:
+    remotes["outcomes"][SECOND_URL] = EngineRequestNotSent("refused")
+    remotes["outcomes"][THIRD_URL] = EngineRequestNotSent("refused")
+    _fake_clock(monkeypatch, workflow_runs, 0, elapsed, 30)
+    with three_backends("  post_runs:\n    forward_timeout: 30\n") as client:
         response = _post_run(client)
     assert response.status_code == 500
-    assert [host for host, _, _ in remotes["sent"]] == [BACKEND_URL]
+    assert [host for host, _, _ in remotes["sent"]] == hosts
     assert _stored(mongodb)["run_log"]["state"] == "SYSTEM_ERROR"

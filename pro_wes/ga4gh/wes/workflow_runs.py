@@ -452,6 +452,8 @@ class WorkflowRuns:
                     following.url,
                 )
                 backend = following
+                # stored before it is sent, so that the run never points at
+                # a WES instance other than the last one it was sent to
                 db_connector.upsert_fields_in_root_object(
                     root="wes_endpoint",
                     host=backend.url,
@@ -492,7 +494,8 @@ class WorkflowRuns:
             return None
         try:
             return select_backend(form_fields, exclude=tried)
-        except (InvalidFieldsProblem, NoBackendAvailable):
+        except (InvalidFieldsProblem, NoBackendAvailable) as exc:
+            logger.warning("No further WES instance can run the run: %s", exc)
             return None
 
     def list_runs(

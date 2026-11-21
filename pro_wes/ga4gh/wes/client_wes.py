@@ -129,6 +129,20 @@ def _retried(method: str, error: EngineRequestNotSent | EngineOutcomeUnknown) ->
     return method in SAFE_METHODS and error.reason in RETRIED_MAYBE_SENT
 
 
+def _retried_status(method: str, status: int) -> bool:
+    """Tell whether a request answered with a status may be tried again.
+
+    Args:
+        method: HTTP method of the request.
+        status: Status of the answer.
+
+    Returns:
+        Whether the request is a read (`SAFE_METHODS`) and the status one of
+        `RETRIED_STATUSES`.
+    """
+    return method in SAFE_METHODS and status in RETRIED_STATUSES
+
+
 class _GuardedHttp(GuardedClient):
     """Guarded HTTP client that may verify with other certificate authorities.
 
@@ -659,8 +673,7 @@ class WesClient:
                     raise
             else:
                 if not (
-                    method in SAFE_METHODS
-                    and response.status in RETRIED_STATUSES
+                    _retried_status(method, response.status)
                     and self._wait(
                         attempt, deadline, method, path, f"status {response.status}"
                     )

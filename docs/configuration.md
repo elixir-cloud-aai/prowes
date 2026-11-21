@@ -30,8 +30,10 @@ The settings that deployments usually change:
 | `custom.defaults.timeout` | `2` | Timeout of other requests to the remote WES (status, cancel), in seconds, for each request as a whole; required, a positive number |
 | `custom.wes.max_response_size` | `16777216` (16 MiB) | Maximum size of each response of a WES instance, in bytes; larger responses fail the request, see [WES instances](#wes-instances) |
 | `custom.wes.version_cache_ttl` | `3600` | Seconds that the WES version of a WES instance, as read from its service info, is cached, see [WES versions](#wes-versions) |
-| `custom.wes.retry.attempts`, `custom.wes.retry.backoff`, `custom.wes.retry.max_backoff` | `3`, `1`, `10` | Tries of each request to a WES instance (at least 1; `1`: no retries), seconds to wait before the second try (doubled for each further one; `0`: no wait) and longest wait between two tries (at most 3600), see [Retries](#retries) |
-| `custom.post_runs.forward_timeout` | `30` | Seconds for forwarding a new run as a whole: all tries at all WES instances that can run it (a positive number), see [Retries](#retries) |
+| `custom.wes.retry.attempts` | `3` | Tries of each request to a WES instance (1 to 100; `1`: no retries), see [Retries](#retries) |
+| `custom.wes.retry.backoff` | `1` | Seconds to wait before the second try, doubled for each further one (`0`: no wait; at most 3600), see [Retries](#retries) |
+| `custom.wes.retry.max_backoff` | `10` | Longest wait between two tries, in seconds (at most 3600), see [Retries](#retries) |
+| `custom.post_runs.forward_timeout` | `30` | Seconds for forwarding a new run as a whole: all tries at all WES instances that can run it (a positive number, at most 86400), see [Retries](#retries) |
 
 ## WES instances
 

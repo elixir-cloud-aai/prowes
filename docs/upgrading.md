@@ -118,8 +118,10 @@ instances](configuration.md#wes-instances)). Check the following:
   them (new: within `custom.post_runs.forward_timeout`, 30 seconds; before:
   the run was `SYSTEM_ERROR`), see [Retries](configuration.md#retries).
   `POST /runs` may now take about a minute: keep the timeouts of proxies
-  in front of proWES longer, or lower `forward_timeout` (`attempts: 1`
-  tries each request once).
+  in front of proWES (e.g., 30 seconds of the OpenShift router) and the
+  Gunicorn `gracefulTimeout` longer, see [Request
+  timeouts](deployment.md#request-timeouts), or lower `forward_timeout`
+  (`attempts: 1` tries each request once).
 
 ### Run identifiers
 

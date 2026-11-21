@@ -118,6 +118,9 @@ WesBackendEntry = Annotated[
 """Entry of `custom.wes.backends`."""
 
 
+MAX_ATTEMPTS = 100
+"""Maximum tries of a request to a WES instance."""
+
 MAX_BACKOFF = 3600
 """Maximum wait between two tries of a request to a WES instance, in seconds
 (an hour)."""
@@ -141,7 +144,7 @@ class Retry(BaseModel):
     seconds.
 
     Args:
-        attempts: Tries of each request, at least 1 (`1`: no retries).
+        attempts: Tries of each request, from 1 (no retries) to 100.
         backoff: Seconds to wait before the second try (`0`: none).
         max_backoff: Longest wait between two tries, in seconds.
 
@@ -153,7 +156,7 @@ class Retry(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    attempts: PositiveInt = 3
+    attempts: Annotated[int, Field(ge=1, le=MAX_ATTEMPTS)] = 3
     backoff: Backoff = 1
     max_backoff: Backoff = 10
 

@@ -356,6 +356,21 @@ any `X-Forwarded-For` address and get a rate limit of their own for each.
 For other controllers and Gateways, see FOCA's [Helm chart
 guide](https://foca.readthedocs.io/en/latest/helm-chart/#exposing-the-app).
 
+### Request timeouts
+
+`POST /runs` waits until a WES instance accepted the run: with retries and
+failover to the next WES instance (see
+[Retries](configuration.md#retries)), up to about
+`custom.post_runs.forward_timeout` plus `custom.post_runs.timeout_post`
+plus 5 seconds (65 seconds by default). Keep the timeouts of the proxies in
+front of proWES longer, or a client gets `504 Gateway Timeout` while
+proWES still forwards the run, and may submit it again: the OpenShift
+router (30 seconds by default; the Route annotation
+`haproxy.router.openshift.io/timeout`, e.g., `90s`), ingress-nginx (60
+seconds; `nginx.ingress.kubernetes.io/proxy-read-timeout` and
+`proxy-send-timeout`, e.g., `"90"`) or the timeouts of your Gateway. Or
+lower `forward_timeout` and `timeout_post` below the proxy's timeout.
+
 ## Network policies
 
 NetworkPolicies allow connections to MongoDB and the broker only from the
@@ -386,7 +401,10 @@ range. Clusters that refuse the `RuntimeDefault` seccomp profile need
 The image serves the app with Gunicorn; the chart passes `prowes.gunicorn`
 as `GUNICORN_CMD_ARGS`: `workers` and `threads` (one worker with 4 threads
 by default), `timeout`, `gracefulTimeout` (the pod's termination grace
-period is `preStopSleepSeconds` plus `gracefulTimeout` plus 10 seconds),
+period is `preStopSleepSeconds` plus `gracefulTimeout` plus 10 seconds;
+keep `gracefulTimeout` at least as long as `POST /runs` may take, see
+[Request timeouts](#request-timeouts), so that runs being forwarded on
+shutdown are not cut off),
 `keepalive` (keep it longer than the ingress controller's upstream
 keep-alive timeout) and `extraArgs`. Rendering fails for `--bind`, as the
 chart's ports are 8080, for `--preload` and for `--graceful-timeout`. The
