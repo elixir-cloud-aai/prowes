@@ -38,9 +38,13 @@ instance and can still be canceled (see [Run states](api.md#run-states)).
 
 ## Failed requests to WES instances
 
-Requests to WES instances that fail answer `500 Internal Server Error`
-("Could not reach remote WES service"; `POST /runs` also sets the run to
-`SYSTEM_ERROR`), and the worker counts them as failed polls. Besides WES
+Requests to WES instances are tried again as `custom.wes.retry` says, and
+new runs that a WES instance certainly didn't get go to the next one that
+can run them (see [Retries](configuration.md#retries)); each retry and
+each such run is logged as a warning ("trying again", "sending it to the
+next WES instance"). Requests that still fail answer `500 Internal Server
+Error` ("Could not reach remote WES service"; `POST /runs` also sets the run
+to `SYSTEM_ERROR`), and the worker counts them as failed polls. Besides WES
 instances that are down, causes are the limits of the guarded HTTP client
 (see [WES instances](configuration.md#wes-instances)): redirects, responses
 larger than `custom.wes.max_response_size` (logged as errors), timeouts,

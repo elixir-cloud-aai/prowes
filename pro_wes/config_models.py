@@ -118,6 +118,46 @@ WesBackendEntry = Annotated[
 """Entry of `custom.wes.backends`."""
 
 
+MAX_BACKOFF = 3600
+"""Maximum wait between two tries of a request to a WES instance, in seconds
+(an hour)."""
+
+Backoff = Annotated[float, Field(ge=0, le=MAX_BACKOFF, allow_inf_nan=False)]
+"""Wait between two tries of a request, in seconds: non-negative and finite."""
+
+
+class Retry(BaseModel):
+    """Retries of requests to WES instances (`custom.wes.retry`).
+
+    Each request to a WES instance is tried up to `attempts` times, as long
+    as it fails in a way that another try may change, and that can't make
+    the WES instance do anything twice (cf.
+    :py:mod:`pro_wes.ga4gh.wes.client_wes`): reads (`GET`) after errors of
+    connections, timeouts and the statuses `502`, `503` and `504`; requests
+    that change something (`POST`, e.g., new runs and cancellations) only if
+    the WES instance certainly didn't get them (e.g., the connection was
+    refused). Before the second try, proWES waits `backoff` seconds, and
+    twice as long before each further one, but at most `max_backoff`
+    seconds.
+
+    Args:
+        attempts: Tries of each request, at least 1 (`1`: no retries).
+        backoff: Seconds to wait before the second try (`0`: none).
+        max_backoff: Longest wait between two tries, in seconds.
+
+    Attributes:
+        attempts: Tries of each request.
+        backoff: Seconds to wait before the second try.
+        max_backoff: Longest wait between two tries, in seconds.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    attempts: PositiveInt = 3
+    backoff: Backoff = 1
+    max_backoff: Backoff = 10
+
+
 class Wes(BaseModel):
     """WES backend configuration.
 
@@ -133,6 +173,7 @@ class Wes(BaseModel):
         version_cache_ttl: Seconds that the WES version of a WES instance,
             as read from its service info, is cached (cf.
             :py:mod:`pro_wes.ga4gh.wes.routing`).
+        retry: Retries of requests to WES instances.
 
     Attributes:
         backends: WES instances that runs may be forwarded to, in order.
@@ -140,6 +181,7 @@ class Wes(BaseModel):
             in bytes.
         version_cache_ttl: Seconds that the WES version of a WES instance,
             as read from its service info, is cached.
+        retry: Retries of requests to WES instances.
     """
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
@@ -147,6 +189,7 @@ class Wes(BaseModel):
     backends: list[WesBackendEntry] = []
     max_response_size: PositiveInt = MAX_RESPONSE_SIZE
     version_cache_ttl: PositiveInt = 3600
+    retry: Retry = Retry()
 
     @model_validator(mode="after")
     def known_versions(self) -> Self:
@@ -217,6 +260,12 @@ class PostRuns(BaseModel):
         timeout_post: Timeout of sending a new workflow run request to a
             remote WES instance, and of reading run logs, in seconds, for
             each request as a whole.
+        forward_timeout: Seconds for forwarding a new run as a whole: all
+            tries at all WES instances that can run it (cf.
+            `custom.wes.retry`). Runs go to the next WES instance only if the
+            current one certainly didn't get them; no further try (or WES
+            instance) starts once this time has passed, but the first try at
+            the first WES instance always does.
         timeout_job: How long, in seconds, a background job tracking a
             workflow run is allowed to run. Set to `None` to disable timing
             out.
@@ -254,6 +303,7 @@ class PostRuns(BaseModel):
     id_charset: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     id_length: int = 6
     timeout_post: Timeout = 30
+    forward_timeout: Timeout = 30
     timeout_job: int | None = None
     polling_wait: float = 3
     polling_attempts: int = 100

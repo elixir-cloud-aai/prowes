@@ -12,6 +12,7 @@ version of that WES instance. Until FOCA's gateway plugins choose and order
 the WES instances (#121), these are the candidates of the `route` phase.
 """
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from http import HTTPStatus
 import logging
@@ -22,7 +23,7 @@ from foca import get_custom_config
 from foca.errors import FieldError, InvalidFieldsProblem, json_pointer
 from foca.plugins import Backend
 
-from pro_wes.config_models import CustomConfig
+from pro_wes.config_models import CustomConfig, Retry
 from pro_wes.exceptions import NoBackendAvailable
 from pro_wes.ga4gh.wes.backends import api_path, get_backend_list
 from pro_wes.ga4gh.wes.client_wes import WesClient
@@ -220,7 +221,8 @@ def read_service_info(
 ) -> tuple[int, Any]:
     """Read the service info of a WES instance, without credentials.
 
-    Must be called in an app context.
+    Tried once, not as `custom.wes.retry` says. Must be called in an app
+    context.
 
     Args:
         backend: Backend.
@@ -232,8 +234,12 @@ def read_service_info(
     Raises:
         pro_wes.exceptions.EngineUnavailable: The request failed.
     """
+    # tried once: failures are cached and read again after `PROBE_RETRY`
+    # seconds, and reads for a run are limited to `PROBE_TIMEOUT` seconds
     client = WesClient(
-        host=backend.url, base_path=api_path(backend, get_backend_list())
+        host=backend.url,
+        base_path=api_path(backend, get_backend_list()),
+        retry=Retry(attempts=1),
     )
     return client.read_service_info(timeout=timeout)
 
@@ -301,7 +307,9 @@ class SelectedBackend:
     version: WesVersion
 
 
-def select_backend(request: dict[str, Any]) -> SelectedBackend:
+def select_backend(
+    request: dict[str, Any], exclude: Collection[str] = ()
+) -> SelectedBackend:
     """Choose the WES instance that a new run is forwarded to.
 
     The first backend of the list (configured WES instances, and those
@@ -310,6 +318,8 @@ def select_backend(request: dict[str, Any]) -> SelectedBackend:
 
     Args:
         request: Run request of the canonical WES version (form fields).
+        exclude: Base URLs of WES instances that are not chosen (e.g., those
+            that a run could not be sent to).
 
     Returns:
         The WES instance, with its API path and WES version.
@@ -319,13 +329,16 @@ def select_backend(request: dict[str, Any]) -> SelectedBackend:
             unchanged, and all of them stated or reported their versions
             (`400`), naming the fields.
         pro_wes.exceptions.NoBackendAvailable: The list has no backend
-            (e.g., none is configured, or the registries list none yet), or
+            (e.g., none is configured, the registries list none yet, or
+            all are excluded), or
             none that can run the request, but some didn't answer so far,
             or the versions of all eligible ones changed since they were
             found eligible (`503`, as retrying may help).
     """
     backend_list = get_backend_list()
-    backends = backend_list.expand()
+    backends = [
+        backend for backend in backend_list.expand() if backend.url not in exclude
+    ]
     if not backends:
         raise NoBackendAvailable(
             "No WES instance available; configure `custom.wes.backends`"

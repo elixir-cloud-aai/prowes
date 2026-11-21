@@ -208,6 +208,11 @@ custom:
     storage_path: "/data"
     timeout_job: null
     timeout_post: 30
+    # Seconds for forwarding a new run as a whole: all tries at all WES
+    # instances that can run it (cf. `wes.retry`); no further try (or WES
+    # instance) starts after it, but a try that started may take
+    # `timeout_post` seconds more
+    forward_timeout: 30
     # Workflow attachments: at most 100 per run, of at most 1 MiB each
     # (`413 Content Too Large` otherwise)
     max_attachments: 100
@@ -242,7 +247,18 @@ custom:
   # {wes.version: "1.1"}`), else the version of their service info, read
   # without credentials and cached for `version_cache_ttl` seconds; cf. "WES
   # versions" in `docs/configuration.md`
+  # Requests to WES instances are tried up to `retry.attempts` times, after
+  # waits of `retry.backoff` seconds, doubled for each further try, up to
+  # `retry.max_backoff`: reads after connection errors, timeouts and `502`,
+  # `503` and `504`; requests that change something (new runs,
+  # cancellations) only if the WES instance certainly didn't get them; new
+  # runs that a WES instance certainly didn't get go to the next one that
+  # can run them; cf. "Retries" in `docs/configuration.md`
   wes:
     backends: []
     max_response_size: 16777216
     version_cache_ttl: 3600
+    retry:
+      attempts: 3
+      backoff: 1
+      max_backoff: 10

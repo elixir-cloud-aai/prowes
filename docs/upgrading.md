@@ -112,6 +112,14 @@ instances](configuration.md#wes-instances)). Check the following:
   at public addresses only.
 - Run requests are sent as `multipart/form-data`, as the WES API specifies
   (before: `application/x-www-form-urlencoded`).
+- Failed requests are tried again (new: `custom.wes.retry`, by default 3
+  tries, after 1 and 2 seconds; before: once), and new runs that a WES
+  instance certainly didn't get go to the next WES instance that can run
+  them (new: within `custom.post_runs.forward_timeout`, 30 seconds; before:
+  the run was `SYSTEM_ERROR`), see [Retries](configuration.md#retries).
+  `POST /runs` may now take about a minute: keep the timeouts of proxies
+  in front of proWES longer, or lower `forward_timeout` (`attempts: 1`
+  tries each request once).
 
 ### Run identifiers
 
