@@ -182,8 +182,12 @@ if [ "${status}" != 413 ] || ! jq -e '.status == 413 and (.detail | test("reques
   exit 1
 fi
 # proWES read the WES versions of the fake WES instances that runs went to
-# (WES 1.0.1), from their service infos
-if ! docker compose logs prowes | grep -q "WES version of WES instance https://fake-wes: 1.0"; then
+# (WES 1.0.1), from their service infos. The logs are read in full before
+# they are searched: `grep -q` in a pipe stops reading at the first match,
+# and with `pipefail` the write error of `docker compose logs` failed the
+# check now and then
+logs="$(docker compose logs prowes)"
+if ! grep -q "WES version of WES instance https://fake-wes: 1.0" <<< "${logs}"; then
   echo "::error::proWES didn't read the WES version of the fake WES"
   exit 1
 fi
