@@ -192,9 +192,8 @@ def _forward_name(filename: str, name: str) -> str:
     of them empty, `.` or `..` or longer than `MAX_FILENAME_BYTES`, without
     backslashes, quotes, percent signs or characters that aren't printable.
     Others (e.g., absolute paths, or paths with `..`) are replaced by the
-    safe file name under
-    which the attachment is written (cf. `WorkflowRuns._secure_filename()`),
-    so that WES instances never get them.
+    safe file name under which the attachment is written (cf.
+    `WorkflowRuns._secure_filename()`), so that WES instances never get them.
 
     Args:
         filename: Name of the file as indicated in the run request.

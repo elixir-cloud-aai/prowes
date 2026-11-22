@@ -90,9 +90,8 @@ requests](configuration.md#run-requests)): absolute paths, names with
 `..`, `.` or empty parts (e.g., `a//b`), backslashes, quotes, percent
 signs, or characters that aren't printable, names that Unicode
 normalization (NFKC) changes (e.g., the fullwidth `．．／`, which would
-become `../`), names longer than 4096 bytes, or with a part longer than 255
-bytes (e.g.,
-`../input.txt` is forwarded as `input.txt`). Names that clash only at the
+become `../`), and names longer than 4096 bytes or with a part longer than
+255 bytes. For example, `../input.txt` is forwarded as `input.txt`. Names that clash only at the
 WES instance (e.g., `data` and `data/input.txt`) are forwarded as they are.
 
 `POST /runs` returns the run's own identifier, by which `GET
