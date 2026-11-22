@@ -87,7 +87,8 @@ paths in the run request (e.g., `workflow_url: main.cwl` or an input
 doesn't allow, or that aren't relative paths, are forwarded under the safe
 file name that proWES writes them under instead (see [Run
 requests](configuration.md#run-requests)): absolute paths, names with
-`..`, `.` or empty parts (e.g., `a//b`), backslashes, quotes, percent
+`..`, `.` or empty parts (e.g., `a//b`), parts that start or end with a
+space or end with a dot, backslashes, quotes, percent
 signs, or characters that aren't printable, names that Unicode
 normalization (NFKC) changes (e.g., the fullwidth `．．／`, which would
 become `../`), and names longer than 4096 bytes or with a part longer than

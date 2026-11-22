@@ -224,12 +224,15 @@ def _forward_parts_allowed(filename: str) -> bool:
 
     Returns:
         Whether no part is empty, `.` or `..`, longer than
-        `MAX_FILENAME_BYTES`, or has a backslash, a quote, a percent sign
-        (which multipart encoding changes) or characters that aren't
-        printable.
+        `MAX_FILENAME_BYTES`, starts or ends with a space or ends with a
+        dot (which Windows drops, e.g., `.. ` would become `..`), or has
+        a backslash, a quote, a percent sign (which multipart encoding
+        changes) or characters that aren't printable.
     """
     return all(
         part not in ("", ".", "..")
+        and part == part.strip(" ")
+        and not part.endswith(".")
         and not set(part) & set('\\"%')
         and part.isprintable()
         and len(part.encode()) <= MAX_FILENAME_BYTES
