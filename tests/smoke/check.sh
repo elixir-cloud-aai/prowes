@@ -131,6 +131,33 @@ await "/runs/${id}" '.run_log.stdout == "fake complete"'
 check GET "/runs/${id}" 200 \
   ".run_id == \"${id}\" and .state == \"COMPLETE\" and .request.workflow_url == \"https://example.org/smoke.cwl\" and .outputs.workflow_url == \"https://example.org/smoke.cwl\" and .run_log.exit_code == 0"
 check GET '/runs?page_size=100' 200 "any(.runs[]; .run_id == \"${id}\" and .state == \"COMPLETE\")"
+# Workflow attachments are forwarded to the WES with their file names,
+# directories included, and contents, in order (the fake WES returns them
+# as outputs); names with `..` are forwarded under their safe file names
+attached="$(mktemp -d)"
+printf 'cwlVersion: v1.0\n' > "${attached}/main.cwl"
+printf 'class: CommandLineTool\n' > "${attached}/step.cwl"
+printf 'escape' > "${attached}/escape.txt"
+status="$(curl --silent --show-error --max-time 10 --output "${body}" \
+  --write-out '%{http_code}' -X POST --header 'Accept: application/json' \
+  --header "Authorization: Bearer ${user_token}" \
+  --form-string "workflow_params=${params}" --form-string 'workflow_type=CWL' \
+  --form-string 'workflow_type_version=v1.0' \
+  --form-string 'workflow_url=main.cwl' \
+  --form "workflow_attachment=@${attached}/main.cwl;filename=main.cwl" \
+  --form "workflow_attachment=@${attached}/step.cwl;filename=tools/step.cwl" \
+  --form "workflow_attachment=@${attached}/escape.txt;filename=../escape.txt" \
+  "${api}/runs")"
+rm -rf "${attached}"
+if [ "${status}" != 200 ]; then
+  echo "::error::POST /runs with attachments: status ${status}, expected 200"
+  cat "${body}"
+  exit 1
+fi
+with_files="$(jq -r .run_id "${body}")"
+await "/runs/${with_files}" '.state == "COMPLETE" and .run_log.stdout == "fake complete"'
+check GET "/runs/${with_files}" 200 \
+  '.outputs.attachments == [["main.cwl", "cwlVersion: v1.0\n"], ["tools/step.cwl", "class: CommandLineTool\n"], ["escape.txt", "escape"]]'
 # Finished runs aren't cancelable (not forwarded to the WES)
 check POST "/runs/${id}/cancel" 409 '.status == 409'
 # A run that the WES holds is running until it is canceled, then canceling

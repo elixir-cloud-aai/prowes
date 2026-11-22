@@ -381,6 +381,133 @@ def test_attachments_saved_safely(
     }
 
 
+@pytest.fixture
+def forwarded(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, bytes]]]:
+    """Fake the remote WES: runs are accepted, with their attachments.
+
+    Args:
+        monkeypatch: Monkeypatch fixture of the test.
+
+    Returns:
+        Workflow attachments (file names and contents) of the run requests
+        sent to the remote WES, in order.
+    """
+    sent: list[list[tuple[str, bytes]]] = []
+
+    def _post_run(
+        self: WesClient,
+        form_data: dict[str, str],
+        attachments: list[tuple[str, bytes]] | None = None,
+        **kwargs: Any,
+    ) -> RunId:
+        """Accept a run.
+
+        Args:
+            self: WES client.
+            form_data: Form data of the run request.
+            attachments: Workflow attachments of the run request.
+            **kwargs: Further arguments; ignored.
+
+        Returns:
+            Identifier of the run.
+        """
+        sent.append(list(attachments or []))
+        return RunId(run_id="REMOTE1")
+
+    monkeypatch.setattr(WesClient, "post_run", _post_run)
+    return sent
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("main.cwl", "main.cwl"),
+        ("tools/step.cwl", "tools/step.cwl"),
+        ("donn\u00e9es/a.csv", "donn\u00e9es/a.csv"),
+        ("~/a.txt", "~/a.txt"),
+        ("a/" + "b" * 255, "a/" + "b" * 255),
+        ("a/" + "b" * 256, "SAFE"),
+        ("../a.txt", "SAFE"),
+        ("a/../b.txt", "SAFE"),
+        ("/etc/passwd", "SAFE"),
+        ("./a.txt", "SAFE"),
+        ("a//b.txt", "SAFE"),
+        ("a/", "SAFE"),
+        ("C:\\a.txt", "SAFE"),
+        ("a\tb.txt", "SAFE"),
+        ("a\u200bb.txt", "SAFE"),
+        ("\uff0e\uff0e\uff0f\uff0e\uff0e\uff0fetc\uff0fpasswd", "SAFE"),
+        ("\u2025/x", "SAFE"),
+        ('a"b.cwl', "SAFE"),
+        ("a%22b.cwl", "SAFE"),
+        ("/".join(["b" * 255] * 16), "/".join(["b" * 255] * 16)),
+        ("/".join(["b" * 255] * 17), "SAFE"),
+    ],
+)
+def test_forward_name(filename: str, expected: str) -> None:
+    """Names are forwarded as sent if the WES API allows them (#44).
+
+    Others are forwarded under their safe file names (here `SAFE`).
+    """
+    assert workflow_runs._forward_name(filename, "SAFE") == expected
+    upload = workflow_runs.Upload(filename=filename, name="SAFE", content=b"x")
+    assert upload.forwarded == (expected, b"x")
+
+
+@pytest.mark.usefixtures("storage", "queued")
+def test_attachments_forwarded(
+    foca_client: Client,
+    forwarded: list[list[tuple[str, bytes]]],
+) -> None:
+    """Attachments are sent on to the WES instance, in order (#44).
+
+    Names that are relative paths without `.` or `..` parts are sent as
+    they are, with their directories, so that relative paths in the run
+    request (e.g., `workflow_url`) find them; others are sent with the safe
+    file name that they are written under.
+    """
+    files = [
+        ("workflow.cwl", b"cwlVersion: v1.0\n"),
+        ("tools/step.cwl", b"class: CommandLineTool\n"),
+        ("donn\u00e9es.csv", b"a,b\n"),
+        ("../../escape.txt", b"escape"),
+        ("/etc/passwd", b"absolute"),
+        ("tools/./dot.txt", b"dot"),
+        ("tools//double.txt", b"double"),
+        ("tools/", b"trailing"),
+        ("win\\path.txt", b"backslash"),
+        ("tab\tname.txt", b"control"),
+    ]
+    fields = {**RUN_REQUEST, "workflow_url": "workflow.cwl"}
+    response = _post_run(foca_client, fields, files)
+    assert response.status_code == 200
+    assert forwarded == [
+        [
+            ("workflow.cwl", b"cwlVersion: v1.0\n"),
+            ("tools/step.cwl", b"class: CommandLineTool\n"),
+            ("donn\u00e9es.csv", b"a,b\n"),
+            ("escape.txt", b"escape"),
+            ("etc_passwd", b"absolute"),
+            ("tools_dot.txt", b"dot"),
+            ("tools_double.txt", b"double"),
+            ("tools", b"trailing"),
+            ("winpath.txt", b"backslash"),
+            ("tab_name.txt", b"control"),
+        ]
+    ]
+
+
+@pytest.mark.usefixtures("storage", "queued")
+def test_no_attachments_forwarded(
+    foca_client: Client,
+    forwarded: list[list[tuple[str, bytes]]],
+) -> None:
+    """Runs without attachments are sent on without any."""
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 200
+    assert forwarded == [[]]
+
+
 def test_attachment_without_safe_name(
     foca_client: Client,
     mongodb: MongoClient[dict[str, Any]],

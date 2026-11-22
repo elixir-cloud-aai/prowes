@@ -350,6 +350,9 @@ directories (separators become `_`, e.g., `dir/a.txt` becomes `dir_a.txt`;
 bytes long. Runs with two attachments of the same safe file name, an
 attachment with a longer one, or one without file name are rejected with
 `400 Bad Request`. Files are created anew, never overwriting existing ones.
+The WES instance gets the attachments under their names as sent, if the
+WES API allows them, or else under their safe file names (see
+[Runs](api.md#runs)).
 
 The values of `tags` and `workflow_engine_parameters` must be strings, as
 in the WES specification, and no object in the JSON fields may have a key

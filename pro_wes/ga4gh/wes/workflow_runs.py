@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Any, NamedTuple
+import unicodedata
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
@@ -68,6 +69,10 @@ logger = logging.getLogger(__name__)
 # Maximum length of the file names of workflow attachments, in bytes (that of
 # common file systems, e.g., ext4 and XFS)
 MAX_FILENAME_BYTES = 255
+
+# Maximum length of the paths of workflow attachments that are forwarded as
+# they are, in bytes (`PATH_MAX` of Linux)
+MAX_PATH_BYTES = 4096
 
 # Fields of run requests that hold JSON objects (as strings, in forms)
 JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
@@ -176,6 +181,63 @@ def _tags_too_large(tags: Any, max_tags_size: int) -> bool:
     return isinstance(tags, str) and len(tags.encode()) > max_tags_size
 
 
+def _forward_name(filename: str, name: str) -> str:
+    """Get the file name under which a workflow attachment is forwarded.
+
+    The WES API allows directories in the file names of attachments, but no
+    references to parent directories (`..`), so that relative paths of the
+    run request (e.g., `workflow_url`) can point to them. Names that are
+    such relative paths are kept: at most `MAX_PATH_BYTES` long, unchanged
+    by Unicode normalization (NFKC), with parts separated by slashes, none
+    of them empty, `.` or `..` or longer than `MAX_FILENAME_BYTES`, without
+    backslashes, quotes, percent signs or characters that aren't printable.
+    Others (e.g., absolute paths, or paths with `..`) are replaced by the
+    safe file name under
+    which the attachment is written (cf. `WorkflowRuns._secure_filename()`),
+    so that WES instances never get them.
+
+    Args:
+        filename: Name of the file as indicated in the run request.
+        name: Safe file name of the attachment.
+
+    Returns:
+        The file name to forward.
+    """
+    if (
+        len(filename.encode()) <= MAX_PATH_BYTES
+        # unchanged by NFKC, so that lookalikes (e.g., fullwidth dots and
+        # slashes, U+FF0E and U+FF0F) never become `../` at WES instances
+        # that normalize names
+        and unicodedata.normalize("NFKC", filename) == filename
+        and _forward_parts_allowed(filename)
+    ):
+        return filename
+    return name
+
+
+def _forward_parts_allowed(filename: str) -> bool:
+    """Tell whether the parts of a file name may be forwarded as they are.
+
+    Cf. `_forward_name()`.
+
+    Args:
+        filename: Name of the file as indicated in the run request.
+
+    Returns:
+        Whether no part is empty, `.` or `..`, longer than
+        `MAX_FILENAME_BYTES`, or has a backslash, a quote, a percent sign
+        (which multipart encoding changes) or characters that aren't
+        printable.
+    """
+    return all(
+        part not in ("", ".", "..")
+        and not set(part) & set('\\"%')
+        and part.isprintable()
+        and len(part.encode()) <= MAX_FILENAME_BYTES
+        for part in filename.split("/")
+    )
+
+
 class Upload(NamedTuple):
     """Workflow attachment of a run request, checked and read.
 
@@ -189,6 +251,14 @@ class Upload(NamedTuple):
     filename: str
     name: str
     content: bytes
+
+    @property
+    def forwarded(self) -> tuple[str, bytes]:
+        """File name and contents under which the attachment is forwarded.
+
+        Cf. `_forward_name()`.
+        """
+        return _forward_name(self.filename, self.name), self.content
 
 
 # Errors of WES instances that proWES answers with as its own, by status, when
@@ -350,6 +420,7 @@ class WorkflowRuns:
                 version=backend.version,
             ),
             form_fields=form_fields,
+            attachments=[upload.forwarded for upload in uploads],
             db_connector=db_connector,
         )
         updated_document_stored: DbDocument = db_connector.upsert_fields_in_root_object(
@@ -394,6 +465,7 @@ class WorkflowRuns:
         run_id: str | None,
         backend: SelectedBackend,
         form_fields: dict[str, Any],
+        attachments: list[tuple[str, bytes]],
         db_connector: DbDocumentConnector,
     ) -> RunId:
         """Forward a new run, to the next WES instance if one didn't get it.
@@ -412,6 +484,9 @@ class WorkflowRuns:
             backend: WES instance that the run is stored with.
             form_fields: Form fields of the run request, in the canonical WES
                 version.
+            attachments: Workflow attachments of the run request, as they
+                are forwarded: file names and contents, in order (cf.
+                `Upload.forwarded`).
             db_connector: Connector of the stored run.
 
         Returns:
@@ -447,6 +522,7 @@ class WorkflowRuns:
                 # in the WES version of the WES instance
                 response = wes_client.post_run(
                     form_data=downgrade_run_request(form_fields, backend.version),
+                    attachments=attachments,
                     timeout=controller_config.timeout_post,
                     deadline=deadline,
                 )

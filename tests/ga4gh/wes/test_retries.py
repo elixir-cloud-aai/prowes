@@ -481,35 +481,50 @@ def test_service_info_probe_not_retried(
 # failover of new runs
 
 
-def _multipart(fields: dict[str, str]) -> bytes:
-    """Encode form fields as a `multipart/form-data` body.
+def _multipart(
+    fields: dict[str, str], files: list[tuple[str, bytes]] | None = None
+) -> bytes:
+    """Encode form fields and workflow attachments as a `multipart/form-data` body.
 
     Args:
         fields: Names and values of the form fields.
+        files: File names and contents of the workflow attachments, in order.
 
     Returns:
         Body, with the boundary `BOUNDARY`.
     """
     parts = [
-        f'--{BOUNDARY}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
-        f"{value}\r\n"
+        (
+            f'--{BOUNDARY}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
+            f"{value}\r\n"
+        ).encode()
         for name, value in fields.items()
     ]
-    return ("".join(parts) + f"--{BOUNDARY}--\r\n").encode()
+    for filename, content in files or []:
+        parts.append(
+            (
+                f"--{BOUNDARY}\r\nContent-Disposition: form-data;"
+                f' name="workflow_attachment"; filename="{filename}"\r\n\r\n'
+            ).encode()
+            + content
+            + b"\r\n"
+        )
+    return b"".join(parts) + f"--{BOUNDARY}--\r\n".encode()
 
 
-def _post_run(client: Client) -> Any:
+def _post_run(client: Client, files: list[tuple[str, bytes]] | None = None) -> Any:
     """Send `POST /runs` with a run request.
 
     Args:
         client: Test client of the app.
+        files: File names and contents of the workflow attachments.
 
     Returns:
         Response.
     """
     return client.post(
         "/ga4gh/wes/v1/runs",
-        content=_multipart(FORM_DATA),
+        content=_multipart(FORM_DATA, files),
         headers={"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"},
     )
 
@@ -546,13 +561,15 @@ def remotes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     Returns:
         Outcomes by base URL (`outcomes`; an error to raise, an error
         response, or `None` to accept the run), and the base URLs, form
-        data and deadlines of the requests, in order (`sent`).
+        data and deadlines of the requests, in order (`sent`), and their
+        workflow attachments, in the same order (`attachments`).
     """
-    state: dict[str, Any] = {"outcomes": {}, "sent": []}
+    state: dict[str, Any] = {"outcomes": {}, "sent": [], "attachments": []}
 
     def _post_run(
         self: WesClient,
         form_data: dict[str, str],
+        attachments: list[tuple[str, bytes]] | None = None,
         deadline: float | None = None,
         **_kwargs: Any,
     ) -> ErrorResponse | RunId:
@@ -561,6 +578,7 @@ def remotes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         Args:
             self: WES client.
             form_data: Form data of the run request.
+            attachments: Workflow attachments of the run request.
             deadline: Deadline of the tries.
             **_kwargs: Further arguments; ignored.
 
@@ -572,6 +590,7 @@ def remotes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         """
         host = self.url.removesuffix("/ga4gh/wes/v1")
         state["sent"].append((host, form_data, deadline))
+        state["attachments"].append(list(attachments or []))
         outcome = state["outcomes"].get(host)
         if isinstance(outcome, Exception):
             raise outcome
@@ -682,6 +701,22 @@ def test_failover_if_not_sent(
     deadlines = {deadline for _, _, deadline in remotes["sent"]}
     assert len(deadlines) == 1
     assert None not in deadlines
+
+
+def test_failover_forwards_attachments(
+    three_backends: Callable[[str], TokenClient],
+    remotes: dict[str, Any],
+    queued: list[dict[str, Any]],
+) -> None:
+    """Each WES instance that a run goes to gets its attachments (#44)."""
+    remotes["outcomes"][BACKEND_URL] = EngineRequestNotSent("refused")
+    files = [("workflow.cwl", b"cwlVersion: v1.0\n"), ("tools/a.cwl", b"a")]
+    with three_backends("") as client:
+        response = _post_run(client, files)
+    assert response.status_code == 200
+    assert [host for host, _, _ in remotes["sent"]] == [BACKEND_URL, SECOND_URL]
+    assert remotes["attachments"] == [files, files]
+    assert queued[0]["remote_host"] == SECOND_URL
 
 
 @pytest.mark.parametrize(
