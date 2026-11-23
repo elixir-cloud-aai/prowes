@@ -347,7 +347,8 @@ Attachments are written to the working directory of the run, in the storage
 of the runs (`storage_path`), each under a safe file name: without
 directories (separators become `_`, e.g., `dir/a.txt` becomes `dir_a.txt`;
 `../` and leading dots are removed), only ASCII characters, and at most 255
-bytes long. Runs with two attachments of the same safe file name, an
+bytes long; names that Windows reserves for devices get a leading `_`
+(e.g., `con.txt` becomes `_con.txt`). Runs with two attachments of the same safe file name, an
 attachment with a longer one, or one without file name are rejected with
 `400 Bad Request`. Files are created anew, never overwriting existing ones.
 The WES instance gets the attachments under their names as sent, if the

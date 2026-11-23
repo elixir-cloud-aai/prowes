@@ -222,8 +222,13 @@ versions can't read the attachments of runs that this version stores.
 
 Workflow attachments are forwarded to the WES instance with the run
 (before: they never reached it), under their names as sent, or under their
-safe file names where the WES API doesn't allow those names (see
-[Runs](api.md#runs)).
+safe file names where the WES API doesn't allow those names or WES
+instances on Windows couldn't create them (e.g., `C:/x` or `CON`), or where
+they are longer than 1024 bytes (see [Runs](api.md#runs)). Attachments
+named like Windows devices (e.g., `con.txt`) are written under safe file
+names with a leading `_` (`_con.txt`). The `files` argument of
+`WesClient.post_run()` is replaced by `attachments`: the workflow
+attachments, sent as parts `workflow_attachment`.
 
 ### Run logs
 

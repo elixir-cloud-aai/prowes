@@ -71,8 +71,22 @@ logger = logging.getLogger(__name__)
 MAX_FILENAME_BYTES = 255
 
 # Maximum length of the paths of workflow attachments that are forwarded as
-# they are, in bytes (`PATH_MAX` of Linux)
-MAX_PATH_BYTES = 4096
+# they are, in bytes: a quarter of `PATH_MAX` of Linux (4096 bytes, with the
+# terminating NUL), so that the run directory of a WES instance fits in front
+MAX_PATH_BYTES = 1024
+
+# Characters that are forwarded in no file name of workflow attachments:
+# backslashes, and characters that Windows allows in no file name (`:` also
+# makes drive-qualified names, e.g., `C:/x`, absolute), and percent signs,
+# which multipart encoding changes
+FORWARD_FORBIDDEN_CHARACTERS = frozenset('\\"%:<>|?*')
+
+# File names that Windows reserves for devices, also with extensions (e.g.,
+# `CON.txt`), in upper case
+WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"{device}{number}" for device in ("COM", "LPT") for number in range(10)}
+)
 
 # Fields of run requests that hold JSON objects (as strings, in forms)
 JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
@@ -189,8 +203,10 @@ def _forward_name(filename: str, name: str) -> str:
     run request (e.g., `workflow_url`) can point to them. Names that are
     such relative paths are kept: at most `MAX_PATH_BYTES` long, unchanged
     by Unicode normalization (NFKC), with parts separated by slashes, none
-    of them empty, `.` or `..` or longer than `MAX_FILENAME_BYTES`, without
-    backslashes, quotes, percent signs or characters that aren't printable.
+    of them empty, `.` or `..` or longer than `MAX_FILENAME_BYTES` or
+    reserved by Windows, without characters that Windows doesn't allow in
+    file names (e.g., `:`), backslashes, percent signs or characters that
+    aren't printable.
     Others (e.g., absolute paths, or paths with `..`) are replaced by the
     safe file name under which the attachment is written (cf.
     `WorkflowRuns._secure_filename()`), so that WES instances never get them.
@@ -225,19 +241,37 @@ def _forward_parts_allowed(filename: str) -> bool:
     Returns:
         Whether no part is empty, `.` or `..`, longer than
         `MAX_FILENAME_BYTES`, starts or ends with a space or ends with a
-        dot (which Windows drops, e.g., `.. ` would become `..`), or has
-        a backslash, a quote, a percent sign (which multipart encoding
-        changes) or characters that aren't printable.
+        dot (which Windows drops, e.g., `.. ` would become `..`), is a
+        name that Windows reserves for devices (e.g., `CON` or
+        `com1.txt`), or has one of `FORWARD_FORBIDDEN_CHARACTERS` (e.g., a
+        backslash, or the colon of drive-qualified names such as `C:/x`) or
+        characters that aren't printable.
     """
     return all(
         part not in ("", ".", "..")
         and part == part.strip(" ")
         and not part.endswith(".")
-        and not set(part) & set('\\"%')
+        and not set(part) & FORWARD_FORBIDDEN_CHARACTERS
         and part.isprintable()
         and len(part.encode()) <= MAX_FILENAME_BYTES
+        and not _windows_reserved(part)
         for part in filename.split("/")
     )
+
+
+def _windows_reserved(part: str) -> bool:
+    """Tell whether Windows reserves a file name for a device.
+
+    Windows ignores extensions and spaces in front of them, so that, e.g.,
+    `con.txt` and `NUL .tar.gz` are reserved, too.
+
+    Args:
+        part: File name, without directories.
+
+    Returns:
+        Whether the name is reserved (cf. `WINDOWS_RESERVED_NAMES`).
+    """
+    return part.split(".", 1)[0].rstrip(" ").upper() in WINDOWS_RESERVED_NAMES
 
 
 class Upload(NamedTuple):
@@ -1230,7 +1264,10 @@ class WorkflowRuns:
 
         The name has no directories (separators are replaced), no leading
         dots and only ASCII characters (cf. `werkzeug.utils.secure_filename`);
-        names without any safe character are replaced by a random one.
+        names without any safe character are replaced by a random one. Names
+        that Windows reserves for devices (e.g., `CON.txt`) get a leading
+        `_`, as `secure_filename()` does on Windows, so that the name can be
+        forwarded to WES instances on Windows, too.
 
         Args:
             name: Potentially insecure filename.
@@ -1241,6 +1278,8 @@ class WorkflowRuns:
         name_secure = secure_filename(str(name))
         if not name_secure:
             name_secure = uuid()
+        elif _windows_reserved(name_secure):
+            name_secure = f"_{name_secure}"
         return Path(name_secure)
 
     @staticmethod

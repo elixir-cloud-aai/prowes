@@ -88,12 +88,18 @@ doesn't allow, or that aren't relative paths, are forwarded under the safe
 file name that proWES writes them under instead (see [Run
 requests](configuration.md#run-requests)): absolute paths, names with
 `..`, `.` or empty parts (e.g., `a//b`), parts that start or end with a
-space or end with a dot, backslashes, quotes, percent
-signs, or characters that aren't printable, names that Unicode
-normalization (NFKC) changes (e.g., the fullwidth `．．／`, which would
-become `../`), and names longer than 4096 bytes or with a part longer than
-255 bytes. For example, `../input.txt` is forwarded as `input.txt`. Names that clash only at the
-WES instance (e.g., `data` and `data/input.txt`) are forwarded as they are.
+space or end with a dot, parts that Windows reserves for devices (`CON`,
+`PRN`, `AUX`, `NUL`, `COM0` to `COM9`, `LPT0` to `LPT9`, `CONIN$` and
+`CONOUT$`, in any case and also with extensions, e.g., `con.txt`),
+backslashes, characters that Windows doesn't allow in file names (`:`,
+which also makes drive-qualified names such as `C:/x` absolute, `<`, `>`,
+`|`, `?`, `*` and quotes), percent signs, or characters that aren't
+printable, names that Unicode normalization (NFKC) changes (e.g., the
+fullwidth `．．／`, which would become `../`), and names longer than 1024
+bytes or with a part longer than 255 bytes. For example, `../input.txt` is
+forwarded as `input.txt`, `C:/input.txt` as `C_input.txt` and `con.txt` as
+`_con.txt`. Names that clash only at the WES instance (e.g., `data` and
+`data/input.txt`) are forwarded as they are.
 
 `POST /runs` returns the run's own identifier, by which `GET
 /runs/{run_id}` finds it; the identifier at the WES instance is kept in the

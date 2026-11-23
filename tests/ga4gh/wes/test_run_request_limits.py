@@ -445,8 +445,37 @@ def forwarded(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, bytes]]]:
         (" ../x", "SAFE"),
         (".../x", "SAFE"),
         ("a./x", "SAFE"),
-        ("/".join(["b" * 255] * 16), "/".join(["b" * 255] * 16)),
-        ("/".join(["b" * 255] * 17), "SAFE"),
+        # drive-qualified names (Windows), and characters that Windows
+        # doesn't allow in file names
+        ("C:/outside.txt", "SAFE"),
+        ("c:outside.txt", "SAFE"),
+        ("a/b:c.txt", "SAFE"),
+        ("a<b.txt", "SAFE"),
+        ("a>b.txt", "SAFE"),
+        ("a|b.txt", "SAFE"),
+        ("a?b.txt", "SAFE"),
+        ("a*b.txt", "SAFE"),
+        # names that Windows reserves for devices, also with extensions
+        ("CON", "SAFE"),
+        ("con.txt", "SAFE"),
+        ("a/Nul", "SAFE"),
+        ("aux.tar.gz", "SAFE"),
+        ("PRN", "SAFE"),
+        ("COM1.log", "SAFE"),
+        ("lpt9", "SAFE"),
+        ("COM0", "SAFE"),
+        ("CONIN$", "SAFE"),
+        ("conout$.txt", "SAFE"),
+        ("CONSOLE.txt", "CONSOLE.txt"),
+        ("COM10", "COM10"),
+        ("a.con", "a.con"),
+        ("nul/a.txt", "SAFE"),
+        # at most `MAX_PATH_BYTES` bytes
+        (
+            "/".join(["b" * 255] * 3 + ["b" * 254, "b"]),
+            "/".join(["b" * 255] * 3 + ["b" * 254, "b"]),
+        ),
+        ("/".join(["b" * 255] * 4 + ["b"]), "SAFE"),
     ],
 )
 def test_forward_name(filename: str, expected: str) -> None:
@@ -482,6 +511,8 @@ def test_attachments_forwarded(
         ("tools/", b"trailing"),
         ("win\\path.txt", b"backslash"),
         ("tab\tname.txt", b"control"),
+        ("C:/outside.txt", b"drive"),
+        ("con.txt", b"device"),
     ]
     fields = {**RUN_REQUEST, "workflow_url": "workflow.cwl"}
     response = _post_run(foca_client, fields, files)
@@ -498,6 +529,8 @@ def test_attachments_forwarded(
             ("tools", b"trailing"),
             ("winpath.txt", b"backslash"),
             ("tab_name.txt", b"control"),
+            ("C_outside.txt", b"drive"),
+            ("_con.txt", b"device"),
         ]
     ]
 
