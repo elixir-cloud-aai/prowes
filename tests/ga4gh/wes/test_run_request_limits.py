@@ -381,6 +381,185 @@ def test_attachments_saved_safely(
     }
 
 
+@pytest.fixture
+def forwarded(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, bytes]]]:
+    """Fake the remote WES: runs are accepted, with their attachments.
+
+    Args:
+        monkeypatch: Monkeypatch fixture of the test.
+
+    Returns:
+        Workflow attachments (file names and contents) of the run requests
+        sent to the remote WES, in order.
+    """
+    sent: list[list[tuple[str, bytes]]] = []
+
+    def _post_run(
+        self: WesClient,
+        form_data: dict[str, str],
+        attachments: list[tuple[str, bytes]] | None = None,
+        **kwargs: Any,
+    ) -> RunId:
+        """Accept a run.
+
+        Args:
+            self: WES client.
+            form_data: Form data of the run request.
+            attachments: Workflow attachments of the run request.
+            **kwargs: Further arguments; ignored.
+
+        Returns:
+            Identifier of the run.
+        """
+        sent.append(list(attachments or []))
+        return RunId(run_id="REMOTE1")
+
+    monkeypatch.setattr(WesClient, "post_run", _post_run)
+    return sent
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("main.cwl", "main.cwl"),
+        ("tools/step.cwl", "tools/step.cwl"),
+        ("donn\u00e9es/a.csv", "donn\u00e9es/a.csv"),
+        ("~/a.txt", "~/a.txt"),
+        ("a/" + "b" * 255, "a/" + "b" * 255),
+        ("a/" + "b" * 256, "SAFE"),
+        ("../a.txt", "SAFE"),
+        ("a/../b.txt", "SAFE"),
+        ("/etc/passwd", "SAFE"),
+        ("./a.txt", "SAFE"),
+        ("a//b.txt", "SAFE"),
+        ("a/", "SAFE"),
+        ("C:\\a.txt", "SAFE"),
+        ("a\tb.txt", "SAFE"),
+        ("a\u200bb.txt", "SAFE"),
+        ("\uff0e\uff0e\uff0f\uff0e\uff0e\uff0fetc\uff0fpasswd", "SAFE"),
+        ("\u2025/x", "SAFE"),
+        ('a"b.cwl', "SAFE"),
+        ("a%22b.cwl", "SAFE"),
+        (".hidden/a b.txt", ".hidden/a b.txt"),
+        (".. /x", "SAFE"),
+        (" ../x", "SAFE"),
+        (".../x", "SAFE"),
+        ("a./x", "SAFE"),
+        # drive-qualified names (Windows), and characters that Windows
+        # doesn't allow in file names
+        ("C:/outside.txt", "SAFE"),
+        ("c:outside.txt", "SAFE"),
+        ("a/b:c.txt", "SAFE"),
+        ("a<b.txt", "SAFE"),
+        ("a>b.txt", "SAFE"),
+        ("a|b.txt", "SAFE"),
+        ("a?b.txt", "SAFE"),
+        ("a*b.txt", "SAFE"),
+        # names that Windows reserves for devices, also with extensions
+        ("CON", "SAFE"),
+        ("con.txt", "SAFE"),
+        ("a/Nul", "SAFE"),
+        ("aux.tar.gz", "SAFE"),
+        ("PRN", "SAFE"),
+        ("COM1.log", "SAFE"),
+        ("lpt9", "SAFE"),
+        ("COM0", "SAFE"),
+        ("CONIN$", "SAFE"),
+        ("conout$.txt", "SAFE"),
+        ("CONSOLE.txt", "CONSOLE.txt"),
+        ("COM10", "COM10"),
+        ("a.con", "a.con"),
+        ("nul/a.txt", "SAFE"),
+        ("NUL .tar.gz", "SAFE"),
+        # lookalikes of separators, colons and double quotes that NFKC
+        # keeps, but that Windows code pages turn into them ("best fit")
+        ("\u00a5..\u00a5x", "SAFE"),
+        ("\u20a9..\u20a9x", "SAFE"),
+        ("a\u2215..\u2215b", "SAFE"),
+        ("\u2044..\u2044x", "SAFE"),
+        ("a\u2216b", "SAFE"),
+        ("a\u29f5b", "SAFE"),
+        ("a\u29f8b", "SAFE"),
+        ("a\u2236b", "SAFE"),
+        ("\u201ca\u201d.txt", "SAFE"),
+        ("\u201ea.txt", "SAFE"),
+        ("it's.txt", "it's.txt"),
+        # at most `MAX_PATH_BYTES` bytes
+        (
+            "/".join(["b" * 255] * 3 + ["b" * 254, "b"]),
+            "/".join(["b" * 255] * 3 + ["b" * 254, "b"]),
+        ),
+        ("/".join(["b" * 255] * 4 + ["b"]), "SAFE"),
+    ],
+)
+def test_forward_name(filename: str, expected: str) -> None:
+    """Names are forwarded as sent if the WES API allows them (#44).
+
+    Others are forwarded under their safe file names (here `SAFE`).
+    """
+    assert workflow_runs._forward_name(filename, "SAFE") == expected
+    upload = workflow_runs.Upload(filename=filename, name="SAFE", content=b"x")
+    assert upload.forwarded == (expected, b"x")
+
+
+@pytest.mark.usefixtures("storage", "queued")
+def test_attachments_forwarded(
+    foca_client: Client,
+    forwarded: list[list[tuple[str, bytes]]],
+) -> None:
+    """Attachments are sent on to the WES instance, in order (#44).
+
+    Names that are relative paths without `.` or `..` parts are sent as
+    they are, with their directories, so that relative paths in the run
+    request (e.g., `workflow_url`) find them; others are sent with the safe
+    file name that they are written under.
+    """
+    files = [
+        ("workflow.cwl", b"cwlVersion: v1.0\n"),
+        ("tools/step.cwl", b"class: CommandLineTool\n"),
+        ("donn\u00e9es.csv", b"a,b\n"),
+        ("../../escape.txt", b"escape"),
+        ("/etc/passwd", b"absolute"),
+        ("tools/./dot.txt", b"dot"),
+        ("tools//double.txt", b"double"),
+        ("tools/", b"trailing"),
+        ("win\\path.txt", b"backslash"),
+        ("tab\tname.txt", b"control"),
+        ("C:/outside.txt", b"drive"),
+        ("con.txt", b"device"),
+    ]
+    fields = {**RUN_REQUEST, "workflow_url": "workflow.cwl"}
+    response = _post_run(foca_client, fields, files)
+    assert response.status_code == 200
+    assert forwarded == [
+        [
+            ("workflow.cwl", b"cwlVersion: v1.0\n"),
+            ("tools/step.cwl", b"class: CommandLineTool\n"),
+            ("donn\u00e9es.csv", b"a,b\n"),
+            ("escape.txt", b"escape"),
+            ("etc_passwd", b"absolute"),
+            ("tools_dot.txt", b"dot"),
+            ("tools_double.txt", b"double"),
+            ("tools", b"trailing"),
+            ("winpath.txt", b"backslash"),
+            ("tab_name.txt", b"control"),
+            ("C_outside.txt", b"drive"),
+            ("_con.txt", b"device"),
+        ]
+    ]
+
+
+@pytest.mark.usefixtures("storage", "queued")
+def test_no_attachments_forwarded(
+    foca_client: Client,
+    forwarded: list[list[tuple[str, bytes]]],
+) -> None:
+    """Runs without attachments are sent on without any."""
+    response = _post_run(foca_client, RUN_REQUEST)
+    assert response.status_code == 200
+    assert forwarded == [[]]
+
+
 def test_attachment_without_safe_name(
     foca_client: Client,
     mongodb: MongoClient[dict[str, Any]],
@@ -443,8 +622,19 @@ def test_attachment_not_writable(
         [("a" * 252 + ".txt", b"1")],
         # an empty name
         [("", b"1")],
+        # a name that Windows reserves and its safe name
+        [("con.txt", b"1"), ("_con.txt", b"2")],
+        # a reserved name, too long with the leading `_` of its safe name
+        [("con." + "a" * 251, b"1")],
     ],
-    ids=["duplicate", "same-safe-name", "too-long", "empty"],
+    ids=[
+        "duplicate",
+        "same-safe-name",
+        "too-long",
+        "empty",
+        "reserved-and-safe-name",
+        "reserved-too-long",
+    ],
 )
 def test_attachment_names_refused(
     files: list[tuple[str, bytes]],
@@ -458,6 +648,31 @@ def test_attachment_names_refused(
     response = _post_run(foca_client, RUN_REQUEST, files)
     _assert_refused(response, 400, mongodb, storage, remote_wes)
     assert "attachment" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("con.txt", "_con.txt"),
+        ("NUL", "_NUL"),
+        ("a/com1.log", "a_com1.log"),
+        ("com1.log", "_com1.log"),
+        ("_con.txt", "_con.txt"),
+        ("CONSOLE.txt", "CONSOLE.txt"),
+        ("con." + "a" * 250, "_con." + "a" * 250),
+    ],
+)
+def test_secure_filename_reserved(filename: str, expected: str) -> None:
+    """Safe names that Windows reserves for devices get a leading `_`."""
+    secure_filename = workflow_runs.WorkflowRuns._secure_filename
+    assert secure_filename(name=Path(filename)) == Path(expected)
+
+
+def test_secure_filename_without_safe_character() -> None:
+    """Names without any safe character get a random, unreserved name."""
+    name = workflow_runs.WorkflowRuns._secure_filename(name=Path("\u00e9\u00e9"))
+    assert name.name
+    assert not workflow_runs._windows_reserved(name.name)
 
 
 # Size of tags

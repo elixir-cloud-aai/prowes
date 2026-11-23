@@ -502,8 +502,31 @@ def test_no_json(call: Call) -> None:
     assert info.value.reason == "invalid_json"
 
 
-def _form(data: bytes, content_type: str) -> dict[str, tuple[str | None, bytes]]:
+def _parts(data: bytes, content_type: str) -> list[tuple[str, str | None, bytes]]:
     """Parse a `multipart/form-data` body.
+
+    Args:
+        data: Body.
+        content_type: Value of its `Content-Type` header.
+
+    Returns:
+        Field name, file name (if any) and content of each part, in order.
+    """
+    message = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
+        f"Content-Type: {content_type}\r\n\r\n".encode() + data
+    )
+    parts: list[tuple[str, str | None, bytes]] = []
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        payload = part.get_payload(decode=True)
+        assert isinstance(name, str)
+        assert isinstance(payload, bytes)
+        parts.append((name, part.get_filename(), payload))
+    return parts
+
+
+def _form(data: bytes, content_type: str) -> dict[str, tuple[str | None, bytes]]:
+    """Parse a `multipart/form-data` body without repeated fields.
 
     Args:
         data: Body.
@@ -512,34 +535,32 @@ def _form(data: bytes, content_type: str) -> dict[str, tuple[str | None, bytes]]
     Returns:
         File name (if any) and content of each part, by field name.
     """
-    message = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
-        f"Content-Type: {content_type}\r\n\r\n".encode() + data
-    )
-    parts: dict[str, tuple[str | None, bytes]] = {}
-    for part in message.iter_parts():
-        name = part.get_param("name", header="content-disposition")
-        payload = part.get_payload(decode=True)
-        assert isinstance(name, str)
-        assert isinstance(payload, bytes)
-        parts[name] = (part.get_filename(), payload)
-    return parts
+    return {
+        name: (filename, payload)
+        for name, filename, payload in _parts(data, content_type)
+    }
 
 
 @pytest.mark.usefixtures("foca_app")
 def test_post_run_multipart() -> None:
-    """Run requests are sent as `multipart/form-data`, with their files."""
+    """Run requests are sent as `multipart/form-data`, with their attachments.
+
+    Each workflow attachment is a part of its own, with its file name, in
+    order.
+    """
     http = FakeHttp(body={"run_id": RUN_ID})
     client = _client(http)
-    files = {"workflow_attachment": ("a.cwl", b"cwlVersion: v1.0")}
-    client.post_run(form_data=FORM_DATA, files=files)
+    attachments = [("a.cwl", b"cwlVersion: v1.0"), ("tools/b.cwl", b"class: Tool")]
+    client.post_run(form_data=FORM_DATA, attachments=attachments)
     client.post_run(form_data=FORM_DATA)
     with_files, without = http.calls
     content_type = with_files["headers"]["Content-Type"]
     assert content_type.startswith("multipart/form-data; boundary=")
-    assert _form(with_files["data"], content_type) == {
-        **{key: (None, value.encode()) for key, value in FORM_DATA.items()},
-        "workflow_attachment": ("a.cwl", b"cwlVersion: v1.0"),
-    }
+    assert _parts(with_files["data"], content_type) == [
+        *((key, None, value.encode()) for key, value in FORM_DATA.items()),
+        ("workflow_attachment", "a.cwl", b"cwlVersion: v1.0"),
+        ("workflow_attachment", "tools/b.cwl", b"class: Tool"),
+    ]
     assert _form(without["data"], without["headers"]["Content-Type"]) == {
         key: (None, value.encode()) for key, value in FORM_DATA.items()
     }

@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Any, NamedTuple
+import unicodedata
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
@@ -68,6 +69,32 @@ logger = logging.getLogger(__name__)
 # Maximum length of the file names of workflow attachments, in bytes (that of
 # common file systems, e.g., ext4 and XFS)
 MAX_FILENAME_BYTES = 255
+
+# Maximum length of the paths of workflow attachments that are forwarded as
+# they are, in bytes: a quarter of `PATH_MAX` of Linux (4096 bytes, with the
+# terminating NUL), so that the run directory of a WES instance fits in front
+MAX_PATH_BYTES = 1024
+
+# Characters that are forwarded in no file name of workflow attachments:
+# backslashes, characters that Windows allows in no file name (`:` also
+# makes drive-qualified names, e.g., `C:/x`, absolute), percent signs, which
+# multipart encoding changes, and lookalikes of separators, colons and double
+# quotes that Unicode normalization (NFKC) keeps, but that Windows code pages
+# turn into them ("best fit", e.g., `¥` into `\` in Japanese ones)
+FORWARD_FORBIDDEN_CHARACTERS = frozenset(
+    '\\"%:<>|?*'
+    "\u00a5\u20a9\u2216\u29f5"  # `\`: yen and won signs, set minus, operator
+    "\u2044\u2215\u29f8"  # `/`: fraction, division and big solidus
+    "\u2236"  # `:`: ratio
+    "\u201c\u201d\u201e\u201f"  # `"`: double quotation marks
+)
+
+# File names that Windows reserves for devices, also with extensions (e.g.,
+# `CON.txt`), in upper case
+WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"{device}{number}" for device in ("COM", "LPT") for number in range(10)}
+)
 
 # Fields of run requests that hold JSON objects (as strings, in forms)
 JSON_FIELDS = ("workflow_params", "workflow_engine_parameters", "tags")
@@ -176,6 +203,85 @@ def _tags_too_large(tags: Any, max_tags_size: int) -> bool:
     return isinstance(tags, str) and len(tags.encode()) > max_tags_size
 
 
+def _forward_name(filename: str, name: str) -> str:
+    """Get the file name under which a workflow attachment is forwarded.
+
+    The WES API allows directories in the file names of attachments, but no
+    references to parent directories (`..`), so that relative paths of the
+    run request (e.g., `workflow_url`) can point to them. Names that are
+    such relative paths are kept: at most `MAX_PATH_BYTES` long, unchanged
+    by Unicode normalization (NFKC), with parts separated by slashes, none
+    of them empty, `.` or `..` or longer than `MAX_FILENAME_BYTES` or
+    reserved by Windows, without characters that Windows doesn't allow in
+    file names (e.g., `:`) or their lookalikes, backslashes, percent signs
+    or characters that aren't printable. Others (e.g., absolute paths, or
+    paths with `..`) are replaced by the safe file name under which the
+    attachment is written (cf. `WorkflowRuns._secure_filename()`), so that
+    WES instances never get them.
+
+    Args:
+        filename: Name of the file as indicated in the run request.
+        name: Safe file name of the attachment.
+
+    Returns:
+        The file name to forward.
+    """
+    if (
+        len(filename.encode()) <= MAX_PATH_BYTES
+        # unchanged by NFKC, so that lookalikes (e.g., fullwidth dots and
+        # slashes, U+FF0E and U+FF0F) never become `../` at WES instances
+        # that normalize names
+        and unicodedata.normalize("NFKC", filename) == filename
+        and _forward_parts_allowed(filename)
+    ):
+        return filename
+    return name
+
+
+def _forward_parts_allowed(filename: str) -> bool:
+    """Tell whether the parts of a file name may be forwarded as they are.
+
+    Cf. `_forward_name()`.
+
+    Args:
+        filename: Name of the file as indicated in the run request.
+
+    Returns:
+        Whether no part is empty, `.` or `..`, longer than
+        `MAX_FILENAME_BYTES`, starts or ends with a space or ends with a
+        dot (which Windows drops, e.g., `.. ` would become `..`), is a
+        name that Windows reserves for devices (e.g., `CON` or
+        `com1.txt`), or has one of `FORWARD_FORBIDDEN_CHARACTERS` (e.g., a
+        backslash, or the colon of drive-qualified names such as `C:/x`) or
+        characters that aren't printable.
+    """
+    return all(
+        part not in ("", ".", "..")
+        and part == part.strip(" ")
+        and not part.endswith(".")
+        and not set(part) & FORWARD_FORBIDDEN_CHARACTERS
+        and part.isprintable()
+        and len(part.encode()) <= MAX_FILENAME_BYTES
+        and not _windows_reserved(part)
+        for part in filename.split("/")
+    )
+
+
+def _windows_reserved(part: str) -> bool:
+    """Tell whether Windows reserves a file name for a device.
+
+    Windows ignores extensions and spaces in front of them, so that, e.g.,
+    `con.txt` and `NUL .tar.gz` are reserved, too.
+
+    Args:
+        part: File name, without directories.
+
+    Returns:
+        Whether the name is reserved (cf. `WINDOWS_RESERVED_NAMES`).
+    """
+    return part.split(".", 1)[0].rstrip(" ").upper() in WINDOWS_RESERVED_NAMES
+
+
 class Upload(NamedTuple):
     """Workflow attachment of a run request, checked and read.
 
@@ -189,6 +295,14 @@ class Upload(NamedTuple):
     filename: str
     name: str
     content: bytes
+
+    @property
+    def forwarded(self) -> tuple[str, bytes]:
+        """File name and contents under which the attachment is forwarded.
+
+        Cf. `_forward_name()`.
+        """
+        return _forward_name(self.filename, self.name), self.content
 
 
 # Errors of WES instances that proWES answers with as its own, by status, when
@@ -350,6 +464,7 @@ class WorkflowRuns:
                 version=backend.version,
             ),
             form_fields=form_fields,
+            attachments=[upload.forwarded for upload in uploads],
             db_connector=db_connector,
         )
         updated_document_stored: DbDocument = db_connector.upsert_fields_in_root_object(
@@ -394,6 +509,7 @@ class WorkflowRuns:
         run_id: str | None,
         backend: SelectedBackend,
         form_fields: dict[str, Any],
+        attachments: list[tuple[str, bytes]],
         db_connector: DbDocumentConnector,
     ) -> RunId:
         """Forward a new run, to the next WES instance if one didn't get it.
@@ -412,6 +528,9 @@ class WorkflowRuns:
             backend: WES instance that the run is stored with.
             form_fields: Form fields of the run request, in the canonical WES
                 version.
+            attachments: Workflow attachments of the run request, as they
+                are forwarded: file names and contents, in order (cf.
+                `Upload.forwarded`).
             db_connector: Connector of the stored run.
 
         Returns:
@@ -447,6 +566,7 @@ class WorkflowRuns:
                 # in the WES version of the WES instance
                 response = wes_client.post_run(
                     form_data=downgrade_run_request(form_fields, backend.version),
+                    attachments=attachments,
                     timeout=controller_config.timeout_post,
                     deadline=deadline,
                 )
@@ -1152,7 +1272,10 @@ class WorkflowRuns:
 
         The name has no directories (separators are replaced), no leading
         dots and only ASCII characters (cf. `werkzeug.utils.secure_filename`);
-        names without any safe character are replaced by a random one.
+        names without any safe character are replaced by a random one. Names
+        that Windows reserves for devices (e.g., `CON.txt`) get a leading
+        `_`, as `secure_filename()` does on Windows, so that the name can be
+        forwarded to WES instances on Windows, too.
 
         Args:
             name: Potentially insecure filename.
@@ -1163,6 +1286,8 @@ class WorkflowRuns:
         name_secure = secure_filename(str(name))
         if not name_secure:
             name_secure = uuid()
+        elif _windows_reserved(name_secure):
+            name_secure = f"_{name_secure}"
         return Path(name_secure)
 
     @staticmethod

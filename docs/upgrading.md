@@ -216,9 +216,22 @@ bounded at submission.
 Workflow attachments are written with their contents, under safe file names
 (before: runs with attachments failed with `500`); their contents are no
 longer stored in the database. A run whose attachments can't be written
-(e.g., a full volume) is stored with the state `SYSTEM_ERROR` and gets `500`. Upgrade
-the app and the Celery worker together: workers of earlier versions can't
-read the attachments of runs that this version stores.
+(e.g., a full volume) is stored with the state `SYSTEM_ERROR` and gets
+`500`. Upgrade the app and the Celery worker together: workers of earlier
+versions can't read the attachments of runs that this version stores.
+
+Workflow attachments are forwarded to the WES instance with the run
+(before: they never reached it), under their names as sent, or under their
+safe file names where the WES API doesn't allow those names or WES
+instances on Windows couldn't create them (e.g., `C:/x` or `CON`), or where
+they are longer than 1024 bytes (see [Runs](api.md#runs)). Attachments
+named like Windows devices (e.g., `con.txt`) are written under safe file
+names with a leading `_` (`_con.txt`).
+
+The `files` argument of `WesClient.post_run()` is replaced by
+`attachments`: the workflow attachments, sent as parts
+`workflow_attachment`. Code that imports the client and passes `files=`
+needs the new argument.
 
 ### Run logs
 

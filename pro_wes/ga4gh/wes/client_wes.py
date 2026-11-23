@@ -45,7 +45,7 @@ any answer, also `502`, `503` and `504`, which gateways in front of WES
 instances send also after the WES instance got the request.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import logging
 import os
 import time
@@ -386,7 +386,7 @@ class WesClient:
     def post_run(
         self,
         form_data: dict[str, str],
-        files: dict[str, tuple[str, bytes]] | None = None,
+        attachments: Sequence[tuple[str, bytes]] | None = None,
         timeout: float | None = None,
         deadline: float | None = None,
     ) -> ErrorResponse | RunId:
@@ -408,8 +408,8 @@ class WesClient:
                 * `workflow_engine_parameters`
                 * `workflow_engine` and `workflow_engine_version` (WES
                   1.1.0; left out for WES 1.0)
-            files: Files to be attached, by form field: file name and
-                content.
+            attachments: Workflow attachments: file name and contents of
+                each, sent as parts `workflow_attachment`, in order.
             timeout: Timeout of the request as a whole, in seconds; by
                 default the client's (`custom.defaults.timeout`).
             deadline: `time.monotonic()` value after which the request is
@@ -430,7 +430,9 @@ class WesClient:
         except Exception as exc:
             raise ValueError(f"invalid form data: {form_data}") from exc
         fields: list[tuple[str, str | tuple[str, bytes]]] = list(form_data.items())
-        fields.extend((files or {}).items())
+        fields.extend(
+            ("workflow_attachment", attachment) for attachment in attachments or ()
+        )
         data, content_type = encode_multipart_formdata(fields)
         body = self._request(
             "POST",

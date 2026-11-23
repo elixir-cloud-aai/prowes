@@ -79,6 +79,38 @@ instances](configuration.md#wes-instances) and [WES
 versions](wes-versions.md)). Without any, it refuses the run with `503
 Service Unavailable`, before anything is stored.
 
+The workflow attachments (`workflow_attachment`) are forwarded with the
+run, in their order, to each WES instance that the run is sent to. Their
+file names are forwarded as sent, directories included, so that relative
+paths in the run request (e.g., `workflow_url: main.cwl` or an input
+`data/input.txt`) find them at the WES instance. Names that the WES API
+doesn't allow, or that aren't relative paths, are forwarded under the safe
+file name that proWES writes them under instead (see [Run
+requests](configuration.md#run-requests)), so that neither WES instances
+on Linux nor those on Windows write them outside the run's directory:
+
+- absolute paths, and names with `..`, `.` or empty parts (e.g., `a//b`)
+- names with parts that start or end with a space or end with a dot
+- names with parts that Windows reserves for devices (`CON`, `PRN`, `AUX`,
+  `NUL`, `COM0` to `COM9`, `LPT0` to `LPT9`, `CONIN$` and `CONOUT$`, in any
+  case and also with extensions, e.g., `con.txt`)
+- names with backslashes, percent signs, characters that aren't printable,
+  or characters that Windows doesn't allow in file names: `:` (which also
+  makes drive-qualified names such as `C:/x` absolute), `<`, `>`, `|`, `?`,
+  `*` and double quotes
+- names with lookalikes of `\`, `/`, `:` or double quotes that Windows code
+  pages turn into them (e.g., `¥` and `∕`, U+00A5 and U+2215)
+- names that Unicode normalization (NFKC) changes (e.g., the fullwidth
+  `．．／`, which would become `../`)
+- names longer than 1024 bytes, or with a part longer than 255 bytes (the
+  limit leaves room for the run directory within the 4096 bytes of a path
+  on Linux; WES instances on Windows may need long paths enabled for names
+  longer than about 200 characters)
+
+For example, `../input.txt` is forwarded as `input.txt`, `C:/input.txt` as
+`C_input.txt` and `con.txt` as `_con.txt`. Names that clash only at the WES
+instance (e.g., `data` and `data/input.txt`) are forwarded as they are.
+
 `POST /runs` returns the run's own identifier, by which `GET
 /runs/{run_id}` finds it; the identifier at the WES instance is kept in the
 database. A Celery worker then tracks the run at the WES instance: it polls

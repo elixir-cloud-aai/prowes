@@ -5,8 +5,10 @@ creation, run logs, run status and cancellation) from memory. Created runs
 are `QUEUED`, then `RUNNING` and `COMPLETE` (`RUN_SECONDS` after their
 creation), unless their tags hold `fake.hold`: those run until they are
 canceled, then are `CANCELING` for `CANCEL_SECONDS` and finally `CANCELED`.
-The run log has the run request as received, an output with the received
-workflow URL, and, in final states only, a standard output of its own
+The run log has the run request as received, outputs with the received
+workflow URL and workflow attachments (file names and contents, in
+order), and, in
+final states only, a standard output of its own
 (`FINAL_STDOUT`) and the exit code once complete, so that the smoke test
 sees what proWES forwarded and that it fetched the final run log.
 `GET /runs` lists all runs it received.
@@ -195,11 +197,16 @@ def run_log(run_id: str, run: dict[str, Any], now: float) -> dict[str, Any]:
             "exit_code": 0 if state == "COMPLETE" else None,
         },
         "task_logs": [],
-        "outputs": {"workflow_url": run["request"].get("workflow_url")},
+        "outputs": {
+            "workflow_url": run["request"].get("workflow_url"),
+            "attachments": run["attachments"],
+        },
     }
 
 
-def parse_form(content_type: str, body: bytes) -> dict[str, str]:
+def parse_form(
+    content_type: str, body: bytes
+) -> tuple[dict[str, str], list[tuple[str, str]]]:
     """Parse a form of a run request.
 
     Args:
@@ -207,23 +214,30 @@ def parse_form(content_type: str, body: bytes) -> dict[str, str]:
         body: Request body.
 
     Returns:
-        The form fields (the last value of each), without files.
+        The form fields (the last value of each), without files, and the
+        workflow attachments: file name and contents (as text) of each, in
+        order.
     """
     if content_type.startswith("multipart/form-data"):
         message = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
             f"Content-Type: {content_type}\r\n\r\n".encode() + body
         )
         fields: dict[str, str] = {}
+        attachments: list[tuple[str, str]] = []
         for part in message.iter_parts():
             name = part.get_param("name", header="content-disposition")
-            if isinstance(name, str) and part.get_filename() is None:
-                payload = part.get_payload(decode=True)
-                if isinstance(payload, bytes):
-                    fields[name] = payload.decode()
-        return fields
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True)
+            if not isinstance(name, str) or not isinstance(payload, bytes):
+                continue
+            if filename is None:
+                fields[name] = payload.decode()
+            elif name == "workflow_attachment":
+                attachments.append((filename, payload.decode(errors="replace")))
+        return fields, attachments
     return {
         key: values[-1] for key, values in parse_qs(body.decode()).items() if values
-    }
+    }, []
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -341,7 +355,9 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         with LOCK:
             if parts == ["runs"]:
-                form = parse_form(self.headers.get("Content-Type", ""), body)
+                form, attachments = parse_form(
+                    self.headers.get("Content-Type", ""), body
+                )
                 missing = [
                     field
                     for field in (
@@ -369,6 +385,7 @@ class Handler(BaseHTTPRequestHandler):
                 run_id = f"FAKE{uuid.uuid4().hex[:12].upper()}"
                 RUNS[run_id] = {
                     "request": form,
+                    "attachments": attachments,
                     "created": now,
                     "hold": isinstance(tags, dict) and "fake.hold" in tags,
                     "canceled": None,

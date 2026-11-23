@@ -346,10 +346,16 @@ proWES), with the same `413`.
 Attachments are written to the working directory of the run, in the storage
 of the runs (`storage_path`), each under a safe file name: without
 directories (separators become `_`, e.g., `dir/a.txt` becomes `dir_a.txt`;
-`../` and leading dots are removed), only ASCII characters, and at most 255
-bytes long. Runs with two attachments of the same safe file name, an
-attachment with a longer one, or one without file name are rejected with
-`400 Bad Request`. Files are created anew, never overwriting existing ones.
+`../` and leading dots are removed), only ASCII characters, with a
+leading `_` if Windows reserves the name for a device (e.g., `con.txt`
+becomes `_con.txt`), and at most 255 bytes long, the `_` included. Runs
+with two attachments of the same safe file name, an attachment with a
+longer one, or one without file name are rejected with `400 Bad Request`.
+Files are created anew, never overwriting existing ones. The WES instance
+gets the attachments under their names as sent, if the WES API allows them
+and WES instances on Linux and Windows can write them in the run's
+directory, or else under their safe file names (e.g., `C:/x` becomes
+`C_x`; see [Runs](api.md#runs) for the rules).
 
 The values of `tags` and `workflow_engine_parameters` must be strings, as
 in the WES specification, and no object in the JSON fields may have a key
