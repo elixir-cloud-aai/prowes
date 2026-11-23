@@ -76,10 +76,18 @@ MAX_FILENAME_BYTES = 255
 MAX_PATH_BYTES = 1024
 
 # Characters that are forwarded in no file name of workflow attachments:
-# backslashes, and characters that Windows allows in no file name (`:` also
-# makes drive-qualified names, e.g., `C:/x`, absolute), and percent signs,
-# which multipart encoding changes
-FORWARD_FORBIDDEN_CHARACTERS = frozenset('\\"%:<>|?*')
+# backslashes, characters that Windows allows in no file name (`:` also
+# makes drive-qualified names, e.g., `C:/x`, absolute), percent signs, which
+# multipart encoding changes, and lookalikes of separators, colons and double
+# quotes that Unicode normalization (NFKC) keeps, but that Windows code pages
+# turn into them ("best fit", e.g., `¥` into `\` in Japanese ones)
+FORWARD_FORBIDDEN_CHARACTERS = frozenset(
+    '\\"%:<>|?*'
+    "\u00a5\u20a9\u2216\u29f5"  # `\`: yen and won signs, set minus, operator
+    "\u2044\u2215\u29f8"  # `/`: fraction, division and big solidus
+    "\u2236"  # `:`: ratio
+    "\u201c\u201d\u201e\u201f"  # `"`: double quotation marks
+)
 
 # File names that Windows reserves for devices, also with extensions (e.g.,
 # `CON.txt`), in upper case
@@ -205,11 +213,11 @@ def _forward_name(filename: str, name: str) -> str:
     by Unicode normalization (NFKC), with parts separated by slashes, none
     of them empty, `.` or `..` or longer than `MAX_FILENAME_BYTES` or
     reserved by Windows, without characters that Windows doesn't allow in
-    file names (e.g., `:`), backslashes, percent signs or characters that
-    aren't printable.
-    Others (e.g., absolute paths, or paths with `..`) are replaced by the
-    safe file name under which the attachment is written (cf.
-    `WorkflowRuns._secure_filename()`), so that WES instances never get them.
+    file names (e.g., `:`) or their lookalikes, backslashes, percent signs
+    or characters that aren't printable. Others (e.g., absolute paths, or
+    paths with `..`) are replaced by the safe file name under which the
+    attachment is written (cf. `WorkflowRuns._secure_filename()`), so that
+    WES instances never get them.
 
     Args:
         filename: Name of the file as indicated in the run request.

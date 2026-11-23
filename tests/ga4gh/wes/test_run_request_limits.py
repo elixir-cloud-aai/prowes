@@ -470,6 +470,20 @@ def forwarded(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, bytes]]]:
         ("COM10", "COM10"),
         ("a.con", "a.con"),
         ("nul/a.txt", "SAFE"),
+        ("NUL .tar.gz", "SAFE"),
+        # lookalikes of separators, colons and double quotes that NFKC
+        # keeps, but that Windows code pages turn into them ("best fit")
+        ("\u00a5..\u00a5x", "SAFE"),
+        ("\u20a9..\u20a9x", "SAFE"),
+        ("a\u2215..\u2215b", "SAFE"),
+        ("\u2044..\u2044x", "SAFE"),
+        ("a\u2216b", "SAFE"),
+        ("a\u29f5b", "SAFE"),
+        ("a\u29f8b", "SAFE"),
+        ("a\u2236b", "SAFE"),
+        ("\u201ca\u201d.txt", "SAFE"),
+        ("\u201ea.txt", "SAFE"),
+        ("it's.txt", "it's.txt"),
         # at most `MAX_PATH_BYTES` bytes
         (
             "/".join(["b" * 255] * 3 + ["b" * 254, "b"]),
@@ -608,8 +622,19 @@ def test_attachment_not_writable(
         [("a" * 252 + ".txt", b"1")],
         # an empty name
         [("", b"1")],
+        # a name that Windows reserves and its safe name
+        [("con.txt", b"1"), ("_con.txt", b"2")],
+        # a reserved name, too long with the leading `_` of its safe name
+        [("con." + "a" * 251, b"1")],
     ],
-    ids=["duplicate", "same-safe-name", "too-long", "empty"],
+    ids=[
+        "duplicate",
+        "same-safe-name",
+        "too-long",
+        "empty",
+        "reserved-and-safe-name",
+        "reserved-too-long",
+    ],
 )
 def test_attachment_names_refused(
     files: list[tuple[str, bytes]],
@@ -623,6 +648,31 @@ def test_attachment_names_refused(
     response = _post_run(foca_client, RUN_REQUEST, files)
     _assert_refused(response, 400, mongodb, storage, remote_wes)
     assert "attachment" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("con.txt", "_con.txt"),
+        ("NUL", "_NUL"),
+        ("a/com1.log", "a_com1.log"),
+        ("com1.log", "_com1.log"),
+        ("_con.txt", "_con.txt"),
+        ("CONSOLE.txt", "CONSOLE.txt"),
+        ("con." + "a" * 250, "_con." + "a" * 250),
+    ],
+)
+def test_secure_filename_reserved(filename: str, expected: str) -> None:
+    """Safe names that Windows reserves for devices get a leading `_`."""
+    secure_filename = workflow_runs.WorkflowRuns._secure_filename
+    assert secure_filename(name=Path(filename)) == Path(expected)
+
+
+def test_secure_filename_without_safe_character() -> None:
+    """Names without any safe character get a random, unreserved name."""
+    name = workflow_runs.WorkflowRuns._secure_filename(name=Path("\u00e9\u00e9"))
+    assert name.name
+    assert not workflow_runs._windows_reserved(name.name)
 
 
 # Size of tags

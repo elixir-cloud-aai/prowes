@@ -226,9 +226,12 @@ safe file names where the WES API doesn't allow those names or WES
 instances on Windows couldn't create them (e.g., `C:/x` or `CON`), or where
 they are longer than 1024 bytes (see [Runs](api.md#runs)). Attachments
 named like Windows devices (e.g., `con.txt`) are written under safe file
-names with a leading `_` (`_con.txt`). The `files` argument of
-`WesClient.post_run()` is replaced by `attachments`: the workflow
-attachments, sent as parts `workflow_attachment`.
+names with a leading `_` (`_con.txt`).
+
+The `files` argument of `WesClient.post_run()` is replaced by
+`attachments`: the workflow attachments, sent as parts
+`workflow_attachment`. Code that imports the client and passes `files=`
+needs the new argument.
 
 ### Run logs
 
